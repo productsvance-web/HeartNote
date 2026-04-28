@@ -12,7 +12,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('daily_logs')
-    .select('processing_status, transcribed_text, processing_error')
+    .select('processing_status, transcribed_text, processing_error, structured_observations')
     .eq('id', id)
     .single();
 

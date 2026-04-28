@@ -10,6 +10,7 @@
 // and is idempotent on retry.
 
 import { createClient } from '@/lib/supabase/server';
+import { extractWithClaude } from '@/lib/voice-log/extract';
 
 export async function processVoiceLog(logId: string, callerUserId: string): Promise<void> {
   const supabase = await createClient();
@@ -18,7 +19,9 @@ export async function processVoiceLog(logId: string, callerUserId: string): Prom
   //    this caregiver via patients.caregiver_id.
   const { data: log, error: loadError } = await supabase
     .from('daily_logs')
-    .select('id, patient_id, audio_storage_path, processing_status, log_date, patients(caregiver_id, display_name, dry_weight_lb, nyha_class, normal_pillow_count)')
+    .select(
+      'id, patient_id, audio_storage_path, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
+    )
     .eq('id', logId)
     .single();
 
@@ -72,15 +75,86 @@ export async function processVoiceLog(logId: string, callerUserId: string): Prom
     })
     .eq('id', logId);
 
-  // 4. Claude structured extraction (stub for now — will be wired to Anthropic SDK
-  //    with prompt caching against research/chf-source-of-truth.md in the next pass).
-  await supabase
-    .from('daily_logs')
-    .update({
-      processing_status: 'complete',
-      ai_processed_at: new Date().toISOString(),
-    })
-    .eq('id', logId);
+  // 4. Claude extraction — structured fields + caregiver summary + reasoning.
+  try {
+    const extraction = await extractWithClaude(transcript, {
+      displayName: log.patients.display_name,
+      relationship: log.patients.relationship,
+      dryWeightLb: log.patients.dry_weight_lb,
+      nyhaClass: log.patients.nyha_class,
+      normalPillowCount: log.patients.normal_pillow_count,
+    });
+
+    // Sanitize structured fields: only allow known columns; coerce empty strings → null.
+    const structuredUpdate = sanitizeStructuredFields(extraction.structuredFields);
+
+    await supabase
+      .from('daily_logs')
+      .update({
+        ...structuredUpdate,
+        structured_observations: {
+          caregiver_summary: extraction.caregiverSummary,
+          ai_reasoning: extraction.aiReasoning,
+          follow_up_question: extraction.followUpQuestion || null,
+        },
+        processing_status: 'complete',
+        ai_processed_at: new Date().toISOString(),
+      })
+      .eq('id', logId);
+  } catch (err) {
+    // Whisper succeeded so the transcript is preserved on the row; only the AI
+    // extraction failed. Mark complete with an error note in observations so
+    // the user still sees their words rendered.
+    const message = err instanceof Error ? err.message : 'AI extraction failed';
+    await supabase
+      .from('daily_logs')
+      .update({
+        processing_status: 'complete',
+        ai_processed_at: new Date().toISOString(),
+        structured_observations: { ai_extraction_error: message },
+      })
+      .eq('id', logId);
+  }
+}
+
+// Allowlist of daily_logs columns the AI is permitted to populate. Anything
+// the model returns outside this set is dropped — defends against schema drift,
+// hallucinated fields, and accidental overwrites of metadata columns.
+const ALLOWED_AI_COLUMNS = new Set([
+  'weight_lb',
+  'systolic_bp',
+  'diastolic_bp',
+  'resting_hr',
+  'spo2',
+  'feeling_score',
+  'dyspnea_level',
+  'pillow_count',
+  'pnd_episode',
+  'cough_present',
+  'cough_nocturnal',
+  'sputum_color',
+  'swelling_severity',
+  'extremities_cold_clammy',
+  'cyanosis',
+  'chest_pain',
+  'chest_pain_character',
+  'syncope',
+  'appetite_change',
+  'early_satiety',
+  'fatigue_level',
+  'urine_output_change',
+  'cognition_change',
+  'activity_tolerance_change',
+]);
+
+function sanitizeStructuredFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (!ALLOWED_AI_COLUMNS.has(key)) continue;
+    if (value === '' || value === undefined) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 async function transcribeWithWhisper(audio: Blob, apiKey: string): Promise<string> {

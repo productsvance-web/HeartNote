@@ -65,7 +65,7 @@ Anything **life-safety-critical is free forever**. Convenience, coordination, an
 Always reference `research/chf-source-of-truth.md` (master) before writing clinical/alert/copy code. Five topic-specific deep-dives in the same folder: `01-clinical-thresholds.md`, `02-medications.md`, `03-caregiver-education.md`, `04-caregiver-language.md`, `05-competitor-apps.md`.
 
 ## Status
-Scaffold complete (Next.js 16 + Supabase + Capacitor + shadcn). Schema next. Then auth, voice log, AI trend, alerts, visit report, family share.
+Scaffold + schema + auth + onboarding + dashboard + voice log (record → Whisper → Claude extraction with cached research-file system prompt) all live. Visual identity ported from Lovable mockup (cream + sage + Fraunces). HTTPS dev wired for getUserMedia on phone. **Next:** alert tier-detection logic, push notifications, visit-report generator, family share. Run `git log --oneline -25` for recent work; design source-of-truth in `research/chf-source-of-truth.md`.
 
 ## How to work in this folder
 - Start sessions in `/Users/jazminescamilla/Desktop/heartnote/` (not the home folder).

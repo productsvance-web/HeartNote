@@ -29,7 +29,7 @@ export default async function LogPage() {
   const today = new Date().toISOString().slice(0, 10);
   const { data: todaysLog } = await supabase
     .from('daily_logs')
-    .select('id, processing_status, transcribed_text, created_at')
+    .select('id, processing_status, transcribed_text, structured_observations, created_at')
     .eq('patient_id', patient.id)
     .eq('log_date', today)
     .maybeSingle();
@@ -52,6 +52,9 @@ export default async function LogPage() {
         existingLogId={todaysLog?.id ?? null}
         existingStatus={todaysLog?.processing_status ?? null}
         existingTranscript={todaysLog?.transcribed_text ?? null}
+        existingObservations={
+          (todaysLog?.structured_observations as Record<string, unknown> | null) ?? null
+        }
       />
     </PhoneShell>
   );

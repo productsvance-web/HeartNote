@@ -17,11 +17,19 @@ type Status =
 const MAX_SECONDS = 90; // allow up to 90s; design target is 30
 const TARGET_SECONDS = 30;
 
+type AISummary = {
+  caregiver_summary?: string;
+  ai_reasoning?: string;
+  follow_up_question?: string | null;
+  ai_extraction_error?: string;
+};
+
 type Props = {
   patientId: string;
   existingLogId: string | null;
   existingStatus: string | null;
   existingTranscript: string | null;
+  existingObservations: AISummary | null;
 };
 
 export function VoiceLogClient({
@@ -29,6 +37,7 @@ export function VoiceLogClient({
   existingLogId,
   existingStatus,
   existingTranscript,
+  existingObservations,
 }: Props) {
   const [status, setStatus] = useState<Status>(
     existingLogId ? (existingStatus === 'complete' ? 'complete' : 'processing') : 'idle'
@@ -37,6 +46,7 @@ export function VoiceLogClient({
   const [seconds, setSeconds] = useState(0);
   const [logId, setLogId] = useState<string | null>(existingLogId);
   const [transcript, setTranscript] = useState<string | null>(existingTranscript);
+  const [observations, setObservations] = useState<AISummary | null>(existingObservations);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -59,10 +69,12 @@ export function VoiceLogClient({
           processing_status: string;
           transcribed_text: string | null;
           processing_error: string | null;
+          structured_observations: AISummary | null;
         };
         if (data.processing_status === 'complete') {
           setStatus('complete');
           setTranscript(data.transcribed_text);
+          setObservations(data.structured_observations);
           window.clearInterval(interval);
         } else if (data.processing_status === 'failed') {
           setStatus('error');
@@ -284,23 +296,73 @@ export function VoiceLogClient({
             </div>
             <p className="font-display text-xl">Logged for today</p>
           </div>
-          {transcript ? (
-            <div className="rounded-2xl bg-muted/60 p-4">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
-                What you said
+
+          {observations?.caregiver_summary && (
+            <div
+              className="rounded-2xl p-4 border"
+              style={{
+                background: 'var(--status-good-soft)',
+                borderColor: 'color-mix(in oklab, var(--status-good) 30%, transparent)',
+              }}
+            >
+              <p
+                className="text-xs uppercase tracking-wider mb-2"
+                style={{ color: 'var(--status-good-foreground)' }}
+              >
+                What HeartNote heard
               </p>
-              <p className="text-sm whitespace-pre-wrap">{transcript}</p>
+              <p
+                className="text-sm leading-relaxed"
+                style={{ color: 'var(--status-good-foreground)' }}
+              >
+                {observations.caregiver_summary}
+              </p>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Audio saved. Transcription will appear once we wire Whisper to your API key.
+          )}
+
+          {observations?.ai_reasoning &&
+            observations.ai_reasoning !== 'No concerning patterns today.' && (
+              <div className="rounded-2xl bg-muted/60 p-4">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+                  Pattern note
+                </p>
+                <p className="text-sm leading-relaxed">{observations.ai_reasoning}</p>
+              </div>
+            )}
+
+          {observations?.follow_up_question && (
+            <div
+              className="rounded-2xl p-4 border border-dashed"
+              style={{ borderColor: 'var(--border)' }}
+            >
+              <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+                One quick follow-up
+              </p>
+              <p className="text-sm">{observations.follow_up_question}</p>
+            </div>
+          )}
+
+          {transcript && (
+            <details className="rounded-2xl bg-muted/40 p-4">
+              <summary className="text-xs uppercase tracking-wider text-muted-foreground cursor-pointer select-none">
+                Full transcript
+              </summary>
+              <p className="text-sm whitespace-pre-wrap mt-3">{transcript}</p>
+            </details>
+          )}
+
+          {observations?.ai_extraction_error && (
+            <p className="text-xs text-muted-foreground">
+              The transcript saved, but pattern detection hit an error: {observations.ai_extraction_error}
             </p>
           )}
+
           <button
             type="button"
             onClick={() => {
               setStatus('idle');
               setTranscript(null);
+              setObservations(null);
               setLogId(null);
               setSeconds(0);
             }}
