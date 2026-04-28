@@ -10,10 +10,20 @@ export function LoginForm() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isPending, startTransition] = useTransition();
 
-  function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Read directly from the form so we capture iOS / password-manager autofills
+    // even if React state didn't sync via onChange.
+    const formData = new FormData(e.currentTarget);
+    const submittedEmail = ((formData.get('email') as string | null) ?? email).trim();
+    if (!submittedEmail) {
+      setStatus('error');
+      setErrorMessage('Please enter an email.');
+      return;
+    }
+    setEmail(submittedEmail);
     startTransition(async () => {
-      const result = await sendMagicLink(email);
+      const result = await sendMagicLink(submittedEmail);
       if (result.ok) setStatus('sent');
       else {
         setStatus('error');
@@ -46,6 +56,7 @@ export function LoginForm() {
         <span className="text-sm font-medium">Email</span>
         <input
           type="email"
+          name="email"
           required
           autoComplete="email"
           autoFocus
@@ -57,8 +68,8 @@ export function LoginForm() {
       </label>
       <button
         type="submit"
-        disabled={isPending || !email}
-        className="w-full rounded-full px-6 py-4 font-semibold text-base text-primary-foreground shadow-soft active:scale-[0.98] transition disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={isPending}
+        className="w-full rounded-full px-6 py-4 font-semibold text-base text-primary-foreground shadow-soft active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
         style={{
           background:
             'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
