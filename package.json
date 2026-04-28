@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:types": "supabase gen types typescript --linked 2>/dev/null | grep -v '^A new version\\|^We recommend\\|^Initialising' > src/lib/supabase/types.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
