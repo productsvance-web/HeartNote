@@ -30,8 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files — ignore local secrets, commit examples
+.env*.local
+.env
+!.env*.example
 
 # vercel
 .vercel
@@ -39,3 +41,25 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# capacitor
+/ios/App/Pods/
+/ios/App/Podfile.lock
+/ios/App/build/
+/ios/DerivedData/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+/android/app/release/
+/android/captures/
+*.iml
+
+# supabase
+/supabase/.branches
+/supabase/.temp
+
+# claude / agent caches
+.claude/
+
