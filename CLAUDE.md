@@ -1,96 +1,74 @@
+<!-- BUDGET: stay under 100 lines. Add a rule, remove one first. Concept-level only. -->
+<!-- DO NOT re-read this file once loaded. Same for research/chf-source-of-truth.md. -->
 @AGENTS.md
 
-# HeartNote — Project Context
+# HeartNote — CHF caregiver companion (PRE-LAUNCH, ZERO CUSTOMERS)
 
-This folder is the active workspace for **HeartNote**, a CHF caregiver companion app for adult-child caregivers of parents with congestive heart failure.
+Voice-first daily logging, AI trend detection, and red-alert warnings for adult-child caregivers of parents with congestive heart failure. Founder lives the use case (full-time CHF caregiver for his mother) — that's the moat.
 
-## What this project is
+**No backwards-compatibility, no migration paths, no fallbacks for "existing customers." If something needs changing, change it.**
 
-HeartNote helps adult children manage daily care for an aging parent with CHF — voice-first daily logging, AI trend detection, red-alert warnings before decompensation becomes a hospitalization, cardiology visit prep, and family coordination without constant texting.
+## Stack
+Next.js 16 (App Router) · TypeScript · Tailwind 4 · shadcn/ui · Supabase (Postgres + Auth + RLS) · Capacitor (iOS + Android) · Anthropic Claude API · Whisper · Stripe · Vercel
 
-**Founder's unfair advantage:** lived experience as a full-time caregiver for a mother with CHF. Not guessing at the pain — living it daily. Founder-product fit is the moat; it's why a funded competitor can't replicate the product's authenticity even if they build the same features.
+## Commands
+```bash
+npm run dev                 # Dev server
+npm run build               # Production build (timeout 300000, NEVER background)
+npm run lint                # Lint
+supabase db push            # Apply migrations (run BEFORE merging migration changes)
+```
 
-## Target buyer (NOT the founder himself)
+## Git / PR
+`git push` → `gh pr create` → `gh pr checks --watch` → on pass `gh pr merge --squash`. Never leave a PR open for the user to merge. One branch per fix/feature; delete after merge. Use worktrees for parallel work.
 
-**Working-professional sandwich generation** (age 35-55) and **long-distance caregivers** caring for a parent with CHF:
-- Still employed full-time
-- Lives separately from parent OR has hired some care
-- Cares from a distance or around a job
-- Has ~$20/month in disposable budget for apps like Headspace, Calm, Audible
-- Searches Google at night ("mom weight gain heart failure")
-- Reads professional newsletters, listens to podcasts
-- Feels guilt + distance + coordination pain
+## Migrations
+If you created or modified anything in `supabase/migrations/`, run `supabase db push` before merging. Code without its migration is broken code.
 
-NOT targeting: the full-time stay-home unpaid caregiver (like the founder himself). That segment is cash-poor, time-starved, and bad B2C buyers. Serve them via free tier, but the paying customer is the working professional.
+## Build conventions (always apply)
+1. **Cite `research/chf-source-of-truth.md` for every clinical claim, threshold, or alert copy.** Never invent a number.
+2. **AI alerts must show their reasoning** in the UI ("weight up 4 lb over 5 days AND extra pillows logged AND nocturnal cough — pattern often precedes decompensation").
+3. **Pass the grelief test on every caregiver-facing line.** No chirpy "you're doing great"; no funeral-serious. Sit with the oscillation.
+4. **RLS-first.** Every new Supabase table gets RLS enabled and policies written before any code reads/writes it.
+5. **Use `@/lib/supabase/{client,server,middleware}` only.** Never instantiate Supabase clients directly in components.
+6. **Anthropic calls: prompt caching enabled from day 1.** Sonnet 4.6 for trend synthesis (cost), Opus 4.7 for visit-report drafting (quality).
+7. **Life-safety features never paywalled.** Red alerts, daily voice log, scripted "call the cardiologist" — free forever.
+8. **Never recommend dose changes** in any AI output. Always direct to the prescriber.
+9. **Voice log is the non-negotiable core.** Prefer voice over forms. Forms are secondary.
+10. **No half-finished implementations.** Hide unfinished features behind a flag — never ship a dead button.
+11. **Validate inputs at boundaries.** Zod at form fields and API routes.
+12. **Environment variables fail closed.** Missing secret → throw, never substitute a default.
 
-## Locked decisions (do not re-debate without prompt)
+## Target buyer
+Adult-child caregivers (28+) of a parent with CHF. Free tier serves everyone (including full-time unpaid caregivers; founder is in this segment). Paid tier ($19.99/mo, $199/yr) skews toward working professionals with ~$20/mo of disposable budget — sandwich-generation, long-distance, or hired-some-care caregivers who already pay for Headspace, Calm, Audible.
 
-- **Positioning:** CHF-specific, caregiver-pointed (not patient-pointed), AI-first, direct-to-consumer (no B2B).
-- **Pricing:** Free tier (safety features only) + Paid tier at $19.99/mo or $199/yr. 14-day free trial, no credit card. Affiliate stack underneath (Withings scale, Omron BP, compression stockings, low-sodium grocery, eventually LTC insurance and Medicare Advantage switching commissions during AEP Oct-Dec).
-- **Distribution:** SEO on CHF caregiver long-tail queries (primary) + LinkedIn content + newsletter/podcast sponsorships + Reddit (r/heartfailure, r/CaregiverSupport, r/AgingParents) + Facebook CHF groups. TikTok/Reels as secondary channel. **No B2B.** YouTube is distribution for the app, not a separate business.
-- **Build tool:** Claude Code only (user has $200/mo Max plan). No Lovable, Bolt, v0, Replit, or other AI wrapper tools for the real build — Claude Code IS the build tool. Lovable was used for a disposable visual mockup only.
-- **Stack:** React / Next.js + Capacitor (native iOS + Android wrapping) + Supabase (auth + DB) + Claude API (AI brain) + Whisper (voice transcription) + Stripe (payments) + Vercel (web hosting). Apple Developer $99/yr + Google Play $25 one-time.
-- **Platform strategy:** Native iOS + Android from day 1 via Capacitor-wrapped React codebase. Same codebase also serves as web app at heartnote.com. User explicitly rejected PWA-first approach — wants App Store presence and Apple HealthKit integration from launch, doesn't want to migrate later.
-- **v1 Integrations:** Apple HealthKit (full native access) + photo OCR (Claude vision) + voice entry + direct Bluetooth device pairing (oximeters, smart scales, BP cuffs) via HealthKit. **No MyChart in v1** (Epic verification is months-long).
+## Free vs. paid (values-driven)
+Anything **life-safety-critical is free forever**. Convenience, coordination, and history are paid.
+- **Free:** 30-sec voice log, basic 7-day trend, red-alert push notifications, manual weight entry, last 30 days history, single user/single patient.
+- **Paid:** unlimited history, advanced trend analysis, auto-generated visit reports, family share link, HealthKit + smart-device sync, photo OCR, multi-patient.
 
-## Free vs. Paid split (values-driven)
+## v1 feature set (these 5 only — everything else waits for v2)
+1. 30-second daily voice log (Whisper → Claude structures it)
+2. AI trend detection across days/weeks
+3. Red-alert push notifications with scripted "what to tell the cardiologist"
+4. Auto-generated "since last visit" cardiology report
+5. Read-only family share link
 
-**Principle: anything life-safety-critical is free forever. Convenience, coordination, and history are paid.**
+## Locked decisions (don't re-debate without prompt)
+- **Positioning:** CHF-specific, caregiver-pointed (not patient-pointed), AI-first, DTC. **No B2B.**
+- **Distribution:** SEO on CHF caregiver long-tail (primary) + LinkedIn + newsletter/podcast sponsorships + Reddit (r/heartfailure, r/CaregiverSupport, r/AgingParents) + FB CHF groups. TikTok/Reels secondary.
+- **Platform:** Native iOS + Android via Capacitor + same codebase as web (heartnote.com). User explicitly rejected PWA-first.
+- **v1 integrations:** Apple HealthKit, photo OCR (Claude vision), voice entry, Bluetooth pairing via HealthKit. **No MyChart in v1.**
+- **Build tool:** Claude Code only. No Lovable/Bolt/v0/Replit for the real build (Lovable was a disposable mockup).
 
-Free tier (forever, no credit card):
-- 30-second daily voice log
-- Basic AI pattern detection on last 7 days
-- Red-alert notifications with scripted "call the cardiologist" message
-- Manual weight entry
-- Last 30 days of history
-- Single user, single patient
-
-Paid tier ($19.99/mo or $199/yr):
-- Unlimited history + advanced trend analysis
-- Auto-generated cardiology visit reports
-- Read-only family share link (siblings get status without onboarding)
-- Apple HealthKit integration + smart scale/BP cuff sync
-- Photo OCR (pill bottles, docs, lab results)
-- Medicare EOB translator + appeal letter drafting (later)
-- Medication interaction checker (later)
-- Low-sodium meal scanner (later)
-- Voice journal AI coach (emotional support layer)
-- Multiple patients (mom + dad if both have conditions)
-- Priority support
-
-## v1 feature set (these five only for shipping — everything else waits for v2+)
-
-1. 30-second daily voice log (weight, swelling, breathing, energy, food, anything unusual). Whisper transcribes, Claude structures.
-2. AI trend detection across days/weeks (not snapshots).
-3. Red-alert push notifications with scripted "what to tell the cardiologist" summary.
-4. Auto-generated "since last visit" report for cardiology appointments.
-5. Read-only family share link.
-
-## CHF clinical research (complete as of 2026-04-24)
-
-Source-of-truth lives in `research/`:
-- `chf-source-of-truth.md` — master doc; what AI system prompts, app copy, and product decisions pull from
-- `01-clinical-thresholds.md` — 4-tier red-alert spec, AHA/ACC/HFSA thresholds, Chaudhry 2007 pre-hospitalization curve
-- `02-medications.md` — GDMT pillars + 9 named decompensation patterns
-- `03-caregiver-education.md` — Cleveland/Mayo/Penn/AHA institutional survey, AHA 11-question pre-visit template
-- `04-caregiver-language.md` — 100+ verbatim caregiver quotes, 12-category pain taxonomy
-- `05-competitor-apps.md` — 20-app landscape, 10 failure modes to avoid
-
-Refer to `research/chf-source-of-truth.md` § references when wiring the AI brain or writing in-app copy. The medical research is **not** for clinician decision-making and the app must always direct caregivers to the patient's own care team.
+## Research source-of-truth
+Always reference `research/chf-source-of-truth.md` (master) before writing clinical/alert/copy code. Five topic-specific deep-dives in the same folder: `01-clinical-thresholds.md`, `02-medications.md`, `03-caregiver-education.md`, `04-caregiver-language.md`, `05-competitor-apps.md`.
 
 ## Status
-
-- Strategic phase: complete
-- v1 spec: locked
-- Lovable mockup: at `/Users/jazminescamilla/Desktop/heart-to-heart-home/` (visual reference only, not part of build)
-- CHF clinical research: **complete** (see `research/`)
-- Real build: scaffolded — Next.js 16 + TS + Tailwind 4; Supabase project `jjuvsswrkibowvexbvro` provisioned; Capacitor + shadcn pending
-- Content engine: not started
+Scaffold complete (Next.js 16 + Supabase + Capacitor + shadcn). Schema next. Then auth, voice log, AI trend, alerts, visit report, family share.
 
 ## How to work in this folder
-
-- Start any new session in this directory (`/Users/jazminescamilla/Desktop/heartnote/`) — do not work on HeartNote from the home folder (`/Users/jazminescamilla/`), which is the user's general-purpose Claude chat space
-- Auto-memory is at `/Users/jazminescamilla/.claude/projects/-Users-jazminescamilla-Desktop-heartnote/memory/` — carries user preferences and project state across sessions in this folder
-- The user explicitly wants HeartNote isolated from general conversation context — respect that separation
-- User feedback style: direct critical evaluation, no sycophancy, dislikes rigid workflow skills (see feedback_style memory file)
-- Never recommend: getting a traditional job (user is full-time caregiver, cannot leave home), Lovable/Bolt/v0/Replit for the real build (user paid $200/mo for Claude Code, uses it directly), B2B pivots (user ruled out), PWA-first approach (user rejected it — native iOS + Android via Capacitor from day 1)
+- Start sessions in `/Users/jazminescamilla/Desktop/heartnote/` (not the home folder).
+- Auto-memory: `~/.claude/projects/-Users-jazminescamilla-Desktop-heartnote/memory/`.
+- User feedback style: direct critical evaluation, no sycophancy. Dislikes rigid workflow skills.
+- **Never recommend:** quitting full-time caregiving for a traditional job; Lovable/Bolt/v0/Replit for the real build; a B2B pivot; a PWA-first approach.
