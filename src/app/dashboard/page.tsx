@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight } from 'lucide-react';
+import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { StatusRing } from '@/components/heartnote/StatusRing';
@@ -26,7 +26,7 @@ export default async function DashboardPage() {
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name')
+    .select('id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name')
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -34,6 +34,25 @@ export default async function DashboardPage() {
 
   const patientName = patient?.display_name ?? 'them';
   const cardiologist = patient?.cardiologist_name;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: todaysLog } = patient
+    ? await supabase
+        .from('daily_logs')
+        .select('id, processing_status, transcribed_text, created_at')
+        .eq('patient_id', patient.id)
+        .eq('log_date', today)
+        .maybeSingle()
+    : { data: null };
+
+  // Until we wire alert logic, derive a simple display status from the log state.
+  // No log yet → empty (no ring). Processing → loading visual. Complete → 'good'
+  // (placeholder until tier-detection is wired against research/01-clinical-thresholds.md).
+  const logStatus: 'none' | 'processing' | 'complete' = !todaysLog
+    ? 'none'
+    : todaysLog.processing_status === 'complete'
+      ? 'complete'
+      : 'processing';
 
   const tiles = [
     { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
@@ -52,7 +71,29 @@ export default async function DashboardPage() {
       </header>
 
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
-        <StatusRing status="unknown" />
+        {logStatus === 'complete' && <StatusRing status="good" />}
+
+        {logStatus === 'processing' && (
+          <div className="flex flex-col items-center gap-3 py-6">
+            <div
+              className="h-16 w-16 rounded-full flex items-center justify-center animate-pulse-ring"
+              style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
+            >
+              <Loader2 size={26} className="animate-spin" />
+            </div>
+            <p className="font-display text-lg">Listening to today&apos;s log…</p>
+            <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
+          </div>
+        )}
+
+        {logStatus === 'none' && (
+          <div className="text-center py-2">
+            <p className="text-sm text-muted-foreground">
+              No check-in for today yet. Tap below for a 30-second log — weight, breathing,
+              swelling, energy, or anything that feels off.
+            </p>
+          </div>
+        )}
 
         <div className="mt-6 flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
           <div>
@@ -61,7 +102,11 @@ export default async function DashboardPage() {
             </p>
             <p className="text-lg font-semibold text-foreground">{patientName}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              No log yet today
+              {logStatus === 'complete'
+                ? 'Logged today'
+                : logStatus === 'processing'
+                  ? 'Processing today’s log'
+                  : 'No log yet today'}
             </p>
           </div>
           <div className="text-right">
@@ -74,18 +119,20 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <Link
-          href="/log"
-          className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition"
-          style={{
-            background:
-              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
-          }}
-        >
-          <Mic size={22} />
-          Start daily log
-          <span className="text-xs font-normal opacity-80">· 30 sec</span>
-        </Link>
+        {logStatus !== 'processing' && (
+          <Link
+            href="/log"
+            className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition"
+            style={{
+              background:
+                'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+            }}
+          >
+            <Mic size={22} />
+            {logStatus === 'complete' ? 'Add to today’s log' : 'Start daily log'}
+            <span className="text-xs font-normal opacity-80">· 30 sec</span>
+          </Link>
+        )}
       </section>
 
       <Link
