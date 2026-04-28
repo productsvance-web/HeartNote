@@ -1,5 +1,16 @@
 import { redirect } from 'next/navigation';
+import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
+import { PhoneShell } from '@/components/heartnote/PhoneShell';
+import { StatusRing } from '@/components/heartnote/StatusRing';
+import Link from 'next/link';
+
+function greet() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -11,57 +22,124 @@ export default async function DashboardPage() {
     .select('display_name, onboarding_completed_at')
     .eq('id', user.id)
     .single();
-
   if (!profile?.onboarding_completed_at) redirect('/onboarding');
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('display_name, relationship, dry_weight_lb, nyha_class')
+    .select('display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name')
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
     .single();
 
+  const patientName = patient?.display_name ?? 'them';
+  const cardiologist = patient?.cardiologist_name;
+
+  const tiles = [
+    { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
+    { to: '/family', label: 'Family', Icon: Users, tint: 'oklch(0.93 0.02 220)' },
+    { to: '/visits', label: 'Visit prep', Icon: CalendarHeart, tint: 'var(--status-watch-soft)' },
+    { to: '/me', label: 'Settings', Icon: Settings, tint: 'var(--accent)' },
+  ] as const;
+
   return (
-    <main className="min-h-screen bg-background px-6 py-8 max-w-md mx-auto">
-      <header className="space-y-1 mb-8">
-        <p className="text-sm text-muted-foreground">Welcome back, {profile?.display_name ?? 'there'}.</p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {patient?.display_name ?? 'Your patient'} today
+    <PhoneShell>
+      <header className="px-6 pt-8">
+        <p className="text-sm text-muted-foreground">{greet()}, {profile?.display_name ?? 'there'}.</p>
+        <h1 className="font-display text-3xl text-foreground mt-1">
+          How is <span className="italic">{patientName}</span> today?
         </h1>
       </header>
 
-      <section className="rounded-2xl border border-border bg-card p-6 space-y-3">
-        <div className="flex items-center gap-3">
-          <span className="h-3 w-3 rounded-full bg-emerald-500" aria-hidden />
-          <p className="font-medium">Green zone</p>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          No alerts. No log yet today. Tap below to record a 30-second check-in.
-        </p>
-      </section>
+      <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
+        <StatusRing status="unknown" />
 
-      <section className="mt-8 space-y-4">
+        <div className="mt-6 flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">
+              {patient?.relationship ?? 'Patient'}
+            </p>
+            <p className="text-lg font-semibold text-foreground">{patientName}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              No log yet today
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">
+              {patient?.dry_weight_lb ? 'Dry weight' : 'NYHA'}
+            </p>
+            <p className="text-lg font-semibold text-foreground">
+              {patient?.dry_weight_lb ? `${patient.dry_weight_lb} lb` : patient?.nyha_class ?? '—'}
+            </p>
+          </div>
+        </div>
+
         <button
           type="button"
           disabled
-          className="w-full rounded-2xl bg-foreground text-background px-6 py-5 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{
+            background:
+              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+          }}
         >
-          Daily voice log — coming next
+          <Mic size={22} />
+          Start daily log
+          <span className="text-xs font-normal opacity-80">· coming next</span>
         </button>
-        <p className="text-xs text-muted-foreground text-center">
-          The voice log, AI trend detection, alerts, visit reports, and family share unlock as we build them.
-        </p>
       </section>
 
-      {patient?.dry_weight_lb && (
-        <section className="mt-10 text-xs text-muted-foreground">
-          <p>
-            Baselines on file: dry weight {patient.dry_weight_lb} lb · NYHA {patient.nyha_class}
-            {patient.relationship ? ` · cared for as ${patient.relationship}` : ''}.
+      <Link
+        href="/me"
+        className="mx-4 mt-4 flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-card"
+      >
+        <div
+          className="h-10 w-10 rounded-full flex items-center justify-center"
+          style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
+        >
+          <Heart size={18} />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-foreground">Welcome to HeartNote</p>
+          <p className="text-xs text-muted-foreground">
+            {cardiologist ? `${cardiologist} is on file. ` : ''}Voice log, alerts, and visit prep
+            unlock as we build them.
           </p>
-        </section>
-      )}
-    </main>
+        </div>
+        <ChevronRight size={18} className="text-muted-foreground" />
+      </Link>
+
+      <section className="mx-4 mt-5 grid grid-cols-2 gap-3">
+        {tiles.map(({ to, label, Icon, tint }) => (
+          <Link
+            key={to}
+            href={to}
+            className="rounded-2xl bg-card p-4 shadow-card flex flex-col gap-3 active:scale-[0.98] transition"
+          >
+            <div
+              className="h-11 w-11 rounded-xl flex items-center justify-center text-foreground"
+              style={{ background: tint }}
+            >
+              <Icon size={20} />
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">{label}</p>
+              <p className="text-xs text-muted-foreground">Coming soon</p>
+            </div>
+          </Link>
+        ))}
+      </section>
+
+      <footer className="mt-10 mb-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-1.5">
+        Built with{' '}
+        <Heart
+          size={12}
+          className="inline"
+          style={{ color: 'var(--status-alert)' }}
+          fill="currentColor"
+        />{' '}
+        for caregivers
+      </footer>
+    </PhoneShell>
   );
 }

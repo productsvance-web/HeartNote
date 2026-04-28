@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Button } from '@/components/ui/button';
 import { completeOnboarding } from './actions';
 import type { OnboardingPayload } from './actions';
 
@@ -228,7 +227,7 @@ function Step({ title, subtitle, children }: { title: string; subtitle: string; 
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-display text-3xl text-foreground">{title}</h1>
         <p className="text-sm text-muted-foreground">{subtitle}</p>
       </header>
       <div className="space-y-4">{children}</div>
@@ -268,13 +267,26 @@ function Actions({
   return (
     <div className="flex gap-3 pt-2">
       {onBack && (
-        <Button type="button" variant="outline" onClick={onBack}>
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-full px-5 py-3 text-sm font-medium border border-border bg-card text-foreground active:scale-[0.98] transition"
+        >
           Back
-        </Button>
+        </button>
       )}
-      <Button type="button" onClick={onNext} disabled={!canNext} className="flex-1">
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={!canNext}
+        className="flex-1 rounded-full px-5 py-3 font-semibold text-primary-foreground shadow-soft active:scale-[0.98] transition disabled:opacity-50 disabled:cursor-not-allowed"
+        style={{
+          background:
+            'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+        }}
+      >
         {nextLabel}
-      </Button>
+      </button>
     </div>
   );
 }
@@ -286,7 +298,7 @@ function ProgressDots({ step, total }: { step: number; total: number }) {
         <span
           key={i}
           className={`h-1.5 rounded-full transition-all ${
-            i === step ? 'w-8 bg-foreground' : i < step ? 'w-1.5 bg-foreground' : 'w-1.5 bg-muted'
+            i === step ? 'w-8 bg-primary' : i < step ? 'w-1.5 bg-primary' : 'w-1.5 bg-muted'
           }`}
         />
       ))}
