@@ -174,6 +174,8 @@ export type Database = {
           patient_id: string
           pillow_count: number | null
           pnd_episode: boolean | null
+          processing_error: string | null
+          processing_status: Database["public"]["Enums"]["log_processing_status"]
           resting_hr: number | null
           spo2: number | null
           sputum_color: string | null
@@ -211,6 +213,8 @@ export type Database = {
           patient_id: string
           pillow_count?: number | null
           pnd_episode?: boolean | null
+          processing_error?: string | null
+          processing_status?: Database["public"]["Enums"]["log_processing_status"]
           resting_hr?: number | null
           spo2?: number | null
           sputum_color?: string | null
@@ -248,6 +252,8 @@ export type Database = {
           patient_id?: string
           pillow_count?: number | null
           pnd_episode?: boolean | null
+          processing_error?: string | null
+          processing_status?: Database["public"]["Enums"]["log_processing_status"]
           resting_hr?: number | null
           spo2?: number | null
           sputum_color?: string | null
@@ -611,6 +617,12 @@ export type Database = {
         | "ignored"
         | "false_alarm"
       alert_tier: "tier_1_911" | "tier_2_today" | "tier_3_48hr" | "tier_4_log"
+      log_processing_status:
+        | "pending"
+        | "transcribing"
+        | "analyzing"
+        | "complete"
+        | "failed"
       med_class:
         | "loop_diuretic"
         | "ace_inhibitor"
@@ -784,6 +796,13 @@ export const Constants = {
         "false_alarm",
       ],
       alert_tier: ["tier_1_911", "tier_2_today", "tier_3_48hr", "tier_4_log"],
+      log_processing_status: [
+        "pending",
+        "transcribing",
+        "analyzing",
+        "complete",
+        "failed",
+      ],
       med_class: [
         "loop_diuretic",
         "ace_inhibitor",

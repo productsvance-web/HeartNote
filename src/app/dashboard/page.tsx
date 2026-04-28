@@ -74,10 +74,9 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled
-          className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
+        <Link
+          href="/log"
+          className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition"
           style={{
             background:
               'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
@@ -85,8 +84,8 @@ export default async function DashboardPage() {
         >
           <Mic size={22} />
           Start daily log
-          <span className="text-xs font-normal opacity-80">· coming next</span>
-        </button>
+          <span className="text-xs font-normal opacity-80">· 30 sec</span>
+        </Link>
       </section>
 
       <Link
