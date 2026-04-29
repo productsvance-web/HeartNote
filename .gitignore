@@ -66,3 +66,6 @@ next-env.d.ts
 # self-signed dev certificates (generated, not committed)
 /certificates/
 
+# youtube-study research output (local only — re-fetch via youtube-study skill if needed)
+/youtube-study/
+
