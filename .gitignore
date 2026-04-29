@@ -60,8 +60,11 @@ next-env.d.ts
 /supabase/.branches
 /supabase/.temp
 
-# claude / agent caches
-.claude/
+# claude / agent caches — track config + hooks + rules; ignore local state
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/rules/
 
 # self-signed dev certificates (generated, not committed)
 /certificates/
