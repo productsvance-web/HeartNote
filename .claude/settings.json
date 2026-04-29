@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/infrastructure-audit.py"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -27,6 +38,10 @@
           {
             "type": "command",
             "command": "python3 .claude/hooks/auto-merge-reminder.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/post-merge-verify.py"
           }
         ]
       }
