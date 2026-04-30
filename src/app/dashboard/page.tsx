@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
+import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { StatusRing } from '@/components/heartnote/StatusRing';
 import Link from 'next/link';
@@ -19,7 +20,7 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('display_name, onboarding_completed_at')
+    .select('display_name, onboarding_completed_at, timezone')
     .eq('id', user.id)
     .single();
   if (!profile?.onboarding_completed_at) redirect('/onboarding');
@@ -35,7 +36,9 @@ export default async function DashboardPage() {
   const patientName = patient?.display_name ?? 'them';
   const cardiologist = patient?.cardiologist_name;
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Caregiver-local calendar day; UTC would mis-bucket evening / early-morning
+  // logs. See src/lib/dates/today.ts.
+  const today = getTodayInTimezone(profile.timezone);
   const { data: todaysLog } = patient
     ? await supabase
         .from('daily_logs')
