@@ -11,6 +11,24 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { extractWithClaude } from '@/lib/voice-log/extract';
+import { filenameForMime } from '@/lib/voice-log/audio-mime';
+
+// Whisper accepts up to 244 tokens of context that bias transcription toward
+// expected vocabulary. This is editorial calibration, not per-request data,
+// so it lives at module level. Goal: get HF drug names and CHF symptom
+// terminology spelled correctly so downstream Claude extraction sees clean
+// signal ("Lasix" not "lazics", "Entresto" not "in tresto", "orthopnea" not
+// "ortho near"). Keep under ~200 tokens; OpenAI counts roughly 3.3 chars/token.
+const WHISPER_MEDICAL_PROMPT =
+  'Daily caregiver check-in for a parent with congestive heart failure. ' +
+  'Common medications: furosemide (Lasix), torsemide, bumetanide, ' +
+  'sacubitril-valsartan (Entresto), lisinopril, losartan, metoprolol, ' +
+  'carvedilol, bisoprolol, spironolactone, eplerenone, dapagliflozin (Farxiga), ' +
+  'empagliflozin (Jardiance), digoxin, amiodarone, warfarin. ' +
+  'Symptoms: shortness of breath, orthopnea, paroxysmal nocturnal dyspnea, ' +
+  'edema, ankle swelling, fatigue, lightheaded, chest pain. ' +
+  'Caregiver phrasing: "her ankles," "my mom," "she\'s short of breath," ' +
+  '"slept on two pillows," "weighed in this morning."';
 
 export async function processVoiceLog(logId: string, callerUserId: string): Promise<void> {
   const supabase = await createClient();
@@ -159,13 +177,20 @@ function sanitizeStructuredFields(fields: Record<string, unknown>): Record<strin
 
 async function transcribeWithWhisper(audio: Blob, apiKey: string): Promise<string> {
   const form = new FormData();
-  form.append('file', audio, 'audio.webm');
+  // Use the actual blob MIME to pick the multipart filename — Whisper sniffs
+  // bytes but a matching extension avoids ambiguity, especially for Safari
+  // iOS recordings (audio/mp4 → .m4a).
+  form.append('file', audio, filenameForMime('audio', audio.type));
   form.append('model', 'whisper-1');
-  // Caregivers often use clinical terms; biasing improves accuracy.
-  form.append(
-    'prompt',
-    'CHF caregiver daily log: weight, swelling, edema, dyspnea, orthopnea, pillows, fatigue, Lasix, furosemide, cardiologist, blood pressure, heart rate.'
-  );
+  // English-only product; eliminates auto-detect latency and the slim chance
+  // of mis-detection on accented caregiver speech.
+  form.append('language', 'en');
+  // Bias decoding toward HF drug names and CHF terminology.
+  form.append('prompt', WHISPER_MEDICAL_PROMPT);
+  // Most deterministic output. Whisper's default is already 0 in current SDKs,
+  // but pin it so future SDK drift doesn't introduce variability.
+  form.append('temperature', '0');
+  // response_format defaults to 'json' — leave default; we only consume `.text`.
 
   const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
     method: 'POST',
