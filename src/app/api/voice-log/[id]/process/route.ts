@@ -14,10 +14,30 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  // Run-in-background semantics: respond fast, finish processing async.
-  // Next.js route handlers complete when the function returns, so we await the
-  // top-level call but skip blocking the client on the full processing chain
-  // by chunking it inside processVoiceLog itself.
+  // Idempotency guard: if this log already finished processing, return the
+  // existing result instead of re-running Whisper + Claude. Without this, a
+  // double-tap or a retry would re-charge API credits and overwrite a good
+  // result with a possibly different one.
+  const { data: existing } = await supabase
+    .from('daily_logs')
+    .select('processing_status, transcribed_text, structured_observations')
+    .eq('id', id)
+    .single();
+  if (existing?.processing_status === 'complete') {
+    return NextResponse.json({
+      ok: true,
+      alreadyComplete: true,
+      processing_status: existing.processing_status,
+      transcribed_text: existing.transcribed_text,
+      structured_observations: existing.structured_observations,
+    });
+  }
+
+  // Blocking call — this route awaits the full Whisper + Claude pipeline
+  // (typically 10–30s) and only responds when the row is updated to
+  // `complete` or `failed`. The client (`voice-log-client.tsx`) issues this
+  // POST after a successful upload, then polls `/api/voice-log/[id]/status`
+  // for state changes. Migrate to a queue when latency or scale demands.
   try {
     await processVoiceLog(id, user.id);
     return NextResponse.json({ ok: true });
