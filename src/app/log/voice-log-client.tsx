@@ -56,12 +56,11 @@ export function VoiceLogClient({
   const timerRef = useRef<number | null>(null);
 
   // If a log is already pending/processing, poll for updates.
+  // Note: when existingStatus is 'complete' on mount, the useState initializer
+  // above already sets status to 'complete', so the early-return below kicks
+  // in and we never start a polling interval.
   useEffect(() => {
     if (!logId || status === 'complete' || status === 'idle') return;
-    if (existingStatus === 'complete') {
-      setStatus('complete');
-      return;
-    }
     const interval = window.setInterval(async () => {
       try {
         const res = await fetch(`/api/voice-log/${logId}/status`, { cache: 'no-store' });
@@ -87,7 +86,7 @@ export function VoiceLogClient({
       }
     }, 2000);
     return () => window.clearInterval(interval);
-  }, [logId, status, existingStatus]);
+  }, [logId, status]);
 
   async function startRecording() {
     setError(null);
@@ -156,6 +155,14 @@ export function VoiceLogClient({
 
   async function saveRecording() {
     if (!audioBlobRef.current) return;
+    // Guard against 0-byte recordings (instant tap-stop, or browsers that
+    // produce an empty blob). Whisper would crash deeper in the pipeline;
+    // surface a friendly error here and don't trigger upload.
+    if (audioBlobRef.current.size === 0) {
+      setStatus('error');
+      setError('No audio recorded — try again.');
+      return;
+    }
     setStatus('uploading');
     setError(null);
     try {

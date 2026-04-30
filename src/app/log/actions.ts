@@ -21,6 +21,12 @@ export async function uploadVoiceLog(
   if (!audio || typeof audio === 'string' || !(audio instanceof File)) {
     return { ok: false, error: 'No audio file received.' };
   }
+  // Belt-and-suspenders: reject 0-byte uploads before they create a daily_log
+  // row or burn a storage write. The client already filters these out, but a
+  // misbehaving browser or a direct API call shouldn't be able to slip past.
+  if (audio.size === 0) {
+    return { ok: false, error: 'No audio recorded — try again.' };
+  }
   const duration = Number(durationRaw);
   if (!Number.isFinite(duration) || duration <= 0 || duration > 600) {
     return { ok: false, error: 'Recording length is invalid.' };

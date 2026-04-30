@@ -31,107 +31,122 @@ const WHISPER_MEDICAL_PROMPT =
   '"slept on two pillows," "weighed in this morning."';
 
 export async function processVoiceLog(logId: string, callerUserId: string): Promise<void> {
-  const supabase = await createClient();
-
-  // 1. Load the log + patient context. RLS ensures we only see logs owned by
-  //    this caregiver via patients.caregiver_id.
-  const { data: log, error: loadError } = await supabase
-    .from('daily_logs')
-    .select(
-      'id, patient_id, audio_storage_path, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
-    )
-    .eq('id', logId)
-    .single();
-
-  if (loadError || !log) throw new Error(loadError?.message ?? 'log not found');
-  if (Array.isArray(log.patients) || !log.patients) throw new Error('patient join failed');
-  if (log.patients.caregiver_id !== callerUserId) throw new Error('forbidden');
-  if (!log.audio_storage_path) throw new Error('audio file missing');
-
-  await supabase
-    .from('daily_logs')
-    .update({ processing_status: 'transcribing', processing_error: null })
-    .eq('id', logId);
-
-  // 2. Download the audio file from Supabase Storage.
-  const { data: audioBlob, error: downloadError } = await supabase.storage
-    .from('audio_logs')
-    .download(log.audio_storage_path);
-  if (downloadError || !audioBlob) {
-    await markFailed(logId, downloadError?.message ?? 'audio download failed');
-    return;
-  }
-
-  // 3. Whisper transcription.
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!openaiKey) {
-    // Whisper not yet wired — leave a friendly placeholder so the UI can show
-    // that the audio is saved while we wait on the API key.
-    await supabase
-      .from('daily_logs')
-      .update({
-        processing_status: 'complete',
-        transcribed_text: '(Audio saved. Add OPENAI_API_KEY to .env.local to enable transcription.)',
-      })
-      .eq('id', logId);
-    return;
-  }
-
-  let transcript: string;
+  // Outer try/catch ensures any uncaught throw (load failure, forbidden,
+  // missing audio, unexpected error) lands the row in a `failed` state with a
+  // populated `processing_error`. Without this, an early throw before the
+  // first status update would leave the row stuck at `pending` forever and the
+  // client poller would spin indefinitely.
   try {
-    transcript = await transcribeWithWhisper(audioBlob, openaiKey);
-  } catch (err) {
-    await markFailed(logId, err instanceof Error ? err.message : 'transcription failed');
-    return;
-  }
+    const supabase = await createClient();
 
-  await supabase
-    .from('daily_logs')
-    .update({
-      processing_status: 'analyzing',
-      transcribed_text: transcript,
-    })
-    .eq('id', logId);
+    // 1. Load the log + patient context. RLS ensures we only see logs owned by
+    //    this caregiver via patients.caregiver_id.
+    const { data: log, error: loadError } = await supabase
+      .from('daily_logs')
+      .select(
+        'id, patient_id, audio_storage_path, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
+      )
+      .eq('id', logId)
+      .single();
 
-  // 4. Claude extraction — structured fields + caregiver summary + reasoning.
-  try {
-    const extraction = await extractWithClaude(transcript, {
-      displayName: log.patients.display_name,
-      relationship: log.patients.relationship,
-      dryWeightLb: log.patients.dry_weight_lb,
-      nyhaClass: log.patients.nyha_class,
-      normalPillowCount: log.patients.normal_pillow_count,
-    });
+    if (loadError || !log) throw new Error(loadError?.message ?? 'log not found');
+    if (Array.isArray(log.patients) || !log.patients) throw new Error('patient join failed');
+    if (log.patients.caregiver_id !== callerUserId) throw new Error('forbidden');
+    if (!log.audio_storage_path) throw new Error('audio file missing');
 
-    // Sanitize structured fields: only allow known columns; coerce empty strings → null.
-    const structuredUpdate = sanitizeStructuredFields(extraction.structuredFields);
+    await supabase
+      .from('daily_logs')
+      .update({ processing_status: 'transcribing', processing_error: null })
+      .eq('id', logId);
+
+    // 2. Download the audio file from Supabase Storage.
+    const { data: audioBlob, error: downloadError } = await supabase.storage
+      .from('audio_logs')
+      .download(log.audio_storage_path);
+    if (downloadError || !audioBlob) {
+      await markFailed(logId, downloadError?.message ?? 'audio download failed');
+      return;
+    }
+
+    // 3. Whisper transcription.
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      // Whisper not yet wired — leave a friendly placeholder so the UI can show
+      // that the audio is saved while we wait on the API key.
+      await supabase
+        .from('daily_logs')
+        .update({
+          processing_status: 'complete',
+          transcribed_text: '(Audio saved. Add OPENAI_API_KEY to .env.local to enable transcription.)',
+        })
+        .eq('id', logId);
+      return;
+    }
+
+    let transcript: string;
+    try {
+      transcript = await transcribeWithWhisper(audioBlob, openaiKey);
+    } catch (err) {
+      await markFailed(logId, err instanceof Error ? err.message : 'transcription failed');
+      return;
+    }
 
     await supabase
       .from('daily_logs')
       .update({
-        ...structuredUpdate,
-        structured_observations: {
-          caregiver_summary: extraction.caregiverSummary,
-          ai_reasoning: extraction.aiReasoning,
-          follow_up_question: extraction.followUpQuestion || null,
-        },
-        processing_status: 'complete',
-        ai_processed_at: new Date().toISOString(),
+        processing_status: 'analyzing',
+        transcribed_text: transcript,
       })
       .eq('id', logId);
+
+    // 4. Claude extraction — structured fields + caregiver summary + reasoning.
+    try {
+      const extraction = await extractWithClaude(transcript, {
+        displayName: log.patients.display_name,
+        relationship: log.patients.relationship,
+        dryWeightLb: log.patients.dry_weight_lb,
+        nyhaClass: log.patients.nyha_class,
+        normalPillowCount: log.patients.normal_pillow_count,
+      });
+
+      // Sanitize structured fields: only allow known columns; coerce empty strings → null.
+      const structuredUpdate = sanitizeStructuredFields(extraction.structuredFields);
+
+      await supabase
+        .from('daily_logs')
+        .update({
+          ...structuredUpdate,
+          structured_observations: {
+            caregiver_summary: extraction.caregiverSummary,
+            ai_reasoning: extraction.aiReasoning,
+            follow_up_question: extraction.followUpQuestion || null,
+          },
+          processing_status: 'complete',
+          ai_processed_at: new Date().toISOString(),
+        })
+        .eq('id', logId);
+    } catch (err) {
+      // Whisper succeeded so the transcript is preserved on the row; only the AI
+      // extraction failed. Mark complete with an error note in observations so
+      // the user still sees their words rendered.
+      const message = err instanceof Error ? err.message : 'AI extraction failed';
+      await supabase
+        .from('daily_logs')
+        .update({
+          processing_status: 'complete',
+          ai_processed_at: new Date().toISOString(),
+          structured_observations: { ai_extraction_error: message },
+        })
+        .eq('id', logId);
+    }
   } catch (err) {
-    // Whisper succeeded so the transcript is preserved on the row; only the AI
-    // extraction failed. Mark complete with an error note in observations so
-    // the user still sees their words rendered.
-    const message = err instanceof Error ? err.message : 'AI extraction failed';
-    await supabase
-      .from('daily_logs')
-      .update({
-        processing_status: 'complete',
-        ai_processed_at: new Date().toISOString(),
-        structured_observations: { ai_extraction_error: message },
-      })
-      .eq('id', logId);
+    // Catch-all for any throw not handled above (the early load/forbidden/
+    // missing-audio paths in particular). markFailed runs against RLS like
+    // every other write — if RLS blocks it (e.g. forbidden user), the row
+    // simply isn't updated and the original error still propagates.
+    const message = err instanceof Error ? err.message : 'voice-log processing failed';
+    await markFailed(logId, message);
+    throw err;
   }
 }
 
