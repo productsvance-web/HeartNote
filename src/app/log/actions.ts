@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
+import { extForMime } from '@/lib/voice-log/audio-mime';
 
 const PatientIdSchema = z.string().uuid();
 
@@ -66,14 +67,18 @@ export async function uploadVoiceLog(
     return { ok: false, error: logError?.message ?? 'Could not create today’s log.' };
   }
 
-  // Path: {caregiver_id}/{patient_id}/{daily_log_id}.webm
-  const ext = (audio as File).name?.split('.').pop() ?? 'webm';
+  // Path: {caregiver_id}/{patient_id}/{daily_log_id}.{ext}
+  // Derive extension from the actual blob MIME (Safari iOS = m4a, others = webm)
+  // rather than the multipart filename, which the helper sets but is still
+  // a derived value — `audio.type` is the source of truth from MediaRecorder.
+  const audioType = (audio as File).type;
+  const ext = extForMime(audioType);
   const objectPath = `${user.id}/${patientId}/${log.id}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from('audio_logs')
     .upload(objectPath, audio, {
-      contentType: (audio as File).type || 'audio/webm',
+      contentType: audioType || 'audio/webm',
       upsert: true,
     });
   if (uploadError) {

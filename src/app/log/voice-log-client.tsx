@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Square, RotateCcw, Check, AlertCircle } from 'lucide-react';
 import { uploadVoiceLog } from './actions';
+import { filenameForMime } from '@/lib/voice-log/audio-mime';
 
 type Status =
   | 'idle'
@@ -160,7 +161,11 @@ export function VoiceLogClient({
     try {
       const formData = new FormData();
       formData.set('patientId', patientId);
-      formData.set('audio', audioBlobRef.current, 'voice-log.webm');
+      formData.set(
+        'audio',
+        audioBlobRef.current,
+        filenameForMime('voice-log', audioBlobRef.current.type)
+      );
       formData.set('durationSeconds', String(seconds));
       const result = await uploadVoiceLog(formData);
       if (!result.ok) {
