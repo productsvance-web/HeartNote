@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { VoiceLogClient } from './voice-log-client';
 
@@ -10,7 +11,7 @@ export default async function LogPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('onboarding_completed_at')
+    .select('onboarding_completed_at, timezone')
     .eq('id', user.id)
     .single();
   if (!profile?.onboarding_completed_at) redirect('/onboarding');
@@ -25,8 +26,9 @@ export default async function LogPage() {
 
   if (!patient) redirect('/onboarding');
 
-  // If today's log already exists, surface it.
-  const today = new Date().toISOString().slice(0, 10);
+  // If today's log already exists, surface it. `today` is the caregiver's
+  // local calendar day, not UTC — see src/lib/dates/today.ts.
+  const today = getTodayInTimezone(profile.timezone);
   const { data: todaysLog } = await supabase
     .from('daily_logs')
     .select('id, processing_status, transcribed_text, structured_observations, created_at')

@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { getTodayForCaregiver } from '@/lib/dates/today';
 
 const PatientIdSchema = z.string().uuid();
 
@@ -43,7 +44,9 @@ export async function uploadVoiceLog(
   }
 
   // Upsert today's daily_log row. UNIQUE(patient_id, log_date) enforces one per day.
-  const today = new Date().toISOString().slice(0, 10);
+  // `today` must be computed in the caregiver's local timezone — a UTC date
+  // would let two same-local-day recordings clobber each other on upsert.
+  const today = await getTodayForCaregiver(supabase, user.id);
   const { data: log, error: logError } = await supabase
     .from('daily_logs')
     .upsert(
