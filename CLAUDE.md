@@ -85,7 +85,7 @@ supabase db push            # Apply migrations BEFORE merging migration changes
 ## Git / PR
 **Always use worktrees for feature work. Never edit on `main`. Never `git checkout` to switch branches.** Create `.claude/worktrees/<feature>` as the first action of any non-trivial task — before reading code, before editing — so changes never accumulate on `main`.
 
-Flow: worktree → edit → commit → `git push` → `gh pr create` → `gh pr checks --watch` → on pass `gh pr merge --squash` → delete branch and worktree.
+Flow: worktree → edit → commit → `git push` → `gh pr create` → `gh pr checks --watch` → on pass, **`cd` back to the main worktree first**, then `gh pr merge --squash` → `git worktree remove .claude/worktrees/<feature>` → `git branch -D <feature>` → `git pull --ff-only origin main`. Order matters: running `gh pr merge` from inside the feature worktree fails on the local-sync step (`main is already used by worktree`), and `git branch -D` fails while the worktree still has the branch checked out. The remote head branch deletes automatically (repo setting `delete_branch_on_merge=true`).
 
 ## Migrations
 If you created or modified anything in `supabase/migrations/`, run `supabase db push` before merging.
