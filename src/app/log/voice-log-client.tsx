@@ -118,7 +118,11 @@ const TILE_META: Record<
 
 function formatDyspnea(level: number | null): string | null {
   if (level == null) return null;
-  return ['Normal', 'On heavy exertion', 'On normal walking', 'On minimal activity', 'At rest'][level] ?? null;
+  // Caregiver-facing labels. The clinical anchors ("on heavy exertion,"
+  // "on minimal activity") guide Claude's grading inside the prompt but
+  // shouldn't echo into the UI — they imply a precision the caregiver
+  // didn't actually express.
+  return ['Normal', 'Mild', 'Moderate', 'Severe', 'Very severe'][level] ?? null;
 }
 function formatSeverity(level: number | null): string | null {
   if (level == null) return null;
@@ -664,7 +668,12 @@ export function VoiceLogClient({
   }
 
   async function stopRecording(reasonNote?: string) {
-    if (status !== 'recording' && status !== 'requesting-mic') return;
+    // Idempotency guard via ref, not state. The state-based check used to
+    // read a stale closure when the auto-stop timer fired (the function was
+    // captured at click-time when status was still 'idle'), so the timer
+    // would never clear and recording continued past MAX_SECONDS. The ref
+    // is always live; checking it twice (here + below) is harmless.
+    if (!streamRef.current && !timerRef.current) return;
     if (timerRef.current) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;

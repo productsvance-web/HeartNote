@@ -126,7 +126,7 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
           pillow_count: {
             type: 'integer',
             description:
-              'Pillows the patient slept with last night. RULES: (a) caregiver said NOTHING about pillows → OMIT. (b) caregiver said "pillows were normal" / "her usual pillows" / "same as always" → fill with the patient\'s normal value from context. (c) caregiver named a specific number → fill that number. (d) caregiver said something general like "she had a good night\'s rest" with no pillow mention → OMIT.',
+              'Pillows the patient slept with last night. STRICT GATING: the caregiver MUST explicitly mention "pillow" / "pillows" / "sleeping position" / "slept on" BY NAME for you to fill this field. RULES: (a) caregiver said NOTHING about pillows or sleeping → OMIT. (b) the word "pillow" or "sleep" appears in a clause along with "normal" / "usual" / "same" ("pillows were normal," "her usual pillows," "slept on her usual setup") → fill with the patient\'s normal_pillow_count from context. (c) caregiver named a specific number tied to pillows ("she slept on 5 pillows") → fill that number. (d) caregiver said general phrases like "everything was the same," "appetite is normal," "blood pressure is the same," "weight is the same" — NONE of these mention pillows → OMIT pillow_count even though the word "normal" or "same" appears elsewhere. The "normal/usual/same" must be specifically about pillows or sleeping, never about other things in the same transcript.',
           },
           appetite_change: {
             type: 'string',
@@ -205,11 +205,12 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - activity_tolerance_change: capture the caregiver's actual phrase if they described what the patient could or couldn't do.
 - Omit any field the caregiver didn't address. day_level: {} is valid.
 
-# pillow_count rules — read carefully
-- Caregiver said NOTHING about pillows / sleeping position → OMIT pillow_count.
-- "pillows were normal" / "her usual pillows" / "same as always" → fill day_level.pillow_count with the patient's normal value from context. THIS IS THE ONE CASE WHERE YOU USE THE ONBOARDING VALUE.
-- Specific number ("she slept on 5 pillows") → fill that number.
-- "she had a good night's rest" with no pillow mention → OMIT.
+# pillow_count rules — read carefully (this is THE most common over-fill mistake)
+- Caregiver said NOTHING about pillows / sleeping → OMIT pillow_count.
+- The phrase "pillows were normal" / "her usual pillows" / "slept on her usual setup" / "same pillows as always" — i.e. the words "pillow" or "sleep" appear together with "normal/usual/same" — fill from normal_pillow_count in context. THIS IS THE ONLY CASE where you use the onboarding value.
+- Specific number tied to pillows ("she slept on 5 pillows", "two pillows tonight") → fill that number.
+- The transcript contains "normal" / "same" / "fine" / "the same as always" referring to OTHER things — appetite, weight, blood pressure, breathing, etc. — and pillows are NOT mentioned → OMIT pillow_count. Generic "everything is the same" with no pillow word is NOT a green light. Wrong example to avoid: caregiver says "Appetite is normal. Weight is the same. Blood pressure is the same." — DO NOT fill pillow_count from this; pillows weren't mentioned.
+- "She had a good night's rest" with no pillow mention → OMIT.
 
 # Tone reference
 
