@@ -817,6 +817,12 @@ export function VoiceLogClient({
   }
 
   function recordAnother() {
+    // Keep `claudeTiles` and `logId` so the just-completed dictation's
+    // synthesized state stays visible as muted "Earlier today" tiles in
+    // the idle phase, instead of blanking. The next Record-tap creates a
+    // new logId, which re-fires the hydration effect and refreshes the
+    // synthesis. Observations/finals/interim are dictation-specific and
+    // do reset.
     setStatus('idle');
     setError(null);
     setStopReason(null);
@@ -824,8 +830,6 @@ export function VoiceLogClient({
     setInterim('');
     setFinals([]);
     setObservations(null);
-    setClaudeTiles(null);
-    setLogId(null);
     setSeconds(0);
   }
 
