@@ -489,7 +489,7 @@ export function VoiceLogClient({
         setClaudeTiles(data);
         if (data.processing_status === 'complete') {
           setStatus('complete');
-          if (data.transcribed_text && finals.length === 0) {
+          if (data.transcribed_text && finalsRef.current.length === 0) {
             setFinals([data.transcribed_text]);
           }
           setObservations(data.structured_observations);
@@ -504,7 +504,6 @@ export function VoiceLogClient({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logId]);
 
   // Poll /status every 1500ms while processing is in flight. Independent
@@ -526,7 +525,7 @@ export function VoiceLogClient({
         setClaudeTiles(data);
         if (data.processing_status === 'complete') {
           setStatus('complete');
-          if (data.transcribed_text && finals.length === 0) {
+          if (data.transcribed_text && finalsRef.current.length === 0) {
             setFinals([data.transcribed_text]);
           }
           setObservations(data.structured_observations);
@@ -542,7 +541,6 @@ export function VoiceLogClient({
       cancelled = true;
       window.clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logId, status]);
 
   // Voice-stop watcher: when the latest final ends with a stop phrase AND
@@ -630,10 +628,18 @@ export function VoiceLogClient({
     }
     streamRef.current = stream;
 
-    // Permission revoked mid-session
+    // Permission revoked mid-session. Read recording state via refs because
+    // this callback closes over the click-time render's `status` (typically
+    // 'idle'), so a state-based check would never fire. Guard on `streamRef`
+    // alone (not `timerRef`) — between mic-acquired and timer-started, we
+    // run several awaited network calls (token mint, discardEmptyVoiceLog,
+    // startVoiceLog, openSession). If the user revokes mic in that window,
+    // we still want stopRecording to fire and surface the "Mic was turned
+    // off" reason; stopRecording handles the no-timer case gracefully via
+    // its existing null-checks.
     stream.getTracks().forEach((t) => {
       t.onended = () => {
-        if (status === 'recording') {
+        if (streamRef.current) {
           stopRecording('Mic was turned off — saving what you said.');
         }
       };
@@ -719,9 +725,12 @@ export function VoiceLogClient({
       onClose: (code) => {
         // 1000 = normal close (we initiated). Anything else mid-recording
         // is a drop. Try one reconnect with a fresh token; if that also
-        // fails, stop and submit what we have.
+        // fails, stop and submit what we have. Recording state is read via
+        // refs — this callback closes over the openSession-time `status`
+        // (typically 'requesting-mic'), so a state-based check would never
+        // see 'recording'.
         if (code === 1000) return;
-        if (status !== 'recording') return;
+        if (!streamRef.current || !timerRef.current) return;
         if (reconnectedOnceRef.current) {
           stopRecording('Connection lost — saving what you said.');
           return;
@@ -799,9 +808,8 @@ export function VoiceLogClient({
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `processing failed (${res.status})`);
       }
-      // Processing succeeded; the existing-log fetch effect picks up the
-      // results. Trigger an immediate fetch by toggling status.
-      setStatus('analyzing');
+      // Status is already 'analyzing' (set in stopRecording); the polling
+      // effect picks up the result.
     } catch (err) {
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Processing failed.');
