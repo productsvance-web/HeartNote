@@ -44,8 +44,8 @@ export default async function LogPage() {
           How is <span className="italic">{patient.display_name}</span>?
         </h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Tap and talk for 30 seconds. Mention weight, swelling, breathing, energy, anything that
-          feels off.
+          Tap and talk for up to 2 minutes — weight, breathing, swelling, energy, sleep, cough,
+          appetite, anything that feels off. Watch the tiles fill as you speak.
         </p>
       </header>
 
