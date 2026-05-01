@@ -140,26 +140,29 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 3. NEVER recommend the ER, 911, or any specific medical action. HeartNote's tier-detection logic (separate from you) handles emergency triage based on the structured fields you extract.
 4. NEVER use alarming language ("this is bad," "you should worry," "she's in trouble"). The GRELIEF TEST: every sentence has to work at the top of a caregiver's emotional rollercoaster AND at the bottom — sit with the oscillation, not amplify it. No chirpy "great job!" either.
 5. ALWAYS attribute clinical claims to the source (AHA, Cleveland Clinic, ESC, the research file). Never invent thresholds.
-6. ONLY fill structured fields the caregiver actually mentioned IN THIS TRANSCRIPT. If the caregiver didn't say anything about pillows, do not fill pillow_count — even if you know the patient's "normal" pillow count from prior context. Guessing or inferring numbers contaminates trend data and breaks the alert engine that runs on these columns. When in doubt, OMIT the field — partial data is better than fabricated data.
+6. ONLY fill structured fields the caregiver actually mentioned IN THIS TRANSCRIPT. The patient context below contains values from onboarding (dry_weight, normal_pillow_count, etc.) — those are LOOKUPS for resolving caregiver phrases like "pillows were normal," NOT defaults. If the caregiver said nothing about a topic, OMIT that structured field, regardless of what's in patient context.
 
-# Anti-hallucination examples — read carefully
+# Field-by-field rules — read carefully
 
-❌ WRONG (Claude inferring from prior context):
-Transcript: "She had a good night's rest."
-DO NOT fill: pillow_count, dyspnea_level, fatigue_level. The caregiver said nothing about pillows, breathing, or fatigue. "Good rest" is too vague to populate any of those structured fields.
+## pillow_count
+- Caregiver said NOTHING about pillows / sleeping position / how she slept → **omit pillow_count.**
+- Caregiver said "pillows were normal" / "her usual pillows" / "slept on her usual setup" / "same as always" → **fill pillow_count with the patient's normal value from context.** This is the one case where you USE the onboarding value.
+- Caregiver named a specific number ("she slept on 5 pillows", "two pillows tonight") → **fill that number.**
+- Caregiver said something general like "she had a good night's rest" with no pillow mention → **omit pillow_count.** "Good rest" is too vague to populate.
 
-✅ CORRECT:
-Transcript: "She had a good night's rest."
-Fill: nothing. caregiver_summary: "Logged: a good night's rest." No structured fields populated.
+## weight_lb
+- Caregiver said NOTHING about weight → omit.
+- Caregiver said a specific number ("174 today") → fill that number.
+- Caregiver said "weight was normal" / "no change" → omit (the onboarding dry_weight is the cardiologist target, not today's reading; "normal" doesn't mean "exactly the dry weight").
 
-❌ WRONG:
-Transcript: "Her breathing is fine."
-DO NOT fill dyspnea_level=0 from "fine." "Fine" is the caregiver's word, not a numeric scale value.
+## dyspnea_level (0–4)
+- "her breathing is fine" / "no shortness of breath" / "breathing normally" → fill 0.
+- "out of breath on the stairs" / "winded climbing" → fill 1 or 2 depending on context.
+- "out of breath at rest" / "can't finish sentences" → fill 4 (TIER-1).
+- Nothing said about breathing → omit.
 
-✅ CORRECT:
-Transcript: "Her breathing is fine."
-Fill: dyspnea_level=0 (this IS a direct mapping — "fine breathing" = no shortness of breath).
-But: do NOT also infer pillow_count from this. They didn't mention pillows.
+## All other fields
+Same principle: if explicitly mentioned, fill. If not mentioned, omit. Patient context is for INTERPRETATION (e.g., comparing today's weight to dry_weight in ai_reasoning), not for defaulting structured fields.
 
 # Tone reference
 
@@ -192,11 +195,11 @@ export type PatientContext = {
   relationship: string | null;
   dryWeightLb: number | null;
   nyhaClass: string | null;
-  // Note: normal_pillow_count exists on the patient row (set at onboarding,
-  // used by future orthopnea-creep alerting) but is intentionally NOT
-  // passed to Claude here. Including it in the user-message context led
-  // the model to autofill pillow_count from "she slept fine" — clinical
-  // data integrity bug. Re-introduce only with model-side guards proven.
+  // Set at onboarding. Used by Claude ONLY to resolve caregiver phrases
+  // like "pillows were normal" → fill pillow_count with this value. Never
+  // used as a default when pillows aren't mentioned at all. See the
+  // field-by-field rules in the system prompt for the gating logic.
+  normalPillowCount: number | null;
 };
 
 export type ExtractionResult = {
@@ -212,11 +215,12 @@ export async function extractWithClaude(
 ): Promise<ExtractionResult> {
   const research = await loadResearch();
 
-  const userMessage = `# Patient context (for reasoning only — do not autofill structured fields from this; only extract what the caregiver actually said in the transcript)
+  const userMessage = `# Patient context (lookup table — apply per the field-by-field rules in the system prompt; do NOT use as defaults)
 - Refers to patient as: ${patientContext.displayName}
 - Relationship to caregiver: ${patientContext.relationship ?? 'unknown'}
 - Cardiologist-set dry weight: ${patientContext.dryWeightLb ? `${patientContext.dryWeightLb} lb` : 'not set'}
 - NYHA functional class: ${patientContext.nyhaClass ?? 'unknown'}
+- Patient's normal pillow count when sleeping: ${patientContext.normalPillowCount ?? 'unknown'} (use ONLY when caregiver says "pillows were normal" or equivalent — never as a default)
 
 # Caregiver's voice log transcript
 """
@@ -225,7 +229,7 @@ ${transcript}
 
 Extract structured observations from the transcript and write the caregiver-friendly summary. Call log_observation now.
 
-REMINDER: only fill fields the caregiver explicitly mentioned. Do NOT autofill pillow_count, weight, vitals, or any other field from the patient context above — that context is for INTERPRETATION (e.g., comparing today's weight to dry weight in ai_reasoning), not for structured-field defaults. If the caregiver didn't say it, omit the field.`;
+REMINDER: only fill fields the caregiver explicitly mentioned. The patient context above is a LOOKUP for resolving phrases like "pillows were normal" — it is NOT a source of default values. If the caregiver said nothing about pillows, OMIT pillow_count. Same for every other field.`;
 
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5',

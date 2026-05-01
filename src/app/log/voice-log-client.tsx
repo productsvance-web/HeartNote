@@ -93,17 +93,26 @@ const TILE_ORDER: TileKey[] = [
   'appetite',
 ];
 
-const TILE_META: Record<TileKey, { label: string; Icon: typeof Scale; emptyHint: string }> = {
-  weight: { label: 'Weight', Icon: Scale, emptyHint: 'Mention to log' },
-  blood_pressure: { label: 'Blood pressure', Icon: Heart, emptyHint: 'Tap if measured' },
-  heart_rate: { label: 'Heart rate', Icon: Activity, emptyHint: 'Tap if measured' },
-  oxygen: { label: 'Oxygen', Icon: Droplets, emptyHint: 'Tap if measured' },
-  breathing: { label: 'Breathing', Icon: Wind, emptyHint: 'Mention to log' },
-  swelling: { label: 'Swelling', Icon: Footprints, emptyHint: 'Mention to log' },
-  energy: { label: 'Energy', Icon: Battery, emptyHint: 'Mention to log' },
-  sleep: { label: 'Sleep', Icon: Moon, emptyHint: 'Mention to log' },
-  cough: { label: 'Cough', Icon: Volume2, emptyHint: 'Mention to log' },
-  appetite: { label: 'Appetite', Icon: Soup, emptyHint: 'Mention to log' },
+// `important` flags the daily-track core: the 5 signals that matter most for
+// CHF baseline + decompensation detection per research/chf-source-of-truth.md.
+// Used to surface a "missing today" nudge banner if any of these go unfilled.
+// BP/HR/O2 are conditional vitals (caregiver may not have a cuff/oximeter)
+// and Cough/Appetite are signal-bearing but lower urgency, so they don't
+// trigger the nudge.
+const TILE_META: Record<
+  TileKey,
+  { label: string; Icon: typeof Scale; emptyHint: string; important: boolean }
+> = {
+  weight: { label: 'Weight', Icon: Scale, emptyHint: 'Mention to log', important: true },
+  blood_pressure: { label: 'Blood pressure', Icon: Heart, emptyHint: 'Tap if measured', important: false },
+  heart_rate: { label: 'Heart rate', Icon: Activity, emptyHint: 'Tap if measured', important: false },
+  oxygen: { label: 'Oxygen', Icon: Droplets, emptyHint: 'Tap if measured', important: false },
+  breathing: { label: 'Breathing', Icon: Wind, emptyHint: 'Mention to log', important: true },
+  swelling: { label: 'Swelling', Icon: Footprints, emptyHint: 'Mention to log', important: true },
+  energy: { label: 'Energy', Icon: Battery, emptyHint: 'Mention to log', important: true },
+  sleep: { label: 'Sleep', Icon: Moon, emptyHint: 'Mention to log', important: true },
+  cough: { label: 'Cough', Icon: Volume2, emptyHint: 'Mention to log', important: false },
+  appetite: { label: 'Appetite', Icon: Soup, emptyHint: 'Mention to log', important: false },
 };
 
 function formatDyspnea(level: number | null): string | null {
@@ -342,6 +351,8 @@ export function VoiceLogClient({
   // caregiver WHY the recording stopped (mic revoked, time up, network drop).
   // Empty for a normal manual/voice stop.
   const [stopReason, setStopReason] = useState<string | null>(null);
+  // Caregiver dismissed the "missing important tiles" nudge for this log.
+  const [missingNudgeDismissed, setMissingNudgeDismissed] = useState(false);
 
   const dgClientRef = useRef<DeepgramClient | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -478,6 +489,7 @@ export function VoiceLogClient({
   async function startRecording() {
     setError(null);
     setStopReason(null);
+    setMissingNudgeDismissed(false);
     setInterim('');
     setFinals([]);
     setClaudeTiles(null);
@@ -672,6 +684,7 @@ export function VoiceLogClient({
     setStatus('idle');
     setError(null);
     setStopReason(null);
+    setMissingNudgeDismissed(false);
     setInterim('');
     setFinals([]);
     setObservations(null);
@@ -684,6 +697,19 @@ export function VoiceLogClient({
 
   const alertChips = alertChipsFromClaude(claudeTiles);
   const moreNotes = buildMoreNotes(claudeTiles);
+
+  // Important daily-track tiles the caregiver didn't log today. Drives the
+  // post-recording nudge banner — only computed when Claude has finished
+  // (otherwise everything looks "missing"). Patient name is a noun used in
+  // the banner copy.
+  const missingImportantTiles =
+    status === 'complete' && claudeTiles
+      ? TILE_ORDER.filter((key) => {
+          if (!TILE_META[key].important) return false;
+          const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
+          return display.value == null;
+        })
+      : [];
 
   return (
     <section className="mt-6 mx-4 flex flex-col gap-4">
@@ -848,15 +874,51 @@ export function VoiceLogClient({
         )}
       </div>
 
+      {/* Missing-important nudge: gentle reminder of unfilled daily-track
+          tiles. Shown only on complete state, dismissible, no navigation gate. */}
+      {status === 'complete' && missingImportantTiles.length > 0 && !missingNudgeDismissed && (
+        <div
+          className="rounded-2xl p-4 border"
+          style={{
+            background: 'var(--status-watch-soft)',
+            borderColor: 'var(--status-watch)',
+            color: 'var(--status-watch-foreground)',
+          }}
+        >
+          <div className="flex items-start gap-3">
+            <AlertCircle size={20} className="shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">A few you didn’t mention today</p>
+              <p className="text-xs leading-relaxed mt-1.5 opacity-90">
+                These five matter most for spotting changes early:{' '}
+                <span className="font-medium">
+                  {missingImportantTiles.map((k) => TILE_META[k].label).join(', ')}
+                </span>
+                . Try to mention them in tomorrow’s log so we can build a stable baseline.
+              </p>
+              <button
+                type="button"
+                onClick={() => setMissingNudgeDismissed(true)}
+                className="text-xs font-medium mt-3 underline underline-offset-2"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tile grid — always visible. Tiles are a daily-care guide:
           muted/dim in idle, light up as the user speaks, render Claude's
           authoritative values once analysis completes.
 
-          Three visual states (most → least prominent):
-            filled  — has a value; full opacity, sage icon, value in bold
-            heard   — keyterm matched but no value yet (Claude still working);
-                      strong sage ring, pulse animation, "Heard — extracting…"
-            muted   — neither; 60% opacity, hint copy
+          Visual states (most → least prominent):
+            filled       — has a value; full opacity, sage icon, value in bold
+            heard        — keyterm matched but no value yet (Claude still working);
+                            strong sage ring, "Heard — extracting…"
+            missing-imp  — Claude completed and the caregiver didn't log this
+                            important daily-track tile; amber ring to draw the eye
+            muted        — neither; 60% opacity, hint copy
        */}
       <div className="grid grid-cols-2 gap-3">
         {TILE_ORDER.map((key) => {
@@ -864,17 +926,21 @@ export function VoiceLogClient({
           const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
           const filled = display.value != null;
           const heard = display.matched && !filled;
+          const missingImportant =
+            status === 'complete' && !filled && meta.important;
 
           return (
             <div
               key={key}
               className={`rounded-2xl p-4 shadow-card transition-all bg-card ${
-                filled || heard ? 'opacity-100' : 'opacity-60'
+                filled || heard || missingImportant ? 'opacity-100' : 'opacity-60'
               }`}
               style={
                 heard
                   ? { boxShadow: '0 0 0 2px var(--sage), var(--shadow-card)' }
-                  : undefined
+                  : missingImportant
+                    ? { boxShadow: '0 0 0 2px var(--status-watch), var(--shadow-card)' }
+                    : undefined
               }
             >
               <div className="flex items-center gap-3">

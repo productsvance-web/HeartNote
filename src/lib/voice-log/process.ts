@@ -26,7 +26,7 @@ export async function processVoiceLog(
     const { data: log, error: loadError } = await supabase
       .from('daily_logs')
       .select(
-        'id, patient_id, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class)'
+        'id, patient_id, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
       )
       .eq('id', logId)
       .single();
@@ -51,6 +51,7 @@ export async function processVoiceLog(
         relationship: log.patients.relationship,
         dryWeightLb: log.patients.dry_weight_lb,
         nyhaClass: log.patients.nyha_class,
+        normalPillowCount: log.patients.normal_pillow_count,
       });
 
       // Sanitize structured fields: only allow known columns; coerce empty strings → null.
