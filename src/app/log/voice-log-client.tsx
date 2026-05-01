@@ -173,61 +173,102 @@ function buildMoreNotes(c: ClaudeTiles | null): { label: string; value: string }
   return out;
 }
 
-// Resolve what each tile shows. Priority: Claude's authoritative values >
-// live-extracted numerics > "matched but no value" highlight > empty.
+// Tile data sources, ordered by visual treatment:
+// - 'live'         this dictation's regex extraction → bright/active.
+// - 'claude_now'   post-save synthesis (status === 'complete') → bright/active.
+// - 'claude_prior' synthesis from earlier dictations today → muted.
+// - 'matched'      keyword heard in this dictation, no value yet → "heard…".
+// - 'empty'        nothing.
+type TileSource = 'live' | 'claude_now' | 'claude_prior' | 'matched' | 'empty';
+
+// Resolve what each tile shows. Priority depends on phase:
+// - pre_complete (recording or analyzing): live > matched > claude_prior.
+//   Live wins over claude_prior so a fresh dictation surfaces immediately
+//   as bright/active even when prior synthesis already has a value.
+// - complete: claude_now > live > matched. Post-save claude is authoritative.
 function tileDisplay(
   key: TileKey,
   live: NumericTiles,
   matched: Set<TileKey>,
-  claude: ClaudeTiles | null
-): { value: string | null; matched: boolean } {
+  claude: ClaudeTiles | null,
+  phase: 'pre_complete' | 'complete'
+): { value: string | null; matched: boolean; source: TileSource } {
   const isMatched = matched.has(key);
-  switch (key) {
-    case 'weight': {
-      const v = claude?.weight_lb ?? live.weight_lb;
-      return { value: v != null ? `${v} lb` : null, matched: isMatched };
+
+  // Format helpers: `liveStr` is null for tiles the regex extractors don't
+  // produce (breathing, swelling, energy, cough, appetite). `claudeStr`
+  // covers all tiles since Claude grades everything post-save.
+  const liveStr: string | null = (() => {
+    switch (key) {
+      case 'weight':
+        return live.weight_lb != null ? `${live.weight_lb} lb` : null;
+      case 'blood_pressure':
+        return live.systolic_bp != null && live.diastolic_bp != null
+          ? `${live.systolic_bp}/${live.diastolic_bp}`
+          : null;
+      case 'heart_rate':
+        return live.resting_hr != null ? `${live.resting_hr} bpm` : null;
+      case 'oxygen':
+        return live.spo2 != null ? `${live.spo2}%` : null;
+      case 'sleep':
+        return live.pillow_count != null
+          ? `${live.pillow_count} pillow${live.pillow_count === 1 ? '' : 's'}`
+          : null;
+      default:
+        return null;
     }
-    case 'blood_pressure': {
-      const sys = claude?.systolic_bp ?? live.systolic_bp;
-      const dia = claude?.diastolic_bp ?? live.diastolic_bp;
-      return { value: sys != null && dia != null ? `${sys}/${dia}` : null, matched: isMatched };
+  })();
+
+  const claudeStr: string | null = (() => {
+    if (!claude) return null;
+    switch (key) {
+      case 'weight':
+        return claude.weight_lb != null ? `${claude.weight_lb} lb` : null;
+      case 'blood_pressure':
+        return claude.systolic_bp != null && claude.diastolic_bp != null
+          ? `${claude.systolic_bp}/${claude.diastolic_bp}`
+          : null;
+      case 'heart_rate':
+        return claude.resting_hr != null ? `${claude.resting_hr} bpm` : null;
+      case 'oxygen':
+        return claude.spo2 != null ? `${claude.spo2}%` : null;
+      case 'breathing':
+        return formatDyspnea(claude.dyspnea_level);
+      case 'swelling':
+        return formatSeverity(claude.swelling_severity);
+      case 'energy':
+        return formatFatigue(claude.fatigue_level);
+      case 'sleep':
+        return claude.pillow_count != null
+          ? `${claude.pillow_count} pillow${claude.pillow_count === 1 ? '' : 's'}`
+          : null;
+      case 'cough':
+        if (claude.cough_present === true) {
+          return claude.cough_nocturnal ? 'Yes — nighttime' : 'Yes';
+        }
+        // Explicit "no cough today" — render "None" so the tile leaves the
+        // matched-but-unfilled "heard…" state. Mirrors the pattern
+        // Swelling/Breathing/Energy use for their zero-states.
+        if (claude.cough_present === false) return 'None';
+        return null;
+      case 'appetite':
+        return formatAppetite(claude.appetite_change);
     }
-    case 'heart_rate': {
-      const v = claude?.resting_hr ?? live.resting_hr;
-      return { value: v != null ? `${v} bpm` : null, matched: isMatched };
-    }
-    case 'oxygen': {
-      const v = claude?.spo2 ?? live.spo2;
-      return { value: v != null ? `${v}%` : null, matched: isMatched };
-    }
-    case 'breathing':
-      return { value: formatDyspnea(claude?.dyspnea_level ?? null), matched: isMatched };
-    case 'swelling':
-      return { value: formatSeverity(claude?.swelling_severity ?? null), matched: isMatched };
-    case 'energy':
-      return { value: formatFatigue(claude?.fatigue_level ?? null), matched: isMatched };
-    case 'sleep': {
-      const pillows = claude?.pillow_count ?? live.pillow_count;
-      return { value: pillows != null ? `${pillows} pillow${pillows === 1 ? '' : 's'}` : null, matched: isMatched };
-    }
-    case 'cough': {
-      if (claude?.cough_present === true) {
-        return {
-          value: claude.cough_nocturnal ? 'Yes — nighttime' : 'Yes',
-          matched: isMatched,
-        };
-      }
-      // Explicit "no cough today" — render "None" so the tile leaves the
-      // matched-but-unfilled "Heard — extracting…" state. Mirrors the
-      // pattern Swelling/Breathing/Energy use for their zero-states.
-      if (claude?.cough_present === false) {
-        return { value: 'None', matched: isMatched };
-      }
-      return { value: null, matched: isMatched };
-    }
-    case 'appetite':
-      return { value: formatAppetite(claude?.appetite_change ?? null), matched: isMatched };
+  })();
+
+  if (phase === 'pre_complete') {
+    if (liveStr != null) return { value: liveStr, matched: isMatched, source: 'live' };
+    if (isMatched) return { value: null, matched: true, source: 'matched' };
+    if (claudeStr != null)
+      return { value: claudeStr, matched: false, source: 'claude_prior' };
+    return { value: null, matched: false, source: 'empty' };
   }
+
+  if (claudeStr != null)
+    return { value: claudeStr, matched: isMatched, source: 'claude_now' };
+  if (liveStr != null) return { value: liveStr, matched: isMatched, source: 'live' };
+  if (isMatched) return { value: null, matched: true, source: 'matched' };
+  return { value: null, matched: false, source: 'empty' };
 }
 
 // Alert chips surface tier-1 + tier-2 decompensation signals Claude extracted.
@@ -424,12 +465,16 @@ export function VoiceLogClient({
   const liveNumeric = useMemo(() => extractNumericTiles(fullTranscript), [fullTranscript]);
   const liveMatched = useMemo(() => findMatchedKeyterms(fullTranscript), [fullTranscript]);
 
-  // On mount / when an existing analyzing log is present, fetch its current
-  // state so the review-screen tiles render after a refresh. Skip in
-  // states where there's nothing to fetch (idle/recording) or where we
-  // already have the final result (complete/error).
+  // Hydrate today's synthesized tile state from /status. Runs whenever
+  // `logId` or `status` changes, except during recording (the live transcript
+  // drives the tiles then) or error. The /status route synthesizes across
+  // all today's dictations by (patient_id, log_date), so a brand-new pending
+  // logId still returns prior-dictation values — that's what powers the
+  // muted "Earlier today" treatment when the caregiver re-taps Record.
+  // While `status === 'analyzing'`, polls every 1500ms until processing
+  // completes or fails.
   useEffect(() => {
-    if (!logId || status === 'idle' || status === 'recording' || status === 'error') return;
+    if (!logId || status === 'recording' || status === 'error') return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -441,13 +486,16 @@ export function VoiceLogClient({
           processing_error: string | null;
           structured_observations: AISummary | null;
         };
+        // Always hydrate the day's synthesized tile state. The phase
+        // (pre_complete vs complete) controls how each tile renders;
+        // hydration just keeps the data fresh.
+        setClaudeTiles(data);
         if (data.processing_status === 'complete') {
           setStatus('complete');
           if (data.transcribed_text && finals.length === 0) {
             setFinals([data.transcribed_text]);
           }
           setObservations(data.structured_observations);
-          setClaudeTiles(data);
         } else if (data.processing_status === 'failed') {
           setStatus('error');
           setError(data.processing_error ?? 'Processing failed.');
@@ -529,7 +577,11 @@ export function VoiceLogClient({
     setMissingNudgeDismissed(false);
     setInterim('');
     setFinals([]);
-    setClaudeTiles(null);
+    // Intentionally NOT clearing claudeTiles. Retained synthesis from prior
+    // dictations today drives the muted "Earlier today" tile state during
+    // this recording. The DB is still source of truth — claudeTiles here
+    // is the last-saved synthesis, refreshed by the polling effect when
+    // the new logId is set below.
     setObservations(null);
     setSeconds(0);
     setStatus('requesting-mic');
@@ -750,12 +802,12 @@ export function VoiceLogClient({
   // Compute each tile's display once per render so we can re-use across
   // multiple sections (record-state grid, complete-state grid, missing-
   // tiles nudge, justFilled tracking).
+  const phase: 'pre_complete' | 'complete' = status === 'complete' ? 'complete' : 'pre_complete';
   const tileDisplays = TILE_ORDER.map((key) => ({
     key,
-    ...tileDisplay(key, liveNumeric, liveMatched, claudeTiles),
+    ...tileDisplay(key, liveNumeric, liveMatched, claudeTiles, phase),
   }));
-  const filledNow = new Set(tileDisplays.filter((t) => t.value != null).map((t) => t.key));
-  const filledCount = filledNow.size;
+  const filledCount = tileDisplays.filter((t) => t.value != null).length;
 
   // Important daily-track tiles the caregiver didn't log today. Drives the
   // post-recording nudge banner — only computed when Claude has finished
@@ -765,10 +817,20 @@ export function VoiceLogClient({
       ? tileDisplays.filter(({ key, value }) => TILE_META[key].important && value == null).map((t) => t.key)
       : [];
 
-  // Detect newly-filled tiles for the flash animation.
+  // Flash animation tracking. Only `live` and `claude_now` are flash-eligible
+  // — those are the sources that mean "we just heard / just processed this."
+  // `claude_prior` (muted hydration on Record-tap) and `matched` (no value)
+  // must not flash.
+  const flashEligibleNow = new Set(
+    tileDisplays
+      .filter((t) => t.source === 'live' || t.source === 'claude_now')
+      .map((t) => t.key)
+  );
+  const flashEligibleCount = flashEligibleNow.size;
+
   useEffect(() => {
     const prev = prevFilledRef.current;
-    for (const k of filledNow) {
+    for (const k of flashEligibleNow) {
       if (!prev.has(k)) {
         setJustFilled(k);
         const tk = k;
@@ -778,9 +840,9 @@ export function VoiceLogClient({
         );
       }
     }
-    prevFilledRef.current = filledNow;
+    prevFilledRef.current = flashEligibleNow;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filledCount]);
+  }, [flashEligibleCount]);
 
   const showRecordSurface =
     status === 'idle' || status === 'requesting-mic' || status === 'recording';
@@ -984,42 +1046,53 @@ export function VoiceLogClient({
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            {tileDisplays.map(({ key, value, matched }) => {
+            {tileDisplays.map(({ key, value, source }) => {
               const meta = TILE_META[key];
-              const filled = value != null;
-              const heard = matched && !filled;
+              const isPrior = source === 'claude_prior';
+              const isHeard = source === 'matched';
+              const hasValue = value != null;
               const missingImportant =
-                status === 'complete' && !filled && meta.important;
+                status === 'complete' && !hasValue && meta.important;
               const flash = justFilled === key;
+              // Muted "Earlier today" tiles use 0.7 opacity — visibly dimmer
+              // than active tiles (1.0) but distinct from the empty state's
+              // 0.55 + em-dash treatment, so the caregiver can tell at a
+              // glance: bright = captured now, muted = on file from earlier,
+              // empty = nothing today.
+              const opacity = isPrior
+                ? 0.7
+                : hasValue || isHeard || missingImportant
+                  ? 1
+                  : 0.55;
               return (
                 <div
                   key={key}
                   className="rounded-2xl p-3 shadow-card transition-all duration-300"
                   style={{
-                    background: filled
+                    background: hasValue
                       ? 'var(--card)'
                       : 'color-mix(in oklab, var(--muted) 60%, transparent)',
                     outline: flash
                       ? '2px solid var(--status-good-foreground)'
-                      : heard
+                      : isHeard
                         ? '2px solid var(--sage)'
                         : missingImportant
                           ? '2px solid var(--status-watch)'
                           : 'none',
                     transform: flash ? 'scale(1.02)' : 'scale(1)',
-                    opacity: filled || heard || missingImportant ? 1 : 0.55,
+                    opacity,
                   }}
                 >
                   <div className="flex items-center gap-2">
                     <div
                       className="h-7 w-7 rounded-lg flex items-center justify-center transition-colors"
                       style={{
-                        background: filled
+                        background: hasValue
                           ? 'var(--status-good-soft)'
-                          : heard
+                          : isHeard
                             ? 'var(--status-good-soft)'
                             : 'var(--muted)',
-                        color: filled || heard
+                        color: hasValue || isHeard
                           ? 'var(--status-good-foreground)'
                           : 'var(--muted-foreground)',
                       }}
@@ -1033,19 +1106,24 @@ export function VoiceLogClient({
                   <p
                     className="mt-1.5 text-sm font-medium min-h-[20px] truncate"
                     style={{
-                      color: heard
+                      color: isHeard
                         ? 'var(--status-good-foreground)'
                         : 'var(--foreground)',
                     }}
                   >
-                    {filled ? (
+                    {hasValue ? (
                       value
-                    ) : heard ? (
+                    ) : isHeard ? (
                       <span className="text-xs italic">heard…</span>
                     ) : (
                       <span className="text-muted-foreground/60">—</span>
                     )}
                   </p>
+                  {isPrior && (
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-0.5">
+                      Earlier today
+                    </p>
+                  )}
                 </div>
               );
             })}
