@@ -166,7 +166,6 @@ export async function GET(
     pillow_count: latestNonNull(dayRows, 'pillow_count'),
     pnd_episode: pnd?.present ?? null,
     cough_present: cough?.present ?? null,
-    cough_nocturnal: null, // no longer captured as a separate signal post-migration
     sputum_color: cough?.sputum_color ?? null,
     swelling_severity: swelling?.present ? (swelling.severity ?? null) : swelling ? 0 : null,
     cyanosis: cyanosis?.present ?? null,

@@ -19,7 +19,7 @@ import {
   Footprints,
   Volume2,
 } from 'lucide-react';
-import { startVoiceLog } from './actions';
+import { startVoiceLog, discardEmptyVoiceLog } from './actions';
 import { openDeepgramClient, type DeepgramClient } from '@/lib/voice-log/deepgram-client';
 import { extractNumericTiles, type NumericTiles } from '@/lib/voice-log/numeric-extractors';
 import { findMatchedKeyterms, segmentEndsWithStopPhrase } from '@/lib/voice-log/match-keyterms';
@@ -55,7 +55,6 @@ type ClaudeTiles = {
   pillow_count: number | null;
   pnd_episode: boolean | null;
   cough_present: boolean | null;
-  cough_nocturnal: boolean | null;
   sputum_color: 'clear' | 'white' | 'pink_frothy' | null;
   swelling_severity: number | null;
   cyanosis: boolean | null;
@@ -208,10 +207,7 @@ function tileDisplay(
     }
     case 'cough': {
       if (claude?.cough_present === true) {
-        return {
-          value: claude.cough_nocturnal ? 'Yes — nighttime' : 'Yes',
-          matched: isMatched,
-        };
+        return { value: 'Yes', matched: isMatched };
       }
       // Explicit "no cough today" — render "None" so the tile leaves the
       // matched-but-unfilled "Heard — extracting…" state. Mirrors the
@@ -359,10 +355,9 @@ export function VoiceLogClient({
     if (existingStatus === 'complete') return 'complete';
     if (existingStatus === 'failed') return 'error';
     // 'pending' = row exists from a previous record-attempt that never
-    // submitted a transcript (e.g., user tapped record then walked away,
-    // or local validation rejected a too-short transcript). Treat as idle
-    // so the user can record cleanly; the next startVoiceLog() upserts
-    // onto the same row via the (patient_id, log_date) unique key.
+    // submitted a transcript (user tapped Record then bailed). Treat as
+    // idle so the caregiver can record cleanly; when they re-tap Record,
+    // we discard that empty pending row before creating a fresh one.
     if (existingStatus === 'pending') return 'idle';
     return 'analyzing';
   });
@@ -557,7 +552,14 @@ export function VoiceLogClient({
       };
     });
 
-    // 2. Create the daily_logs row
+    // 2. If we hydrated a prior empty pending row (caregiver bailed before
+    //    saving), discard it now so it doesn't sit orphaned in the DB.
+    //    The action server-side double-guards (only deletes pending+empty).
+    if (logId) {
+      await discardEmptyVoiceLog({ logId });
+    }
+
+    // 3. Create the daily_logs row for this dictation.
     const startResult = await startVoiceLog({ patientId });
     if (!startResult.ok) {
       stream.getTracks().forEach((t) => t.stop());

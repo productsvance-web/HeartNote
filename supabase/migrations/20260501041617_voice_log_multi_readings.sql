@@ -103,8 +103,11 @@ create policy "caregiver crud own symptom events" on public.daily_log_symptom_ev
 -- it is, the engine author should consider whether to attach alerts to
 -- specific dictations or aggregate at the day level.
 
+-- Strict drop: if Postgres ever named this constraint differently, the
+-- migration must fail loudly so we don't silently leave UNIQUE in place
+-- (which would break the second-dictation INSERT at runtime).
 alter table public.daily_logs
-  drop constraint if exists daily_logs_patient_id_log_date_key;
+  drop constraint daily_logs_patient_id_log_date_key;
 
 -- ─── 3. Drop columns from daily_logs (now event-tracked elsewhere) ──────────
 
