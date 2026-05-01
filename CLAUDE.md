@@ -83,7 +83,9 @@ supabase db push            # Apply migrations BEFORE merging migration changes
 ```
 
 ## Git / PR
-`git push` → `gh pr create` → `gh pr checks --watch` → on pass `gh pr merge --squash`. Never leave a PR open for the user. One branch per fix/feature; delete after merge.
+**Always use worktrees for feature work. Never edit on `main`. Never `git checkout` to switch branches.** Create `.claude/worktrees/<feature>` as the first action of any non-trivial task — before reading code, before editing — so changes never accumulate on `main`.
+
+Flow: worktree → edit → commit → `git push` → `gh pr create` → `gh pr checks --watch` → on pass `gh pr merge --squash` → delete branch and worktree.
 
 ## Migrations
 If you created or modified anything in `supabase/migrations/`, run `supabase db push` before merging.
