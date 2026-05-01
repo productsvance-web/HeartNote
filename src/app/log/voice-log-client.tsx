@@ -630,10 +630,16 @@ export function VoiceLogClient({
 
     // Permission revoked mid-session. Read recording state via refs because
     // this callback closes over the click-time render's `status` (typically
-    // 'idle'), so a state-based check would never fire.
+    // 'idle'), so a state-based check would never fire. Guard on `streamRef`
+    // alone (not `timerRef`) — between mic-acquired and timer-started, we
+    // run several awaited network calls (token mint, discardEmptyVoiceLog,
+    // startVoiceLog, openSession). If the user revokes mic in that window,
+    // we still want stopRecording to fire and surface the "Mic was turned
+    // off" reason; stopRecording handles the no-timer case gracefully via
+    // its existing null-checks.
     stream.getTracks().forEach((t) => {
       t.onended = () => {
-        if (streamRef.current && timerRef.current) {
+        if (streamRef.current) {
           stopRecording('Mic was turned off — saving what you said.');
         }
       };
