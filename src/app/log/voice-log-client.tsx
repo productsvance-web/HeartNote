@@ -716,7 +716,13 @@ export function VoiceLogClient({
       {/* Recording surface */}
       <div className="rounded-3xl bg-card shadow-card p-6 animate-fade-up">
         {(status === 'idle' || status === 'requesting-mic') && (
+          // Idle: instructions on top, action button at bottom (thumb reach).
           <div className="flex flex-col items-center gap-5 py-4">
+            <p className="text-sm text-muted-foreground text-center max-w-xs">
+              {status === 'requesting-mic'
+                ? 'Asking for mic permission…'
+                : 'Tap below and tell HeartNote how today is going. Up to 2 minutes. Say “end note” when you’re done.'}
+            </p>
             <button
               type="button"
               onClick={startRecording}
@@ -730,25 +736,13 @@ export function VoiceLogClient({
             >
               <Mic size={48} className="mx-auto" />
             </button>
-            <p className="text-sm text-muted-foreground text-center">
-              {status === 'requesting-mic'
-                ? 'Asking for mic permission…'
-                : 'Tap and tell HeartNote how today is going. Up to 2 minutes. Say “end note” when you’re done.'}
-            </p>
           </div>
         )}
 
         {status === 'recording' && (
+          // Recording: timer + live transcript on top (the focus), stop button
+          // at the bottom of the card so it's reachable without two hands.
           <div className="flex flex-col items-center gap-4 py-2">
-            <button
-              type="button"
-              onClick={() => stopRecording()}
-              className="h-28 w-28 rounded-full text-white shadow-soft active:scale-95 transition animate-pulse-ring relative flex items-center justify-center"
-              style={{ background: 'var(--status-alert)' }}
-              aria-label="Stop recording"
-            >
-              <Square size={36} fill="currentColor" />
-            </button>
             <div className="text-center">
               <p
                 className="font-display text-3xl tabular-nums"
@@ -779,7 +773,7 @@ export function VoiceLogClient({
             {/* Live transcript — auto-scrolls to the latest text */}
             <div
               ref={transcriptScrollRef}
-              className="w-full mt-2 rounded-2xl bg-muted/60 p-4 min-h-[80px] max-h-[180px] overflow-y-auto"
+              className="w-full rounded-2xl bg-muted/60 p-4 min-h-[80px] max-h-[180px] overflow-y-auto"
             >
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 <span>{finals.join(' ')}</span>{' '}
@@ -789,6 +783,15 @@ export function VoiceLogClient({
                 )}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={() => stopRecording()}
+              className="h-28 w-28 rounded-full text-white shadow-soft active:scale-95 transition animate-pulse-ring relative flex items-center justify-center mt-2"
+              style={{ background: 'var(--status-alert)' }}
+              aria-label="Stop recording"
+            >
+              <Square size={36} fill="currentColor" />
+            </button>
           </div>
         )}
 
