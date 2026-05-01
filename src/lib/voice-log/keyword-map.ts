@@ -183,11 +183,27 @@ export const CHF_MEDICATION_KEYTERMS: readonly string[] = [
 // silence-gate gating prevents false triggers like "I want to end note about
 // the cough" — see voice-log-client.tsx for the gate logic.
 export const END_RECORDING_PHRASES: readonly string[] = [
+  // "end" family
   'end note',
+  'end of note',
+  'end log',
+  'end of log',
+  'end recording',
+  'end of recording',
+  // "stop" family
+  'stop log',
+  'stop note',
+  'stop recording',
+  // "save" family
   'save log',
   'save the log',
+  'save and stop',
+  // "done / finished" family
   "i'm done",
   'i am done',
+  "i'm finished",
+  'i am finished',
+  // "that's all" family
   "that's all",
   'that is all',
 ] as const;

@@ -350,6 +350,12 @@ export function VoiceLogClient({
   // One-attempt reconnect budget per recording session. Reset on every
   // startRecording.
   const reconnectedOnceRef = useRef<boolean>(false);
+  // Wall-clock timestamp of when recording started, used by the voice-stop
+  // watcher to gate the "must record N seconds before voice-stop arms"
+  // check WITHOUT depending on the per-second `seconds` state. Depending
+  // on `seconds` made the watcher re-run every tick and the cleanup
+  // cleared the 1s silence-gate timeout before it could ever fire.
+  const recordingStartedAtRef = useRef<number>(0);
 
   // Mirror finals into finalsRef on every change.
   useEffect(() => {
@@ -420,13 +426,22 @@ export function VoiceLogClient({
   // Voice-stop watcher: when the latest final ends with a stop phrase AND
   // no newer final arrives within VOICE_STOP_SILENCE_GATE_MS, fire stop.
   //
+  // Critical: deps are [finals, status] only. Adding `seconds` here causes
+  // the effect to re-run every tick — and the cleanup clears the 1s
+  // silence-gate timeout before it ever fires, so voice-stop never
+  // triggers. The "must record N seconds before voice-stop arms" check
+  // uses recordingStartedAtRef instead.
+  //
   // Correctness depends on capturing the trigger-final's timestamp inside
   // the effect closure: at fire-time, if lastFinalAtRef.current has moved
   // past triggerTimestamp, a newer final arrived and we abort. Comparing
   // against `Date.now()` would always pass the 1s-elapsed check and
   // give a false stop the moment any final ends with "I'm done."
   useEffect(() => {
-    if (status !== 'recording' || seconds < VOICE_STOP_ENABLE_AFTER) return;
+    if (status !== 'recording') return;
+    const elapsedMs = Date.now() - recordingStartedAtRef.current;
+    if (elapsedMs < VOICE_STOP_ENABLE_AFTER * 1000) return;
+
     const lastFinal = finals[finals.length - 1];
     if (!lastFinal || !segmentEndsWithStopPhrase(lastFinal)) return;
 
@@ -447,7 +462,7 @@ export function VoiceLogClient({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finals, status, seconds]);
+  }, [finals, status]);
 
   // Cleanup on unmount: close the WS, stop the mic stream, clear timers.
   useEffect(() => {
@@ -513,6 +528,7 @@ export function VoiceLogClient({
     if (!opened) return; // openSession surfaced its own error state
 
     // 5. Start the timer
+    recordingStartedAtRef.current = Date.now();
     setStatus('recording');
     timerRef.current = window.setInterval(() => {
       setSeconds((s) => {
