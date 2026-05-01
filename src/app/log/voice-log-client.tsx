@@ -65,8 +65,7 @@ type ClaudeTiles = {
   early_satiety: boolean | null;
   fatigue_level: number | null;
   cognition_change: 'none' | 'mild_fog' | 'confusion' | 'severe' | null;
-  // Background fields surfaced in the "more notes" expand (plan AC)
-  feeling_score: number | null;
+  // Background fields surfaced in the "more notes" expand
   extremities_cold_clammy: boolean | null;
   urine_output_change: 'decreased' | 'unchanged' | 'increased' | null;
   chest_pain_character: string | null;
@@ -141,9 +140,6 @@ function buildMoreNotes(c: ClaudeTiles | null): { label: string; value: string }
   if (!c) return [];
   const out: { label: string; value: string }[] = [];
 
-  if (c.feeling_score != null) {
-    out.push({ label: 'Overall feeling', value: `${c.feeling_score} of 5` });
-  }
   if (c.extremities_cold_clammy === true) {
     out.push({ label: 'Hands or feet', value: 'Cold or clammy' });
   }

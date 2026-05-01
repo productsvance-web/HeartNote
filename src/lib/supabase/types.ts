@@ -149,117 +149,165 @@ export type Database = {
           },
         ]
       }
+      daily_log_readings: {
+        Row: {
+          created_at: string
+          field: string
+          id: string
+          log_date: string
+          patient_id: string
+          recorded_at: string
+          source_log_id: string | null
+          value: number
+        }
+        Insert: {
+          created_at?: string
+          field: string
+          id?: string
+          log_date: string
+          patient_id: string
+          recorded_at?: string
+          source_log_id?: string | null
+          value: number
+        }
+        Update: {
+          created_at?: string
+          field?: string
+          id?: string
+          log_date?: string
+          patient_id?: string
+          recorded_at?: string
+          source_log_id?: string | null
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_log_readings_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_log_readings_source_log_id_fkey"
+            columns: ["source_log_id"]
+            isOneToOne: false
+            referencedRelation: "daily_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_log_symptom_events: {
+        Row: {
+          body_region: string | null
+          chest_pain_character: string | null
+          created_at: string
+          id: string
+          log_date: string
+          patient_id: string
+          present: boolean
+          recorded_at: string
+          severity: number | null
+          source_log_id: string | null
+          sputum_color: string | null
+          symptom: string
+        }
+        Insert: {
+          body_region?: string | null
+          chest_pain_character?: string | null
+          created_at?: string
+          id?: string
+          log_date: string
+          patient_id: string
+          present: boolean
+          recorded_at?: string
+          severity?: number | null
+          source_log_id?: string | null
+          sputum_color?: string | null
+          symptom: string
+        }
+        Update: {
+          body_region?: string | null
+          chest_pain_character?: string | null
+          created_at?: string
+          id?: string
+          log_date?: string
+          patient_id?: string
+          present?: boolean
+          recorded_at?: string
+          severity?: number | null
+          source_log_id?: string | null
+          sputum_color?: string | null
+          symptom?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_log_symptom_events_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_log_symptom_events_source_log_id_fkey"
+            columns: ["source_log_id"]
+            isOneToOne: false
+            referencedRelation: "daily_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_logs: {
         Row: {
           activity_tolerance_change: string | null
           ai_processed_at: string | null
           appetite_change: string | null
-          chest_pain: boolean | null
-          chest_pain_character: string | null
-          cognition_change: string | null
-          cough_nocturnal: boolean | null
-          cough_present: boolean | null
           created_at: string
-          cyanosis: boolean | null
-          diastolic_bp: number | null
-          dyspnea_level: number | null
-          early_satiety: boolean | null
-          extremities_cold_clammy: boolean | null
-          fatigue_level: number | null
-          feeling_score: number | null
           id: string
           log_date: string
           notes: string | null
           patient_id: string
           pillow_count: number | null
-          pnd_episode: boolean | null
           processing_error: string | null
           processing_status: Database["public"]["Enums"]["log_processing_status"]
-          resting_hr: number | null
-          spo2: number | null
-          sputum_color: string | null
           structured_observations: Json | null
-          swelling_severity: number | null
-          syncope: boolean | null
-          systolic_bp: number | null
           transcribed_text: string | null
           updated_at: string
           urine_output_change: string | null
-          weight_lb: number | null
         }
         Insert: {
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
-          chest_pain?: boolean | null
-          chest_pain_character?: string | null
-          cognition_change?: string | null
-          cough_nocturnal?: boolean | null
-          cough_present?: boolean | null
           created_at?: string
-          cyanosis?: boolean | null
-          diastolic_bp?: number | null
-          dyspnea_level?: number | null
-          early_satiety?: boolean | null
-          extremities_cold_clammy?: boolean | null
-          fatigue_level?: number | null
-          feeling_score?: number | null
           id?: string
           log_date: string
           notes?: string | null
           patient_id: string
           pillow_count?: number | null
-          pnd_episode?: boolean | null
           processing_error?: string | null
           processing_status?: Database["public"]["Enums"]["log_processing_status"]
-          resting_hr?: number | null
-          spo2?: number | null
-          sputum_color?: string | null
           structured_observations?: Json | null
-          swelling_severity?: number | null
-          syncope?: boolean | null
-          systolic_bp?: number | null
           transcribed_text?: string | null
           updated_at?: string
           urine_output_change?: string | null
-          weight_lb?: number | null
         }
         Update: {
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
-          chest_pain?: boolean | null
-          chest_pain_character?: string | null
-          cognition_change?: string | null
-          cough_nocturnal?: boolean | null
-          cough_present?: boolean | null
           created_at?: string
-          cyanosis?: boolean | null
-          diastolic_bp?: number | null
-          dyspnea_level?: number | null
-          early_satiety?: boolean | null
-          extremities_cold_clammy?: boolean | null
-          fatigue_level?: number | null
-          feeling_score?: number | null
           id?: string
           log_date?: string
           notes?: string | null
           patient_id?: string
           pillow_count?: number | null
-          pnd_episode?: boolean | null
           processing_error?: string | null
           processing_status?: Database["public"]["Enums"]["log_processing_status"]
-          resting_hr?: number | null
-          spo2?: number | null
-          sputum_color?: string | null
           structured_observations?: Json | null
-          swelling_severity?: number | null
-          syncope?: boolean | null
-          systolic_bp?: number | null
           transcribed_text?: string | null
           updated_at?: string
           urine_output_change?: string | null
-          weight_lb?: number | null
         }
         Relationships: [
           {
@@ -601,7 +649,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      apply_voice_log_extraction: {
+        Args: {
+          p_log_id: string
+          p_readings: Json
+          p_symptom_events: Json
+          p_day_level: Json
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       alert_action:
