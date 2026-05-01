@@ -42,6 +42,7 @@ function buildStreamUrl(): string {
   params.set('language', 'en-US');
   params.set('interim_results', 'true');
   params.set('smart_format', 'true');
+  params.set('numerals', 'true'); // force "one seventy-four" → "174" even when smart_format would leave it spelled
   params.set('punctuate', 'true');
   params.set('endpointing', '100'); // ms of silence before utterance ends — tight for snappy live tile fill
 

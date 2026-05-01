@@ -20,7 +20,11 @@ export type NumericTiles = {
   pillow_count?: number;
 };
 
-const WEIGHT_RE = /\b(\d{2,3}(?:\.\d)?)\s*(?:lb|lbs|pound|pounds)\b/i;
+// Two acceptable shapes: "<number> lb/pounds" OR "weigh(s|ed|ing)/weight (is|was|at|of)? <number>".
+// The context-prefix form catches "she weighs 174" / "weight is 174" where the unit is implied.
+const WEIGHT_RE_UNIT = /\b(\d{2,3}(?:\.\d)?)\s*(?:lb|lbs|pound|pounds)\b/i;
+const WEIGHT_RE_CONTEXT =
+  /\b(?:weigh(?:s|ed|ing)?|weight)\s+(?:is\s+|was\s+|at\s+|of\s+)?(\d{2,3}(?:\.\d)?)\b/i;
 const BP_RE = /\b(\d{2,3})\s*(?:over|\/)\s*(\d{2,3})\b/i;
 const HR_RE = /\b(?:heart\s*rate|pulse|heartbeat)\D{0,15}(\d{2,3})\b/i;
 const O2_RE =
@@ -37,7 +41,7 @@ const WORD_TO_NUMBER: Record<string, number> = {
 export function extractNumericTiles(transcript: string): NumericTiles {
   const out: NumericTiles = {};
 
-  const weight = WEIGHT_RE.exec(transcript);
+  const weight = WEIGHT_RE_UNIT.exec(transcript) ?? WEIGHT_RE_CONTEXT.exec(transcript);
   if (weight) {
     const n = Number(weight[1]);
     if (Number.isFinite(n)) out.weight_lb = n;
