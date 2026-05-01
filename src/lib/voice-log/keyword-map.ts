@@ -58,7 +58,12 @@ export const KEYWORD_MAP: Record<TileKey, readonly string[]> = {
     'ankles look big',
     'feet are tight',
     'legs are tight',
-    'fluid',
+    // Multi-word "fluid" phrasings only — bare "fluid" false-positives on
+    // "she drank fluids" / "water pill flushed fluid."
+    'fluid in her ankles',
+    'fluid in his ankles',
+    'fluid build-up',
+    'fluid buildup',
     'bloated',
     'belly is bigger',
     'rings are tight',

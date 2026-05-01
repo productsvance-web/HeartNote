@@ -6,6 +6,7 @@ import {
   Square,
   Check,
   AlertCircle,
+  AlertTriangle,
   Scale,
   Heart,
   Activity,
@@ -15,7 +16,7 @@ import {
   Moon,
   Soup,
   Footprints,
-  Wind as Lung,
+  Volume2,
 } from 'lucide-react';
 import { startVoiceLog } from './actions';
 import { openDeepgramClient, type DeepgramClient } from '@/lib/voice-log/deepgram-client';
@@ -32,6 +33,7 @@ type Status =
   | 'error';
 
 const MAX_SECONDS = 120;
+const WRAP_UP_WARNING_AT = 110; // 10-second-left red warning
 const VOICE_STOP_ENABLE_AFTER = 10; // seconds before voice-stop arms
 const VOICE_STOP_SILENCE_GATE_MS = 1000;
 
@@ -43,6 +45,7 @@ type AISummary = {
 };
 
 type ClaudeTiles = {
+  // Primary tiles
   weight_lb: number | null;
   systolic_bp: number | null;
   diastolic_bp: number | null;
@@ -62,6 +65,12 @@ type ClaudeTiles = {
   early_satiety: boolean | null;
   fatigue_level: number | null;
   cognition_change: 'none' | 'mild_fog' | 'confusion' | 'severe' | null;
+  // Background fields surfaced in the "more notes" expand (plan AC)
+  feeling_score: number | null;
+  extremities_cold_clammy: boolean | null;
+  urine_output_change: 'decreased' | 'unchanged' | 'increased' | null;
+  chest_pain_character: string | null;
+  activity_tolerance_change: string | null;
 };
 
 type Props = {
@@ -94,7 +103,7 @@ const TILE_META: Record<TileKey, { label: string; Icon: typeof Scale; emptyHint:
   swelling: { label: 'Swelling', Icon: Footprints, emptyHint: 'Mention to log' },
   energy: { label: 'Energy', Icon: Battery, emptyHint: 'Mention to log' },
   sleep: { label: 'Sleep', Icon: Moon, emptyHint: 'Mention to log' },
-  cough: { label: 'Cough', Icon: Lung, emptyHint: 'Mention to log' },
+  cough: { label: 'Cough', Icon: Volume2, emptyHint: 'Mention to log' },
   appetite: { label: 'Appetite', Icon: Soup, emptyHint: 'Mention to log' },
 };
 
@@ -113,6 +122,45 @@ function formatFatigue(level: number | null): string | null {
 function formatAppetite(v: ClaudeTiles['appetite_change']): string | null {
   if (!v) return null;
   return v === 'decreased' ? 'Decreased' : v === 'increased' ? 'Increased' : 'Normal';
+}
+
+// "More notes" entries: the 8 background fields the plan promised would
+// surface in an expand. Returns only the ones Claude populated; if all
+// are null/empty, the section is hidden entirely.
+function buildMoreNotes(c: ClaudeTiles | null): { label: string; value: string }[] {
+  if (!c) return [];
+  const out: { label: string; value: string }[] = [];
+
+  if (c.feeling_score != null) {
+    out.push({ label: 'Overall feeling', value: `${c.feeling_score} of 5` });
+  }
+  if (c.extremities_cold_clammy === true) {
+    out.push({ label: 'Hands or feet', value: 'Cold or clammy' });
+  }
+  if (c.early_satiety === true) {
+    out.push({ label: 'At meals', value: 'Filled up after only a few bites' });
+  }
+  if (c.urine_output_change && c.urine_output_change !== 'unchanged') {
+    out.push({
+      label: 'Urine output',
+      value: c.urine_output_change === 'decreased' ? 'Decreased' : 'Increased',
+    });
+  }
+  if (c.chest_pain_character && c.chest_pain_character.trim()) {
+    out.push({ label: 'Chest-pain notes', value: c.chest_pain_character });
+  }
+  if (c.activity_tolerance_change && c.activity_tolerance_change.trim()) {
+    out.push({ label: 'Activity today', value: c.activity_tolerance_change });
+  }
+  // cognition_change: mild_fog and confusion are surfaced here. Severe is
+  // already a tier-1 alert chip elsewhere.
+  if (c.cognition_change === 'mild_fog') {
+    out.push({ label: 'Mental clarity', value: 'A little foggy' });
+  } else if (c.cognition_change === 'confusion') {
+    out.push({ label: 'Mental clarity', value: 'Confused at times' });
+  }
+
+  return out;
 }
 
 // Resolve what each tile shows. Priority: Claude's authoritative values >
@@ -166,21 +214,94 @@ function tileDisplay(
   }
 }
 
-type AlertChip = { label: string; sub: string };
+// Alert chips surface tier-1 + tier-2 decompensation signals Claude extracted.
+// Per CLAUDE.md rule #4, every chip MUST show its reasoning in the UI;
+// per rule #6, no chip recommends 911, doses, or specific medical actions —
+// strongest copy is "Call the cardiologist today/now." The tier label lets
+// caregivers distinguish 911-territory signals from same-day calls without
+// the AI itself saying "go to the ER."
+//
+// All thresholds and reasoning lines are derived from extract.ts field
+// descriptions, which mirror research/chf-source-of-truth.md.
+type AlertChip = {
+  tier: 1 | 2;
+  label: string; // caregiver-language event
+  reason: string; // why this fired — visible in UI per rule #4
+  action: string; // call-the-cardiologist phrasing
+  cite: string; // research-file source label
+};
 
 function alertChipsFromClaude(c: ClaudeTiles | null): AlertChip[] {
   if (!c) return [];
   const chips: AlertChip[] = [];
-  if (c.chest_pain) chips.push({ label: 'New chest pain', sub: 'Call the cardiologist today' });
-  if (c.syncope) chips.push({ label: 'Fainted', sub: 'Call the cardiologist today' });
-  if (c.cyanosis) chips.push({ label: 'Blue lips or fingertips', sub: 'Call the cardiologist today' });
-  if (c.pnd_episode) chips.push({ label: 'Woke up gasping', sub: 'Call the cardiologist today' });
-  if (c.sputum_color === 'pink_frothy')
-    chips.push({ label: 'Pink-frothy cough', sub: 'Call the cardiologist now' });
-  if (c.dyspnea_level === 4)
-    chips.push({ label: 'Out of breath at rest', sub: 'Call the cardiologist today' });
-  if (c.cognition_change === 'severe')
-    chips.push({ label: 'Severe confusion', sub: 'Call the cardiologist today' });
+
+  // ---- Tier 1 — highest priority (911-territory signals) ----
+  if (c.chest_pain) {
+    chips.push({
+      tier: 1,
+      label: 'New chest pain',
+      reason: 'New chest pain or pressure in a CHF patient can signal an acute cardiac event.',
+      action: 'Call the cardiologist now',
+      cite: 'AHA · tier-1 decompensation indicator',
+    });
+  }
+  if (c.syncope) {
+    chips.push({
+      tier: 1,
+      label: 'Fainted',
+      reason: 'Loss of consciousness in CHF can signal a serious arrhythmia or low cardiac output.',
+      action: 'Call the cardiologist now',
+      cite: 'AHA · tier-1 decompensation indicator',
+    });
+  }
+  if (c.cyanosis) {
+    chips.push({
+      tier: 1,
+      label: 'Blue lips or fingertips',
+      reason: 'Bluish color signals dangerously low blood oxygen.',
+      action: 'Call the cardiologist now',
+      cite: 'AHA · tier-1 decompensation indicator',
+    });
+  }
+  if (c.sputum_color === 'pink_frothy') {
+    chips.push({
+      tier: 1,
+      label: 'Pink-frothy cough',
+      reason: 'Pink or white frothy sputum can signal acute pulmonary edema (fluid in the lungs).',
+      action: 'Call the cardiologist now',
+      cite: 'AHA · acute pulmonary edema sign',
+    });
+  }
+  if (c.dyspnea_level === 4) {
+    chips.push({
+      tier: 1,
+      label: 'Out of breath at rest',
+      reason: "Shortness of breath at rest — can't finish sentences — is a high-acuity decompensation sign.",
+      action: 'Call the cardiologist now',
+      cite: 'AHA · tier-1 decompensation indicator',
+    });
+  }
+  if (c.cognition_change === 'severe') {
+    chips.push({
+      tier: 1,
+      label: 'Severe confusion',
+      reason: 'Severe confusion or not recognizing family can signal poor brain perfusion from low cardiac output.',
+      action: 'Call the cardiologist now',
+      cite: 'AHA · tier-1 decompensation indicator',
+    });
+  }
+
+  // ---- Tier 2 — watch / same-day call (early decompensation) ----
+  if (c.pnd_episode) {
+    chips.push({
+      tier: 2,
+      label: 'Woke up gasping for breath',
+      reason: 'Waking 1–3 hours after lying down gasping (PND) is a high-specificity early decompensation sign.',
+      action: 'Call the cardiologist today',
+      cite: 'Cleveland Clinic · early decompensation pattern',
+    });
+  }
+
   return chips;
 }
 
@@ -195,6 +316,12 @@ export function VoiceLogClient({
     if (!existingLogId) return 'idle';
     if (existingStatus === 'complete') return 'complete';
     if (existingStatus === 'failed') return 'error';
+    // 'pending' = row exists from a previous record-attempt that never
+    // submitted a transcript (e.g., user tapped record then walked away,
+    // or local validation rejected a too-short transcript). Treat as idle
+    // so the user can record cleanly; the next startVoiceLog() upserts
+    // onto the same row via the (patient_id, log_date) unique key.
+    if (existingStatus === 'pending') return 'idle';
     return 'analyzing';
   });
   const [error, setError] = useState<string | null>(null);
@@ -206,12 +333,35 @@ export function VoiceLogClient({
   );
   const [observations, setObservations] = useState<AISummary | null>(existingObservations);
   const [claudeTiles, setClaudeTiles] = useState<ClaudeTiles | null>(null);
+  // Optional message shown above "Reading what you said…" telling the
+  // caregiver WHY the recording stopped (mic revoked, time up, network drop).
+  // Empty for a normal manual/voice stop.
+  const [stopReason, setStopReason] = useState<string | null>(null);
 
   const dgClientRef = useRef<DeepgramClient | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
   const lastFinalAtRef = useRef<number>(0);
   const voiceStopTimerRef = useRef<number | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  // Latest finals for synchronous reads (avoids the setFinals-callback hack
+  // in stopRecording, which was fragile under React 19 StrictMode).
+  const finalsRef = useRef<string[]>(existingTranscript ? [existingTranscript] : []);
+  // One-attempt reconnect budget per recording session. Reset on every
+  // startRecording.
+  const reconnectedOnceRef = useRef<boolean>(false);
+
+  // Mirror finals into finalsRef on every change.
+  useEffect(() => {
+    finalsRef.current = finals;
+  }, [finals]);
+
+  // Keep the live transcript panel scrolled to the latest text so long
+  // dictations don't push the current word below the fold.
+  useEffect(() => {
+    const el = transcriptScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [finals, interim]);
 
   const fullTranscript = useMemo(
     () => [...finals, interim].filter(Boolean).join(' ').trim(),
@@ -222,9 +372,11 @@ export function VoiceLogClient({
   const liveMatched = useMemo(() => findMatchedKeyterms(fullTranscript), [fullTranscript]);
 
   // On mount / when an existing analyzing log is present, fetch its current
-  // state so the review-screen tiles render after a refresh.
+  // state so the review-screen tiles render after a refresh. Skip in
+  // states where there's nothing to fetch (idle/recording) or where we
+  // already have the final result (complete/error).
   useEffect(() => {
-    if (!logId || status === 'idle' || status === 'recording') return;
+    if (!logId || status === 'idle' || status === 'recording' || status === 'error') return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -266,20 +418,28 @@ export function VoiceLogClient({
   }, [logId, status]);
 
   // Voice-stop watcher: when the latest final ends with a stop phrase AND
-  // VOICE_STOP_SILENCE_GATE_MS pass with no further finals, fire stop.
+  // no newer final arrives within VOICE_STOP_SILENCE_GATE_MS, fire stop.
+  //
+  // Correctness depends on capturing the trigger-final's timestamp inside
+  // the effect closure: at fire-time, if lastFinalAtRef.current has moved
+  // past triggerTimestamp, a newer final arrived and we abort. Comparing
+  // against `Date.now()` would always pass the 1s-elapsed check and
+  // give a false stop the moment any final ends with "I'm done."
   useEffect(() => {
     if (status !== 'recording' || seconds < VOICE_STOP_ENABLE_AFTER) return;
     const lastFinal = finals[finals.length - 1];
     if (!lastFinal || !segmentEndsWithStopPhrase(lastFinal)) return;
+
+    const triggerTimestamp = lastFinalAtRef.current;
+
     if (voiceStopTimerRef.current) window.clearTimeout(voiceStopTimerRef.current);
     voiceStopTimerRef.current = window.setTimeout(() => {
-      // Re-check the silence gate: if a new final arrived in the interim,
-      // the lastFinalAt timestamp will have moved past the deadline.
-      const elapsedSinceLastFinal = Date.now() - lastFinalAtRef.current;
-      if (elapsedSinceLastFinal >= VOICE_STOP_SILENCE_GATE_MS - 50) {
+      // Newer final arrived → abort. Equal → no further speech, fire stop.
+      if (lastFinalAtRef.current === triggerTimestamp) {
         stopRecording();
       }
     }, VOICE_STOP_SILENCE_GATE_MS);
+
     return () => {
       if (voiceStopTimerRef.current) {
         window.clearTimeout(voiceStopTimerRef.current);
@@ -301,6 +461,7 @@ export function VoiceLogClient({
 
   async function startRecording() {
     setError(null);
+    setStopReason(null);
     setInterim('');
     setFinals([]);
     setClaudeTiles(null);
@@ -344,7 +505,32 @@ export function VoiceLogClient({
     }
     setLogId(startResult.logId);
 
-    // 3. Mint a Deepgram token
+    // 3. Reset the reconnect budget for this session.
+    reconnectedOnceRef.current = false;
+
+    // 4. Open the Deepgram session (mints token + opens WebSocket).
+    const opened = await openSession(stream);
+    if (!opened) return; // openSession surfaced its own error state
+
+    // 5. Start the timer
+    setStatus('recording');
+    timerRef.current = window.setInterval(() => {
+      setSeconds((s) => {
+        const next = s + 1;
+        if (next >= MAX_SECONDS) {
+          // Use a microtask to avoid setState-during-setState
+          window.setTimeout(() => stopRecording('Time’s up — saving your log.'), 0);
+        }
+        return next;
+      });
+    }, 1000);
+  }
+
+  // Mints a Deepgram token, opens the WebSocket, wires the transcript +
+  // close + error callbacks. Returns true on success, false on failure
+  // (in which case it has already updated status/error). Reused by both
+  // initial start and the one-shot reconnect.
+  async function openSession(stream: MediaStream): Promise<boolean> {
     let token: string;
     try {
       const tokRes = await fetch('/api/voice-log/deepgram-token', { method: 'POST' });
@@ -362,10 +548,9 @@ export function VoiceLogClient({
           ? `Voice log temporarily unavailable: ${err.message}`
           : 'Voice log temporarily unavailable.'
       );
-      return;
+      return false;
     }
 
-    // 4. Open Deepgram WebSocket
     const dg = openDeepgramClient(token, stream, {
       onTranscript: ({ isFinal, text }) => {
         if (isFinal) {
@@ -377,29 +562,37 @@ export function VoiceLogClient({
         }
       },
       onError: () => {
-        // Any error during recording → stop and surface partial transcript.
-        if (status === 'recording' || status === 'requesting-mic') {
-          stopRecording('Connection lost — saving what you said.');
-        }
+        // Errors only surface here if the WS open itself failed; ongoing
+        // disconnects flow through onClose with a non-1000 code below.
       },
-      onClose: () => {
-        // No-op; close handler runs locally in stopRecording.
+      onClose: (code) => {
+        // 1000 = normal close (we initiated). Anything else mid-recording
+        // is a drop. Try one reconnect with a fresh token; if that also
+        // fails, stop and submit what we have.
+        if (code === 1000) return;
+        if (status !== 'recording') return;
+        if (reconnectedOnceRef.current) {
+          stopRecording('Connection lost — saving what you said.');
+          return;
+        }
+        reconnectedOnceRef.current = true;
+        void attemptReconnect();
       },
     });
     dgClientRef.current = dg;
+    return true;
+  }
 
-    // 5. Start the timer
-    setStatus('recording');
-    timerRef.current = window.setInterval(() => {
-      setSeconds((s) => {
-        const next = s + 1;
-        if (next >= MAX_SECONDS) {
-          // Use a microtask to avoid setState-during-setState
-          window.setTimeout(() => stopRecording('Time’s up — saving your log.'), 0);
-        }
-        return next;
-      });
-    }, 1000);
+  async function attemptReconnect() {
+    const stream = streamRef.current;
+    if (!stream) {
+      stopRecording('Connection lost — saving what you said.');
+      return;
+    }
+    const ok = await openSession(stream);
+    if (!ok) {
+      stopRecording('Connection lost — saving what you said.');
+    }
   }
 
   async function stopRecording(reasonNote?: string) {
@@ -418,17 +611,14 @@ export function VoiceLogClient({
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
 
+    setStopReason(reasonNote ?? null);
+
     // Give the WS a beat to flush its final events; then submit transcript.
+    // Reading via finalsRef avoids a setFinals-callback updater (which
+    // double-fires under React StrictMode in dev).
     setStatus('analyzing');
     await new Promise((r) => setTimeout(r, 250));
-
-    // Read the latest finals (state may not be flushed yet — use ref-style)
-    void reasonNote; // reserved for future "why we stopped" UI affordance
-    setFinals((current) => {
-      const transcript = current.join(' ').trim();
-      submitTranscript(transcript);
-      return current;
-    });
+    submitTranscript(finalsRef.current.join(' ').trim());
   }
 
   async function submitTranscript(transcript: string) {
@@ -465,6 +655,7 @@ export function VoiceLogClient({
   function recordAnother() {
     setStatus('idle');
     setError(null);
+    setStopReason(null);
     setInterim('');
     setFinals([]);
     setObservations(null);
@@ -476,6 +667,7 @@ export function VoiceLogClient({
   // ===== Render =====
 
   const alertChips = alertChipsFromClaude(claudeTiles);
+  const moreNotes = buildMoreNotes(claudeTiles);
 
   return (
     <section className="mt-6 mx-4 flex flex-col gap-4">
@@ -516,18 +708,39 @@ export function VoiceLogClient({
               <Square size={36} fill="currentColor" />
             </button>
             <div className="text-center">
-              <p className="font-display text-3xl tabular-nums">
+              <p
+                className="font-display text-3xl tabular-nums"
+                style={
+                  seconds >= WRAP_UP_WARNING_AT
+                    ? { color: 'var(--status-alert)' }
+                    : undefined
+                }
+              >
                 {String(Math.floor(seconds / 60)).padStart(2, '0')}:
                 {String(seconds % 60).padStart(2, '0')}
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {seconds < VOICE_STOP_ENABLE_AFTER
-                  ? `Listening…`
-                  : `${MAX_SECONDS - seconds}s left · say “end note” to finish`}
+              <p
+                className="text-xs mt-0.5"
+                style={{
+                  color:
+                    seconds >= WRAP_UP_WARNING_AT
+                      ? 'var(--status-alert)'
+                      : 'var(--muted-foreground)',
+                  fontWeight: seconds >= WRAP_UP_WARNING_AT ? 600 : undefined,
+                }}
+              >
+                {seconds >= WRAP_UP_WARNING_AT
+                  ? `Wrap up — ${MAX_SECONDS - seconds}s left`
+                  : seconds < VOICE_STOP_ENABLE_AFTER
+                    ? `Listening…`
+                    : `${MAX_SECONDS - seconds}s left · say “end note” to finish`}
               </p>
             </div>
-            {/* Live transcript */}
-            <div className="w-full mt-2 rounded-2xl bg-muted/60 p-4 min-h-[80px] max-h-[180px] overflow-y-auto">
+            {/* Live transcript — auto-scrolls to the latest text */}
+            <div
+              ref={transcriptScrollRef}
+              className="w-full mt-2 rounded-2xl bg-muted/60 p-4 min-h-[80px] max-h-[180px] overflow-y-auto"
+            >
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
                 <span>{finals.join(' ')}</span>{' '}
                 <span className="text-muted-foreground italic">{interim}</span>
@@ -541,6 +754,17 @@ export function VoiceLogClient({
 
         {status === 'analyzing' && (
           <div className="flex flex-col items-center gap-3 py-6">
+            {stopReason && (
+              <div
+                className="w-full rounded-2xl px-4 py-3 text-sm text-center"
+                style={{
+                  background: 'var(--status-watch-soft)',
+                  color: 'var(--status-watch-foreground)',
+                }}
+              >
+                {stopReason}
+              </div>
+            )}
             <div
               className="h-16 w-16 rounded-full animate-pulse-ring flex items-center justify-center"
               style={{ background: 'var(--status-good-soft)' }}
@@ -610,76 +834,101 @@ export function VoiceLogClient({
         )}
       </div>
 
-      {/* Tile grid — visible during recording (live) and complete (Claude) */}
-      {(status === 'recording' || status === 'analyzing' || status === 'complete') && (
-        <div className="grid grid-cols-2 gap-3">
-          {TILE_ORDER.map((key) => {
-            const meta = TILE_META[key];
-            const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
-            const filled = display.value != null;
-            const matched = display.matched;
+      {/* Tile grid — always visible. Tiles are a daily-care guide:
+          muted/dim in idle, light up as the user speaks, render Claude's
+          authoritative values once analysis completes. */}
+      <div className="grid grid-cols-2 gap-3">
+        {TILE_ORDER.map((key) => {
+          const meta = TILE_META[key];
+          const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
+          const filled = display.value != null;
+          const matched = display.matched;
+          // Three visual states:
+          //   filled  — has a value (live or Claude); full opacity, sage tile
+          //   matched — keyterm seen but no value yet; full opacity, accent ring
+          //   muted   — neither; reduced opacity so the eye treats it as a hint
+          return (
+            <div
+              key={key}
+              className={`rounded-2xl p-4 shadow-card transition ${
+                filled || matched ? 'bg-card opacity-100' : 'bg-card opacity-60'
+              }`}
+              style={
+                matched && !filled
+                  ? { boxShadow: '0 0 0 2px var(--accent)' }
+                  : undefined
+              }
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="h-10 w-10 rounded-xl flex items-center justify-center"
+                  style={{
+                    background: filled ? 'var(--status-good-soft)' : 'var(--accent)',
+                    color: filled ? 'var(--status-good-foreground)' : 'var(--accent-foreground)',
+                  }}
+                >
+                  <meta.Icon size={18} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground">
+                    {meta.label}
+                  </p>
+                  <p className="text-sm font-semibold text-foreground truncate">
+                    {display.value ?? meta.emptyHint}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Alert chips — only render on complete. Tier-1 = red ("Highest
+          priority"); tier-2 = amber ("Watch today"). Each chip shows the
+          reason it fired (rule #4) and the research source. */}
+      {status === 'complete' && alertChips.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {alertChips.map((chip, i) => {
+            const tier1 = chip.tier === 1;
             return (
               <div
-                key={key}
-                className={`rounded-2xl p-4 shadow-card transition ${
-                  filled
-                    ? 'bg-card'
-                    : matched
-                      ? 'bg-card ring-2 ring-offset-0'
-                      : 'bg-card/70'
-                }`}
+                key={i}
+                className="rounded-2xl p-4 flex flex-col gap-2 border"
                 style={{
-                  borderColor: 'var(--border)',
-                  ...(matched && !filled
-                    ? { boxShadow: '0 0 0 2px var(--accent)' }
-                    : {}),
+                  background: tier1 ? 'var(--status-alert-soft)' : 'var(--status-watch-soft)',
+                  borderColor: tier1 ? 'var(--status-alert)' : 'var(--status-watch)',
+                  color: tier1 ? 'var(--status-alert-foreground)' : 'var(--status-watch-foreground)',
                 }}
               >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="h-10 w-10 rounded-xl flex items-center justify-center"
-                    style={{
-                      background: filled ? 'var(--status-good-soft)' : 'var(--accent)',
-                      color: filled ? 'var(--status-good-foreground)' : 'var(--accent-foreground)',
-                    }}
-                  >
-                    <meta.Icon size={18} />
-                  </div>
+                <div className="flex items-start gap-3">
+                  {tier1 ? (
+                    <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle size={20} className="shrink-0 mt-0.5" />
+                  )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                      {meta.label}
-                    </p>
-                    <p className="text-sm font-semibold text-foreground truncate">
-                      {display.value ?? meta.emptyHint}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full"
+                        style={{
+                          background: tier1 ? 'var(--status-alert)' : 'var(--status-watch)',
+                          color: 'white',
+                        }}
+                      >
+                        {tier1 ? 'Highest priority' : 'Watch today'}
+                      </span>
+                      <p className="text-sm font-semibold">{chip.label}</p>
+                    </div>
+                    <p className="text-xs mt-1.5 leading-relaxed opacity-90">{chip.reason}</p>
+                    <p className="text-sm font-medium mt-2">{chip.action}</p>
+                    <p className="text-[10px] uppercase tracking-wider opacity-70 mt-1">
+                      Source: {chip.cite}
                     </p>
                   </div>
                 </div>
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* Alert chips — only render on complete */}
-      {status === 'complete' && alertChips.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {alertChips.map((chip, i) => (
-            <div
-              key={i}
-              className="rounded-2xl p-4 flex items-center gap-3"
-              style={{
-                background: 'var(--status-alert-soft)',
-                borderColor: 'var(--status-alert)',
-                color: 'var(--status-alert-foreground)',
-              }}
-            >
-              <AlertCircle size={20} />
-              <div className="flex-1">
-                <p className="text-sm font-semibold">{chip.label}</p>
-                <p className="text-xs opacity-80">{chip.sub}</p>
-              </div>
-            </div>
-          ))}
         </div>
       )}
 
@@ -706,6 +955,22 @@ export function VoiceLogClient({
               </p>
               <p className="text-sm">{observations.follow_up_question}</p>
             </div>
+          )}
+
+          {moreNotes.length > 0 && (
+            <details className="rounded-2xl bg-muted/40 p-4">
+              <summary className="text-xs uppercase tracking-wider text-muted-foreground cursor-pointer select-none">
+                More notes
+              </summary>
+              <ul className="mt-3 space-y-1.5">
+                {moreNotes.map(({ label, value }) => (
+                  <li key={label} className="text-sm leading-relaxed">
+                    <span className="text-muted-foreground">{label}:</span>{' '}
+                    <span className="text-foreground">{value}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
 
           {finals.length > 0 && (

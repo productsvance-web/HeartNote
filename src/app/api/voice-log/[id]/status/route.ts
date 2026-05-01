@@ -24,7 +24,7 @@ export async function GET(
         'transcribed_text',
         'processing_error',
         'structured_observations',
-        // Tile columns
+        // Primary-tile columns
         'weight_lb',
         'systolic_bp',
         'diastolic_bp',
@@ -44,6 +44,12 @@ export async function GET(
         'early_satiety',
         'fatigue_level',
         'cognition_change',
+        // Background-only columns surfaced in the "more notes" expand
+        'feeling_score',
+        'extremities_cold_clammy',
+        'urine_output_change',
+        'chest_pain_character',
+        'activity_tolerance_change',
       ].join(', ')
     )
     .eq('id', id)
