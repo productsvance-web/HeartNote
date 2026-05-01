@@ -206,6 +206,12 @@ function tileDisplay(
           matched: isMatched,
         };
       }
+      // Explicit "no cough today" — render "None" so the tile leaves the
+      // matched-but-unfilled "Heard — extracting…" state. Mirrors the
+      // pattern Swelling/Breathing/Energy use for their zero-states.
+      if (claude?.cough_present === false) {
+        return { value: 'None', matched: isMatched };
+      }
       return { value: null, matched: isMatched };
     }
     case 'appetite':
