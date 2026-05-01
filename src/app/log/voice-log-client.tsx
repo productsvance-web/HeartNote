@@ -1054,13 +1054,16 @@ export function VoiceLogClient({
               const missingImportant =
                 status === 'complete' && !hasValue && meta.important;
               const flash = justFilled === key;
-              // Muted "Earlier today" tiles use 0.7 opacity — visibly dimmer
+              // Muted "Earlier today" tiles use 0.75 opacity — visibly dimmer
               // than active tiles (1.0) but distinct from the empty state's
               // 0.55 + em-dash treatment, so the caregiver can tell at a
               // glance: bright = captured now, muted = on file from earlier,
-              // empty = nothing today.
+              // empty = nothing today. 0.75 (not 0.7) keeps the value text
+              // above WCAG AA contrast against `var(--card)` in light mode,
+              // where `--foreground: oklch(0.28...)` composites borderline
+              // at 0.7.
               const opacity = isPrior
-                ? 0.7
+                ? 0.75
                 : hasValue || isHeard || missingImportant
                   ? 1
                   : 0.55;
