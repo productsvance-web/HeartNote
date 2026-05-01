@@ -99,14 +99,25 @@ function findAnchors(transcript: string): Anchor[] {
   }
   // Sort by position so we can scan left-to-right.
   anchors.sort((a, b) => a.start - b.start);
-  return anchors;
+  // Drop any anchor fully contained inside another (e.g. "pulse" inside
+  // "pulse ox") so the more specific keyword wins on overlapping matches.
+  return anchors.filter(
+    (a) =>
+      !anchors.some(
+        (b) =>
+          b !== a &&
+          b.start <= a.start &&
+          b.end >= a.end &&
+          b.end - b.start > a.end - a.start
+      )
+  );
 }
 
 function nearestAnchor(
   numStart: number,
   numEnd: number,
   anchors: Anchor[]
-): Anchor | null {
+): { anchor: Anchor; distance: number } | null {
   let best: { anchor: Anchor; distance: number } | null = null;
   for (const a of anchors) {
     let distance: number;
@@ -126,7 +137,7 @@ function nearestAnchor(
       best = { anchor: a, distance };
     }
   }
-  return best?.anchor ?? null;
+  return best;
 }
 
 export function extractNumericTiles(transcript: string): NumericTiles {
@@ -146,25 +157,39 @@ export function extractNumericTiles(transcript: string): NumericTiles {
     }
   }
 
-  // 2. Nearest-keyword pass for the single-value fields.
+  // 2. Nearest-keyword pass for the single-value fields. For each field we
+  //    keep the number whose anchor is *closest* — not the first one seen —
+  //    so phrases like "walked 60 feet, pulse 72" don't lock the field to
+  //    the wrong digit.
   const anchors = findAnchors(transcript);
+  const bestPerField: Partial<
+    Record<FieldKey, { value: number; distance: number }>
+  > = {};
   for (const m of transcript.matchAll(NUMBER_RE)) {
     const numStart = m.index ?? 0;
     const numEnd = numStart + m[0].length;
     // Skip digits already consumed by the BP match.
     if (bpRange && numStart >= bpRange[0] && numEnd <= bpRange[1]) continue;
 
-    const anchor = nearestAnchor(numStart, numEnd, anchors);
-    if (!anchor) continue;
-    if (out[anchor.field] != null) continue; // first match per field wins
+    const hit = nearestAnchor(numStart, numEnd, anchors);
+    if (!hit) continue;
 
     const value = Number(m[1]);
     if (!Number.isFinite(value)) continue;
 
-    const [min, max] = FIELD_RANGE[anchor.field];
+    const [min, max] = FIELD_RANGE[hit.anchor.field];
     if (value < min || value > max) continue;
 
-    out[anchor.field] = value;
+    const existing = bestPerField[hit.anchor.field];
+    if (!existing || hit.distance < existing.distance) {
+      bestPerField[hit.anchor.field] = { value, distance: hit.distance };
+    }
+  }
+  for (const [field, picked] of Object.entries(bestPerField) as [
+    FieldKey,
+    { value: number; distance: number }
+  ][]) {
+    out[field] = picked.value;
   }
 
   // 3. Pillow word-to-number — "two pillows" etc.
