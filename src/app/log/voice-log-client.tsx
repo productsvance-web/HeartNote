@@ -465,18 +465,18 @@ export function VoiceLogClient({
   const liveNumeric = useMemo(() => extractNumericTiles(fullTranscript), [fullTranscript]);
   const liveMatched = useMemo(() => findMatchedKeyterms(fullTranscript), [fullTranscript]);
 
-  // Hydrate today's synthesized tile state from /status. Runs whenever
-  // `logId` or `status` changes, except during recording (the live transcript
-  // drives the tiles then) or error. The /status route synthesizes across
-  // all today's dictations by (patient_id, log_date), so a brand-new pending
-  // logId still returns prior-dictation values — that's what powers the
-  // muted "Earlier today" treatment when the caregiver re-taps Record.
-  // While `status === 'analyzing'`, polls every 1500ms until processing
-  // completes or fails.
+  // Hydrate today's synthesized tile state from /status whenever a logId
+  // is set. Keyed ONLY on `logId` because /status synthesizes by
+  // (patient_id, log_date) — the response is day-keyed, not log-keyed, so
+  // the result is identical regardless of which logId triggered the fetch.
+  // Cancellation only fires on logId change or unmount; it does NOT fire
+  // on status transitions, so a fetch started in `requesting-mic` survives
+  // the flip to `recording` and still hydrates the muted "Earlier today"
+  // tiles when claudeTiles was null at Record-tap.
   useEffect(() => {
-    if (!logId || status === 'recording' || status === 'error') return;
+    if (!logId) return;
     let cancelled = false;
-    const tick = async () => {
+    (async () => {
       try {
         const res = await fetch(`/api/voice-log/${logId}/status`, { cache: 'no-store' });
         if (!res.ok || cancelled) return;
@@ -486,9 +486,6 @@ export function VoiceLogClient({
           processing_error: string | null;
           structured_observations: AISummary | null;
         };
-        // Always hydrate the day's synthesized tile state. The phase
-        // (pre_complete vs complete) controls how each tile renders;
-        // hydration just keeps the data fresh.
         setClaudeTiles(data);
         if (data.processing_status === 'complete') {
           setStatus('complete');
@@ -503,17 +500,47 @@ export function VoiceLogClient({
       } catch {
         /* silent retry */
       }
-    };
-    tick();
-    if (status === 'analyzing') {
-      const id = window.setInterval(tick, 1500);
-      return () => {
-        cancelled = true;
-        window.clearInterval(id);
-      };
-    }
+    })();
     return () => {
       cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logId]);
+
+  // Poll /status every 1500ms while processing is in flight. Independent
+  // from the hydration effect so its analyzing-only lifecycle doesn't
+  // cancel one-shot fetches.
+  useEffect(() => {
+    if (!logId || status !== 'analyzing') return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      try {
+        const res = await fetch(`/api/voice-log/${logId}/status`, { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as ClaudeTiles & {
+          processing_status: string;
+          transcribed_text: string | null;
+          processing_error: string | null;
+          structured_observations: AISummary | null;
+        };
+        setClaudeTiles(data);
+        if (data.processing_status === 'complete') {
+          setStatus('complete');
+          if (data.transcribed_text && finals.length === 0) {
+            setFinals([data.transcribed_text]);
+          }
+          setObservations(data.structured_observations);
+        } else if (data.processing_status === 'failed') {
+          setStatus('error');
+          setError(data.processing_error ?? 'Processing failed.');
+        }
+      } catch {
+        /* silent retry */
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logId, status]);
