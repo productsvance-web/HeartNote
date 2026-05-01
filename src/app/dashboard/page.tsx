@@ -1,9 +1,11 @@
 import { redirect } from 'next/navigation';
-import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2 } from 'lucide-react';
+import { Mic, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import { getSpo2Trend } from '@/lib/vitals/spo2';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { StatusRing } from '@/components/heartnote/StatusRing';
+import { SpO2Card } from '@/components/heartnote/SpO2Card';
 import Link from 'next/link';
 
 function greet() {
@@ -48,6 +50,12 @@ export default async function DashboardPage() {
         .maybeSingle()
     : { data: null };
 
+  // SpO2 mini trend for the dashboard card. Falls back to null on query
+  // error so the card silently disappears rather than crashing the dashboard.
+  const spo2 = patient
+    ? await getSpo2Trend(supabase, patient.id, today, 7).catch(() => null)
+    : null;
+
   // Until we wire alert logic, derive a simple display status from the log state.
   // 'pending' here means a row exists from a record-attempt that never submitted
   // a transcript — same as no log at all from the caregiver's perspective.
@@ -61,7 +69,6 @@ export default async function DashboardPage() {
         : 'processing';
 
   const tiles = [
-    { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
     { to: '/family', label: 'Family', Icon: Users, tint: 'oklch(0.93 0.02 220)' },
     { to: '/visits', label: 'Visit prep', Icon: CalendarHeart, tint: 'var(--status-watch-soft)' },
     { to: '/me', label: 'Settings', Icon: Settings, tint: 'var(--accent)' },
@@ -140,6 +147,15 @@ export default async function DashboardPage() {
           </Link>
         )}
       </section>
+
+      {spo2?.latest && (
+        <SpO2Card
+          days={spo2.days}
+          todayLogDate={today}
+          latestValue={spo2.latest.value}
+          latestLogDate={spo2.latest.log_date}
+        />
+      )}
 
       <Link
         href="/me"
