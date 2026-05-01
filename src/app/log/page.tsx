@@ -38,18 +38,8 @@ export default async function LogPage() {
 
   return (
     <PhoneShell>
-      <header className="px-6 pt-8">
-        <p className="text-sm text-muted-foreground">Today&apos;s check-in</p>
-        <h1 className="font-display text-3xl text-foreground mt-1">
-          How is <span className="italic">{patient.display_name}</span>?
-        </h1>
-        <p className="text-sm text-muted-foreground mt-2">
-          Tap and talk for up to 2 minutes — weight, breathing, swelling, energy, sleep, cough,
-          appetite, anything that feels off. Watch the tiles fill as you speak.
-        </p>
-      </header>
-
       <VoiceLogClient
+        patientName={patient.display_name}
         patientId={patient.id}
         existingLogId={todaysLog?.id ?? null}
         existingStatus={todaysLog?.processing_status ?? null}

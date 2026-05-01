@@ -7,6 +7,7 @@ import {
   Check,
   AlertCircle,
   AlertTriangle,
+  Sparkles,
   Scale,
   Heart,
   Activity,
@@ -73,6 +74,7 @@ type ClaudeTiles = {
 };
 
 type Props = {
+  patientName: string;
   patientId: string;
   existingLogId: string | null;
   existingStatus: string | null;
@@ -237,6 +239,35 @@ function tileDisplay(
 //
 // All thresholds and reasoning lines are derived from extract.ts field
 // descriptions, which mirror research/chf-source-of-truth.md.
+// Lovable-style waveform: 28 thin bars whose heights pulse on a sine curve
+// driven by a faux "level" updated every 140ms. Adds visual life to the
+// recording header without needing a real AudioContext analyzer.
+function Waveform() {
+  const [seed, setSeed] = useState(() => Math.random());
+  useEffect(() => {
+    const id = window.setInterval(() => setSeed(Math.random()), 140);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div className="flex items-end gap-[2px] h-5 mt-1.5">
+      {Array.from({ length: 28 }).map((_, i) => {
+        const h = 4 + Math.abs(Math.sin(i * 0.6 + seed * 6)) * 14;
+        return (
+          <span
+            key={i}
+            className="rounded-full transition-[height] duration-150 ease-out"
+            style={{
+              width: 2,
+              height: `${h}px`,
+              background: 'color-mix(in oklab, var(--sage) 70%, transparent)',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 type AlertChip = {
   tier: 1 | 2;
   label: string; // caregiver-language event
@@ -320,6 +351,7 @@ function alertChipsFromClaude(c: ClaudeTiles | null): AlertChip[] {
 }
 
 export function VoiceLogClient({
+  patientName,
   patientId,
   existingLogId,
   existingStatus,
@@ -353,6 +385,12 @@ export function VoiceLogClient({
   const [stopReason, setStopReason] = useState<string | null>(null);
   // Caregiver dismissed the "missing important tiles" nudge for this log.
   const [missingNudgeDismissed, setMissingNudgeDismissed] = useState(false);
+  // Brief visual "flash" on the most-recently-filled tile (Lovable's
+  // newly-captured-field animation). Cleared 900ms after the fill.
+  const [justFilled, setJustFilled] = useState<TileKey | null>(null);
+  // Tracks which tiles were filled on the previous render, so we can
+  // detect transitions empty→filled and trigger justFilled.
+  const prevFilledRef = useRef<Set<TileKey>>(new Set());
 
   const dgClientRef = useRef<DeepgramClient | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -698,293 +736,379 @@ export function VoiceLogClient({
   const alertChips = alertChipsFromClaude(claudeTiles);
   const moreNotes = buildMoreNotes(claudeTiles);
 
+  // Compute each tile's display once per render so we can re-use across
+  // multiple sections (record-state grid, complete-state grid, missing-
+  // tiles nudge, justFilled tracking).
+  const tileDisplays = TILE_ORDER.map((key) => ({
+    key,
+    ...tileDisplay(key, liveNumeric, liveMatched, claudeTiles),
+  }));
+  const filledNow = new Set(tileDisplays.filter((t) => t.value != null).map((t) => t.key));
+  const filledCount = filledNow.size;
+
   // Important daily-track tiles the caregiver didn't log today. Drives the
   // post-recording nudge banner — only computed when Claude has finished
-  // (otherwise everything looks "missing"). Patient name is a noun used in
-  // the banner copy.
+  // (otherwise everything looks "missing").
   const missingImportantTiles =
     status === 'complete' && claudeTiles
-      ? TILE_ORDER.filter((key) => {
-          if (!TILE_META[key].important) return false;
-          const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
-          return display.value == null;
-        })
+      ? tileDisplays.filter(({ key, value }) => TILE_META[key].important && value == null).map((t) => t.key)
       : [];
 
+  // Detect newly-filled tiles for the flash animation.
+  useEffect(() => {
+    const prev = prevFilledRef.current;
+    for (const k of filledNow) {
+      if (!prev.has(k)) {
+        setJustFilled(k);
+        const tk = k;
+        window.setTimeout(
+          () => setJustFilled((cur) => (cur === tk ? null : cur)),
+          900
+        );
+      }
+    }
+    prevFilledRef.current = filledNow;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filledCount]);
+
+  const showRecordSurface =
+    status === 'idle' || status === 'requesting-mic' || status === 'recording';
+
   return (
-    <section className="mt-6 mx-4 flex flex-col gap-4">
-      {/* Recording surface */}
-      <div className="rounded-3xl bg-card shadow-card p-6 animate-fade-up">
-        {(status === 'idle' || status === 'requesting-mic') && (
-          // Idle: instructions on top, action button at bottom (thumb reach).
-          <div className="flex flex-col items-center gap-5 py-4">
-            <p className="text-sm text-muted-foreground text-center max-w-xs">
-              {status === 'requesting-mic'
-                ? 'Asking for mic permission…'
-                : 'Tap below and tell HeartNote how today is going. Up to 2 minutes. Say “end note” when you’re done.'}
-            </p>
-            <button
-              type="button"
-              onClick={startRecording}
-              disabled={status === 'requesting-mic'}
-              className="h-32 w-32 rounded-full text-white shadow-soft active:scale-95 transition disabled:opacity-50"
-              style={{
-                background:
-                  'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
-              }}
-              aria-label="Start recording"
-            >
-              <Mic size={48} className="mx-auto" />
-            </button>
-          </div>
-        )}
-
-        {status === 'recording' && (
-          // Recording: timer + live transcript on top (the focus), stop button
-          // at the bottom of the card so it's reachable without two hands.
-          <div className="flex flex-col items-center gap-4 py-2">
-            <div className="text-center">
-              <p
-                className="font-display text-3xl tabular-nums"
-                style={
-                  seconds >= WRAP_UP_WARNING_AT
-                    ? { color: 'var(--status-alert)' }
-                    : undefined
-                }
-              >
-                {String(Math.floor(seconds / 60)).padStart(2, '0')}:
-                {String(seconds % 60).padStart(2, '0')}
-              </p>
-              <p
-                className="text-xs mt-0.5"
-                style={{
-                  color:
-                    seconds >= WRAP_UP_WARNING_AT
-                      ? 'var(--status-alert)'
-                      : 'var(--muted-foreground)',
-                  fontWeight: seconds >= WRAP_UP_WARNING_AT ? 600 : undefined,
-                }}
-              >
-                {seconds >= WRAP_UP_WARNING_AT
-                  ? `Wrap up — ${MAX_SECONDS - seconds}s left`
-                  : `${MAX_SECONDS - seconds}s left · say “end note” to finish`}
-              </p>
-            </div>
-            {/* Live transcript — auto-scrolls to the latest text */}
-            <div
-              ref={transcriptScrollRef}
-              className="w-full rounded-2xl bg-muted/60 p-4 min-h-[80px] max-h-[180px] overflow-y-auto"
-            >
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                <span>{finals.join(' ')}</span>{' '}
-                <span className="text-muted-foreground italic">{interim}</span>
-                {!finals.length && !interim && (
-                  <span className="text-muted-foreground">Start speaking — your words will appear here.</span>
-                )}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => stopRecording()}
-              className="h-28 w-28 rounded-full text-white shadow-soft active:scale-95 transition animate-pulse-ring relative flex items-center justify-center mt-2"
-              style={{ background: 'var(--status-alert)' }}
-              aria-label="Stop recording"
-            >
-              <Square size={36} fill="currentColor" />
-            </button>
-          </div>
-        )}
-
-        {status === 'analyzing' && (
-          <div className="flex flex-col items-center gap-3 py-6">
-            {stopReason && (
-              <div
-                className="w-full rounded-2xl px-4 py-3 text-sm text-center"
-                style={{
-                  background: 'var(--status-watch-soft)',
-                  color: 'var(--status-watch-foreground)',
-                }}
-              >
-                {stopReason}
-              </div>
-            )}
-            <div
-              className="h-16 w-16 rounded-full animate-pulse-ring flex items-center justify-center"
-              style={{ background: 'var(--status-good-soft)' }}
-            >
-              <Mic size={26} style={{ color: 'var(--status-good-foreground)' }} />
-            </div>
-            <p className="font-display text-xl">Reading what you said…</p>
-            <p className="text-sm text-muted-foreground text-center max-w-xs">
-              Pulling out weight, symptoms, and anything else worth flagging.
-            </p>
-          </div>
-        )}
-
-        {status === 'complete' && (
-          <div className="flex flex-col gap-3 py-1">
-            <div className="flex items-center gap-3">
-              <div
-                className="h-10 w-10 rounded-full flex items-center justify-center"
-                style={{
-                  background: 'var(--status-good-soft)',
-                  color: 'var(--status-good-foreground)',
-                }}
-              >
-                <Check size={18} />
-              </div>
-              <p className="font-display text-xl">Logged for today</p>
-            </div>
-            {observations?.caregiver_summary && (
-              <div
-                className="rounded-2xl p-4 border"
-                style={{
-                  background: 'var(--status-good-soft)',
-                  borderColor: 'color-mix(in oklab, var(--status-good) 30%, transparent)',
-                }}
-              >
-                <p
-                  className="text-xs uppercase tracking-wider mb-2"
-                  style={{ color: 'var(--status-good-foreground)' }}
-                >
-                  What HeartNote heard
-                </p>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--status-good-foreground)' }}>
-                  {observations.caregiver_summary}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {status === 'error' && (
-          <div className="flex flex-col items-center gap-4 py-6">
-            <div
-              className="h-12 w-12 rounded-full flex items-center justify-center"
-              style={{ background: 'var(--status-alert-soft)' }}
-            >
-              <AlertCircle size={22} style={{ color: 'var(--status-alert-foreground)' }} />
-            </div>
-            <p className="text-center text-sm">{error ?? 'Something went wrong.'}</p>
-            <button
-              type="button"
-              onClick={recordAnother}
-              className="rounded-full px-5 py-3 text-sm font-medium border border-border bg-card"
-            >
-              Try again
-            </button>
-          </div>
-        )}
+    <section className="px-4 pt-4 flex flex-col gap-4 animate-fade-up">
+      {/* Header strip — concise; no big "How is X?" block competing with the
+          recording surface for visual weight. Lovable's design instead. */}
+      <div className="flex items-center justify-between px-2">
+        <p className="text-sm text-muted-foreground">Today’s check-in</p>
+        <p className="text-xs uppercase tracking-wider text-muted-foreground">
+          For {patientName}
+        </p>
       </div>
 
-      {/* Missing-important nudge: gentle reminder of unfilled daily-track
-          tiles. Shown only on complete state, dismissible, no navigation gate. */}
-      {status === 'complete' && missingImportantTiles.length > 0 && !missingNudgeDismissed && (
+      {/* Mic + timer + waveform header — the always-visible vital sign of
+          recording state. Pulse ring active during recording; static during
+          idle/analyzing/complete. */}
+      <div className="flex items-center gap-4 px-2 mt-1">
+        <div className="relative h-16 w-16 flex-shrink-0">
+          {(status === 'recording' || status === 'analyzing') && (
+            <div
+              className="absolute inset-0 rounded-full animate-pulse-ring"
+              style={{ background: 'var(--status-good-soft)' }}
+            />
+          )}
+          <div
+            className="absolute inset-2 rounded-full flex items-center justify-center"
+            style={{
+              background:
+                status === 'complete'
+                  ? 'linear-gradient(135deg, var(--status-good), color-mix(in oklab, var(--status-good) 60%, white))'
+                  : 'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 60%, white))',
+              boxShadow:
+                '0 8px 24px -6px color-mix(in oklab, var(--sage) 60%, transparent)',
+            }}
+          >
+            {status === 'complete' ? (
+              <Check size={22} className="text-white" strokeWidth={2.4} />
+            ) : (
+              <Mic size={22} className="text-white" strokeWidth={1.8} />
+            )}
+          </div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">
+            {status === 'recording'
+              ? 'Listening…'
+              : status === 'requesting-mic'
+                ? 'Asking for mic…'
+                : status === 'analyzing'
+                  ? 'Reading what you said…'
+                  : status === 'complete'
+                    ? 'Logged for today'
+                    : status === 'error'
+                      ? 'Something went wrong'
+                      : 'Tap below to start'}
+          </p>
+          <p
+            className="font-display text-2xl tabular-nums text-foreground leading-tight"
+            style={
+              status === 'recording' && seconds >= WRAP_UP_WARNING_AT
+                ? { color: 'var(--status-alert)' }
+                : undefined
+            }
+          >
+            {String(Math.floor(seconds / 60))}:{String(seconds % 60).padStart(2, '0')}
+          </p>
+          {status === 'recording' && <Waveform />}
+          {status === 'recording' && seconds >= WRAP_UP_WARNING_AT && (
+            <p
+              className="text-[11px] mt-0.5 font-semibold"
+              style={{ color: 'var(--status-alert)' }}
+            >
+              Wrap up — {MAX_SECONDS - seconds}s left
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Optional reason banner above the analyzing state (mic revoked,
+          time up, network drop). */}
+      {status === 'analyzing' && stopReason && (
         <div
-          className="rounded-2xl p-4 border"
+          className="rounded-2xl px-4 py-3 text-sm text-center"
           style={{
             background: 'var(--status-watch-soft)',
-            borderColor: 'var(--status-watch)',
             color: 'var(--status-watch-foreground)',
           }}
         >
-          <div className="flex items-start gap-3">
-            <AlertCircle size={20} className="shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold">A few you didn’t mention today</p>
-              <p className="text-xs leading-relaxed mt-1.5 opacity-90">
-                These five matter most for spotting changes early:{' '}
-                <span className="font-medium">
-                  {missingImportantTiles.map((k) => TILE_META[k].label).join(', ')}
-                </span>
-                . Try to mention them in tomorrow’s log so we can build a stable baseline.
-              </p>
-              <button
-                type="button"
-                onClick={() => setMissingNudgeDismissed(true)}
-                className="text-xs font-medium mt-3 underline underline-offset-2"
-              >
-                Got it
-              </button>
+          {stopReason}
+        </div>
+      )}
+
+      {/* Live transcript card — visible during record/analyzing/complete. */}
+      {(showRecordSurface || status === 'analyzing' || status === 'complete') && (
+        <div
+          ref={transcriptScrollRef}
+          className="rounded-2xl bg-card shadow-card p-4 min-h-[88px] max-h-[180px] overflow-y-auto"
+        >
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+            {status === 'complete' ? 'Transcript' : 'Live transcript'}
+          </p>
+          <p className="text-[15px] leading-relaxed text-foreground">
+            {finals.join(' ')}
+            {interim && (
+              <span className="text-muted-foreground italic"> {interim}</span>
+            )}
+            {status === 'recording' && (
+              <span
+                className="inline-block w-1 h-4 ml-0.5 align-middle animate-pulse"
+                style={{ background: 'var(--sage)' }}
+              />
+            )}
+            {!finals.length && !interim && (
+              <span className="text-muted-foreground italic">
+                {status === 'recording'
+                  ? "Start talking — I'll capture the important parts…"
+                  : status === 'idle'
+                    ? `Tap the mic and tell HeartNote how ${patientName} is doing. Up to 2 minutes. Say “end note” when you're done.`
+                    : '—'}
+              </span>
+            )}
+          </p>
+        </div>
+      )}
+
+      {/* Caregiver summary card — appears on complete only. Sage-soft
+          background to mirror Lovable's "What we noted" treatment. */}
+      {status === 'complete' && observations?.caregiver_summary && (
+        <div
+          className="rounded-2xl p-4 border"
+          style={{
+            background: 'var(--status-good-soft)',
+            borderColor: 'color-mix(in oklab, var(--status-good) 30%, transparent)',
+          }}
+        >
+          <p
+            className="text-[10px] uppercase tracking-wider mb-1.5 flex items-center gap-1.5"
+            style={{ color: 'var(--status-good-foreground)' }}
+          >
+            <Sparkles size={12} /> What HeartNote heard
+          </p>
+          <p
+            className="text-sm leading-relaxed"
+            style={{ color: 'var(--status-good-foreground)' }}
+          >
+            {observations.caregiver_summary}
+          </p>
+        </div>
+      )}
+
+      {/* Missing-important nudge: shown on complete only, dismissible. */}
+      {status === 'complete' &&
+        missingImportantTiles.length > 0 &&
+        !missingNudgeDismissed && (
+          <div
+            className="rounded-2xl p-4 border"
+            style={{
+              background: 'var(--status-watch-soft)',
+              borderColor: 'var(--status-watch)',
+              color: 'var(--status-watch-foreground)',
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <AlertCircle size={20} className="shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold">A few you didn’t mention today</p>
+                <p className="text-xs leading-relaxed mt-1.5 opacity-90">
+                  These five matter most for spotting changes early:{' '}
+                  <span className="font-medium">
+                    {missingImportantTiles.map((k) => TILE_META[k].label).join(', ')}
+                  </span>
+                  . Try to mention them in tomorrow’s log so we can build a stable
+                  baseline.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setMissingNudgeDismissed(true)}
+                  className="text-xs font-medium mt-3 underline underline-offset-2"
+                >
+                  Got it
+                </button>
+              </div>
             </div>
+          </div>
+        )}
+
+      {/* Auto-filling counter + tile grid (Lovable's smaller, tone-coded
+          tiles with flash-on-fill). Heard = sage ring; missing-important
+          on complete = watch ring; filled = sage soft. */}
+      {status !== 'error' && (
+        <div>
+          <div className="flex items-baseline justify-between px-2 mb-2">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Sparkles size={12} /> Auto-filling
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {filledCount}/{TILE_ORDER.length} captured
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            {tileDisplays.map(({ key, value, matched }) => {
+              const meta = TILE_META[key];
+              const filled = value != null;
+              const heard = matched && !filled;
+              const missingImportant =
+                status === 'complete' && !filled && meta.important;
+              const flash = justFilled === key;
+              return (
+                <div
+                  key={key}
+                  className="rounded-2xl p-3 shadow-card transition-all duration-300"
+                  style={{
+                    background: filled
+                      ? 'var(--card)'
+                      : 'color-mix(in oklab, var(--muted) 60%, transparent)',
+                    outline: flash
+                      ? '2px solid var(--status-good-foreground)'
+                      : heard
+                        ? '2px solid var(--sage)'
+                        : missingImportant
+                          ? '2px solid var(--status-watch)'
+                          : 'none',
+                    transform: flash ? 'scale(1.02)' : 'scale(1)',
+                    opacity: filled || heard || missingImportant ? 1 : 0.55,
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-7 w-7 rounded-lg flex items-center justify-center transition-colors"
+                      style={{
+                        background: filled
+                          ? 'var(--status-good-soft)'
+                          : heard
+                            ? 'var(--status-good-soft)'
+                            : 'var(--muted)',
+                        color: filled || heard
+                          ? 'var(--status-good-foreground)'
+                          : 'var(--muted-foreground)',
+                      }}
+                    >
+                      <meta.Icon size={14} />
+                    </div>
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
+                      {meta.label}
+                    </p>
+                  </div>
+                  <p
+                    className="mt-1.5 text-sm font-medium min-h-[20px] truncate"
+                    style={{
+                      color: heard
+                        ? 'var(--status-good-foreground)'
+                        : 'var(--foreground)',
+                    }}
+                  >
+                    {filled ? (
+                      value
+                    ) : heard ? (
+                      <span className="text-xs italic">heard…</span>
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Tile grid — always visible. Tiles are a daily-care guide:
-          muted/dim in idle, light up as the user speaks, render Claude's
-          authoritative values once analysis completes.
+      {/* Bottom action — sage pill button, contextual label per status.
+          On idle/recording it's the primary CTA at thumb reach.
+          On complete it offers "Record another." */}
+      {status === 'idle' && (
+        <button
+          type="button"
+          onClick={startRecording}
+          className="self-center mt-2 mb-2 flex items-center gap-2 rounded-full px-6 py-3.5 text-primary-foreground font-medium active:scale-95 transition shadow-card"
+          style={{
+            background:
+              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+          }}
+          aria-label="Start recording"
+        >
+          <Mic size={14} /> Start recording
+        </button>
+      )}
+      {status === 'requesting-mic' && (
+        <button
+          type="button"
+          disabled
+          className="self-center mt-2 mb-2 flex items-center gap-2 rounded-full px-6 py-3.5 text-primary-foreground font-medium opacity-50 shadow-card"
+          style={{
+            background:
+              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+          }}
+        >
+          <Mic size={14} /> Requesting mic…
+        </button>
+      )}
+      {status === 'recording' && (
+        <button
+          type="button"
+          onClick={() => stopRecording()}
+          className="self-center mt-2 mb-2 flex items-center gap-2 rounded-full px-6 py-3.5 text-primary-foreground font-medium active:scale-95 transition shadow-card"
+          style={{
+            background:
+              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+          }}
+          aria-label="Stop recording and save"
+        >
+          <Square size={14} fill="currentColor" /> Stop &amp; save
+        </button>
+      )}
 
-          Visual states (most → least prominent):
-            filled       — has a value; full opacity, sage icon, value in bold
-            heard        — keyterm matched but no value yet (Claude still working);
-                            strong sage ring, "Heard — extracting…"
-            missing-imp  — Claude completed and the caregiver didn't log this
-                            important daily-track tile; amber ring to draw the eye
-            muted        — neither; 60% opacity, hint copy
-       */}
-      <div className="grid grid-cols-2 gap-3">
-        {TILE_ORDER.map((key) => {
-          const meta = TILE_META[key];
-          const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
-          const filled = display.value != null;
-          const heard = display.matched && !filled;
-          const missingImportant =
-            status === 'complete' && !filled && meta.important;
-
-          return (
-            <div
-              key={key}
-              className={`rounded-2xl p-4 shadow-card transition-all bg-card ${
-                filled || heard || missingImportant ? 'opacity-100' : 'opacity-60'
-              }`}
-              style={
-                heard
-                  ? { boxShadow: '0 0 0 2px var(--sage), var(--shadow-card)' }
-                  : missingImportant
-                    ? { boxShadow: '0 0 0 2px var(--status-watch), var(--shadow-card)' }
-                    : undefined
-              }
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className="h-10 w-10 rounded-xl flex items-center justify-center"
-                  style={{
-                    background: filled
-                      ? 'var(--status-good-soft)'
-                      : heard
-                        ? 'var(--status-good-soft)'
-                        : 'var(--accent)',
-                    color:
-                      filled || heard
-                        ? 'var(--status-good-foreground)'
-                        : 'var(--accent-foreground)',
-                  }}
-                >
-                  <meta.Icon size={18} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                    {meta.label}
-                  </p>
-                  <p
-                    className="text-sm font-semibold truncate"
-                    style={{
-                      color: heard ? 'var(--status-good-foreground)' : 'var(--foreground)',
-                    }}
-                  >
-                    {filled
-                      ? display.value
-                      : heard
-                        ? 'Heard — extracting…'
-                        : meta.emptyHint}
-                  </p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* Error state — full-card error message + retry button. */}
+      {status === 'error' && (
+        <div className="rounded-2xl bg-card shadow-card p-6 flex flex-col items-center gap-4">
+          <div
+            className="h-12 w-12 rounded-full flex items-center justify-center"
+            style={{ background: 'var(--status-alert-soft)' }}
+          >
+            <AlertCircle
+              size={22}
+              style={{ color: 'var(--status-alert-foreground)' }}
+            />
+          </div>
+          <p className="text-center text-sm">{error ?? 'Something went wrong.'}</p>
+          <button
+            type="button"
+            onClick={recordAnother}
+            className="rounded-full px-5 py-3 text-sm font-medium border border-border bg-card"
+          >
+            Try again
+          </button>
+        </div>
+      )}
 
       {/* Alert chips — only render on complete. Tier-1 = red ("Highest
           priority"); tier-2 = amber ("Watch today"). Each chip shows the
