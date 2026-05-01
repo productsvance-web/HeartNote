@@ -6,24 +6,9 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
 import { classifyDrugByName } from '@/lib/medications/classify';
-import type { Database } from '@/lib/supabase/types';
+import { MED_CLASS_VALUES } from '@/lib/medications/classes';
 
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
-const MED_CLASS_VALUES: ReadonlyArray<Database['public']['Enums']['med_class']> = [
-  'loop_diuretic',
-  'ace_inhibitor',
-  'arb',
-  'arni',
-  'beta_blocker',
-  'mra',
-  'sglt2_inhibitor',
-  'digoxin',
-  'antiarrhythmic',
-  'anticoagulant_warfarin',
-  'anticoagulant_doac',
-  'potassium_supplement',
-  'other',
-];
 
 const MedicationPayloadSchema = z
   .object({
@@ -133,11 +118,13 @@ export async function updateMedication(
   const v = parsed.data;
   const scheduleTimes = dosesPerDayChanged ? null : v.scheduleTimes;
 
+  // Omit drug_class from the update when the caller didn't provide it — never
+  // silently downgrade a previously-classified med to 'other'.
   const { error: updateError } = await supabase
     .from('medications')
     .update({
       drug_name: v.drugName,
-      drug_class: v.drugClass ?? 'other',
+      ...(v.drugClass !== undefined ? { drug_class: v.drugClass } : {}),
       dose: v.dose || null,
       frequency: v.frequency || null,
       doses_per_day: v.dosesPerDay,

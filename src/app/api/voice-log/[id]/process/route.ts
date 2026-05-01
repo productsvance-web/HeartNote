@@ -51,8 +51,11 @@ export async function POST(
     .single();
   if (existing?.processing_status === 'complete') {
     // Idempotent retry. unmatched_chips are render-once and not persisted —
-    // a re-fetch returns an empty array (architectural decision #8 in
-    // docs/plans/medication-flow-v1.md).
+    // an idempotent re-fetch returns an empty array. If the caregiver
+    // navigates away from the review screen and back via this code path,
+    // the chips are gone (architectural decision #8 in
+    // docs/plans/medication-flow-v1.md). The transcript still records the
+    // original phrase for manual reference.
     return NextResponse.json({
       ok: true,
       alreadyComplete: true,

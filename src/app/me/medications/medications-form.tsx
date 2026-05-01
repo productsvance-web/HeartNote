@@ -3,25 +3,7 @@
 import { useState, useTransition } from 'react';
 import { addMedication, updateMedication, stopMedication, restartMedication } from './actions';
 import type { MedicationPayload } from './actions';
-import type { Database } from '@/lib/supabase/types';
-
-type MedClass = Database['public']['Enums']['med_class'];
-
-const MED_CLASS_OPTIONS: { value: MedClass; label: string }[] = [
-  { value: 'loop_diuretic', label: 'Loop diuretic' },
-  { value: 'ace_inhibitor', label: 'ACE inhibitor' },
-  { value: 'arb', label: 'ARB' },
-  { value: 'arni', label: 'ARNI' },
-  { value: 'beta_blocker', label: 'Beta blocker' },
-  { value: 'mra', label: 'MRA' },
-  { value: 'sglt2_inhibitor', label: 'SGLT2 inhibitor' },
-  { value: 'digoxin', label: 'Digoxin' },
-  { value: 'antiarrhythmic', label: 'Antiarrhythmic' },
-  { value: 'anticoagulant_warfarin', label: 'Warfarin' },
-  { value: 'anticoagulant_doac', label: 'DOAC anticoagulant' },
-  { value: 'potassium_supplement', label: 'Potassium supplement' },
-  { value: 'other', label: 'Other' },
-];
+import { MED_CLASS_ORDER, type MedClass } from '@/lib/medications/classes';
 
 type Mode = 'new' | 'edit';
 
@@ -71,10 +53,13 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   }
 
   function addScheduleTime() {
+    // Initialize all N slots empty so the inputs render. Submit normalizer
+    // sends null when ANY slot is empty (the schema's all-or-nothing rule),
+    // so the caregiver must fill every slot or use "Remove time schedule" —
+    // half-filled saves silently dropping the schedule was the prior bug.
     setForm((f) => {
       if (f.dosesPerDay === null) return f;
-      const start = f.scheduleTimes ?? Array(f.dosesPerDay).fill('');
-      return { ...f, scheduleTimes: start.map((t, i) => (i === 0 && !t ? '08:00' : t)) };
+      return { ...f, scheduleTimes: Array(f.dosesPerDay).fill('') };
     });
   }
 
@@ -242,7 +227,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
               setForm({ ...form, drugClass: e.target.value as MedClass })
             }
           >
-            {MED_CLASS_OPTIONS.map((opt) => (
+            {MED_CLASS_ORDER.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>

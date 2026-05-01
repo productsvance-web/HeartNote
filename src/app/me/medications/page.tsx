@@ -3,26 +3,11 @@ import Link from 'next/link';
 import { ChevronRight, Plus, Pill } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
+import { MED_CLASS_LABEL } from '@/lib/medications/classes';
 
 interface PageProps {
   searchParams: Promise<{ added?: string }>;
 }
-
-const CLASS_LABEL: Record<string, string> = {
-  loop_diuretic: 'Loop diuretic',
-  ace_inhibitor: 'ACE inhibitor',
-  arb: 'ARB',
-  arni: 'ARNI',
-  beta_blocker: 'Beta blocker',
-  mra: 'MRA',
-  sglt2_inhibitor: 'SGLT2 inhibitor',
-  digoxin: 'Digoxin',
-  antiarrhythmic: 'Antiarrhythmic',
-  anticoagulant_warfarin: 'Warfarin',
-  anticoagulant_doac: 'DOAC anticoagulant',
-  potassium_supplement: 'Potassium supplement',
-  other: 'Other',
-};
 
 export default async function MedicationsPage({ searchParams }: PageProps) {
   const { added } = await searchParams;
@@ -42,6 +27,10 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
 
   if (!patient) redirect('/onboarding');
 
+  // Postgres orders enums by declaration order; med_class declares
+  // loop_diuretic first so this naturally surfaces the highest-signal CHF
+  // class at the top. Reordering the enum reorders this list — change both
+  // together (see src/lib/medications/classes.ts).
   const { data: meds } = await supabase
     .from('medications')
     .select('id, drug_name, drug_class, dose, frequency, doses_per_day, schedule_times, stopped_at')
@@ -97,7 +86,7 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
                       </p>
                       {isJustAdded && (
                         <p className="text-xs mt-2 inline-block rounded-full bg-muted px-2.5 py-1 text-foreground">
-                          Classed as {CLASS_LABEL[m.drug_class] ?? m.drug_class} — tap to change
+                          Classed as {MED_CLASS_LABEL[m.drug_class]} — tap to change
                         </p>
                       )}
                     </div>

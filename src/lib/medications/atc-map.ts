@@ -9,9 +9,8 @@
 // combinations). Anything with no matching prefix maps to 'other' — the
 // caregiver can override the suggestion in the form.
 
-import type { Database } from '@/lib/supabase/types';
-
-export type MedClass = Database['public']['Enums']['med_class'];
+import type { MedClass } from './classes';
+export type { MedClass };
 
 interface AtcMapping {
   prefix: string;
