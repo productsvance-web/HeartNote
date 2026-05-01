@@ -43,7 +43,7 @@ function buildStreamUrl(): string {
   params.set('interim_results', 'true');
   params.set('smart_format', 'true');
   params.set('punctuate', 'true');
-  params.set('endpointing', '300'); // ms of silence before utterance ends
+  params.set('endpointing', '100'); // ms of silence before utterance ends — tight for snappy live tile fill
 
   // URLSearchParams collapses repeated keys with .set; use .append.
   for (const term of allKeyterms()) {
@@ -112,8 +112,8 @@ export function openDeepgramClient(
   };
 
   ws.onerror = () => {
-    // The browser WebSocket Event for errors is opaque; surface a generic
-    // message and let the caller decide whether to retry.
+    // Browser WebSocket error events are intentionally opaque (security model).
+    // Surface a generic error and let the caller decide whether to retry.
     callbacks.onError?.(new Error('Deepgram WebSocket error'));
   };
 

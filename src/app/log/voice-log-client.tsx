@@ -836,26 +836,30 @@ export function VoiceLogClient({
 
       {/* Tile grid — always visible. Tiles are a daily-care guide:
           muted/dim in idle, light up as the user speaks, render Claude's
-          authoritative values once analysis completes. */}
+          authoritative values once analysis completes.
+
+          Three visual states (most → least prominent):
+            filled  — has a value; full opacity, sage icon, value in bold
+            heard   — keyterm matched but no value yet (Claude still working);
+                      strong sage ring, pulse animation, "Heard — extracting…"
+            muted   — neither; 60% opacity, hint copy
+       */}
       <div className="grid grid-cols-2 gap-3">
         {TILE_ORDER.map((key) => {
           const meta = TILE_META[key];
           const display = tileDisplay(key, liveNumeric, liveMatched, claudeTiles);
           const filled = display.value != null;
-          const matched = display.matched;
-          // Three visual states:
-          //   filled  — has a value (live or Claude); full opacity, sage tile
-          //   matched — keyterm seen but no value yet; full opacity, accent ring
-          //   muted   — neither; reduced opacity so the eye treats it as a hint
+          const heard = display.matched && !filled;
+
           return (
             <div
               key={key}
-              className={`rounded-2xl p-4 shadow-card transition ${
-                filled || matched ? 'bg-card opacity-100' : 'bg-card opacity-60'
+              className={`rounded-2xl p-4 shadow-card transition-all bg-card ${
+                filled || heard ? 'opacity-100' : 'opacity-60'
               }`}
               style={
-                matched && !filled
-                  ? { boxShadow: '0 0 0 2px var(--accent)' }
+                heard
+                  ? { boxShadow: '0 0 0 2px var(--sage), var(--shadow-card)' }
                   : undefined
               }
             >
@@ -863,8 +867,15 @@ export function VoiceLogClient({
                 <div
                   className="h-10 w-10 rounded-xl flex items-center justify-center"
                   style={{
-                    background: filled ? 'var(--status-good-soft)' : 'var(--accent)',
-                    color: filled ? 'var(--status-good-foreground)' : 'var(--accent-foreground)',
+                    background: filled
+                      ? 'var(--status-good-soft)'
+                      : heard
+                        ? 'var(--status-good-soft)'
+                        : 'var(--accent)',
+                    color:
+                      filled || heard
+                        ? 'var(--status-good-foreground)'
+                        : 'var(--accent-foreground)',
                   }}
                 >
                   <meta.Icon size={18} />
@@ -873,8 +884,17 @@ export function VoiceLogClient({
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">
                     {meta.label}
                   </p>
-                  <p className="text-sm font-semibold text-foreground truncate">
-                    {display.value ?? meta.emptyHint}
+                  <p
+                    className="text-sm font-semibold truncate"
+                    style={{
+                      color: heard ? 'var(--status-good-foreground)' : 'var(--foreground)',
+                    }}
+                  >
+                    {filled
+                      ? display.value
+                      : heard
+                        ? 'Heard — extracting…'
+                        : meta.emptyHint}
                   </p>
                 </div>
               </div>

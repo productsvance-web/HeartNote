@@ -49,13 +49,16 @@ export default async function DashboardPage() {
     : { data: null };
 
   // Until we wire alert logic, derive a simple display status from the log state.
-  // No log yet → empty (no ring). Processing → loading visual. Complete → 'good'
-  // (placeholder until tier-detection is wired against research/01-clinical-thresholds.md).
-  const logStatus: 'none' | 'processing' | 'complete' = !todaysLog
-    ? 'none'
-    : todaysLog.processing_status === 'complete'
-      ? 'complete'
-      : 'processing';
+  // 'pending' here means a row exists from a record-attempt that never submitted
+  // a transcript — same as no log at all from the caregiver's perspective.
+  // No log yet / pending → empty (no ring). Analyzing → loading visual.
+  // Complete → 'good' (placeholder until tier-detection is wired).
+  const logStatus: 'none' | 'processing' | 'complete' =
+    !todaysLog || todaysLog.processing_status === 'pending'
+      ? 'none'
+      : todaysLog.processing_status === 'complete'
+        ? 'complete'
+        : 'processing';
 
   const tiles = [
     { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },

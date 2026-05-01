@@ -1,9 +1,13 @@
 // Server-only Claude extraction: transcript + patient context → structured CHF
 // observations + caregiver-friendly summary.
 //
-// - Sonnet 4.6 with prompt caching against research/chf-source-of-truth.md (CLAUDE.md
-//   build convention #6 — Sonnet for cost-aware extraction, Opus reserved for visit
-//   reports).
+// - Haiku 4.5 with prompt caching against research/chf-source-of-truth.md.
+//   The extraction is a single forced tool call against a strict schema —
+//   Haiku handles structured output well and runs 2-3x faster than Sonnet,
+//   which makes the post-recording wait feel snappy. CLAUDE.md only locks
+//   Sonnet for trend synthesis and Opus for visit reports; voice-log
+//   extraction isn't pinned. The hard guardrails in the system prompt
+//   carry across models.
 // - tool_use with tool_choice forces a single structured call. The tool input shape
 //   mirrors daily_logs columns 1:1 so the upsert is mechanical.
 // - Hard guardrails baked into the system prompt: no diagnosis, no dose advice,
@@ -200,7 +204,7 @@ ${transcript}
 Extract structured observations from the transcript and write the caregiver-friendly summary. Call log_observation now.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5',
     max_tokens: 4096,
     system: [
       {
