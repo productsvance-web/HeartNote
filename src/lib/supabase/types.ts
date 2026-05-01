@@ -154,7 +154,6 @@ export type Database = {
           activity_tolerance_change: string | null
           ai_processed_at: string | null
           appetite_change: string | null
-          audio_storage_path: string | null
           chest_pain: boolean | null
           chest_pain_character: string | null
           cognition_change: string | null
@@ -187,13 +186,11 @@ export type Database = {
           updated_at: string
           urine_output_change: string | null
           weight_lb: number | null
-          whisper_confidence: number | null
         }
         Insert: {
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
-          audio_storage_path?: string | null
           chest_pain?: boolean | null
           chest_pain_character?: string | null
           cognition_change?: string | null
@@ -226,13 +223,11 @@ export type Database = {
           updated_at?: string
           urine_output_change?: string | null
           weight_lb?: number | null
-          whisper_confidence?: number | null
         }
         Update: {
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
-          audio_storage_path?: string | null
           chest_pain?: boolean | null
           chest_pain_character?: string | null
           cognition_change?: string | null
@@ -265,7 +260,6 @@ export type Database = {
           updated_at?: string
           urine_output_change?: string | null
           weight_lb?: number | null
-          whisper_confidence?: number | null
         }
         Relationships: [
           {
@@ -617,12 +611,7 @@ export type Database = {
         | "ignored"
         | "false_alarm"
       alert_tier: "tier_1_911" | "tier_2_today" | "tier_3_48hr" | "tier_4_log"
-      log_processing_status:
-        | "pending"
-        | "transcribing"
-        | "analyzing"
-        | "complete"
-        | "failed"
+      log_processing_status: "pending" | "analyzing" | "complete" | "failed"
       med_class:
         | "loop_diuretic"
         | "ace_inhibitor"
@@ -796,13 +785,7 @@ export const Constants = {
         "false_alarm",
       ],
       alert_tier: ["tier_1_911", "tier_2_today", "tier_3_48hr", "tier_4_log"],
-      log_processing_status: [
-        "pending",
-        "transcribing",
-        "analyzing",
-        "complete",
-        "failed",
-      ],
+      log_processing_status: ["pending", "analyzing", "complete", "failed"],
       med_class: [
         "loop_diuretic",
         "ace_inhibitor",

@@ -1,9 +1,13 @@
 // Server-only Claude extraction: transcript + patient context → structured CHF
 // observations + caregiver-friendly summary.
 //
-// - Sonnet 4.6 with prompt caching against research/chf-source-of-truth.md (CLAUDE.md
-//   build convention #6 — Sonnet for cost-aware extraction, Opus reserved for visit
-//   reports).
+// - Haiku 4.5 with prompt caching against research/chf-source-of-truth.md.
+//   The extraction is a single forced tool call against a strict schema —
+//   Haiku handles structured output well and runs 2-3x faster than Sonnet,
+//   which makes the post-recording wait feel snappy. CLAUDE.md only locks
+//   Sonnet for trend synthesis and Opus for visit reports; voice-log
+//   extraction isn't pinned. The hard guardrails in the system prompt
+//   carry across models.
 // - tool_use with tool_choice forces a single structured call. The tool input shape
 //   mirrors daily_logs columns 1:1 so the upsert is mechanical.
 // - Hard guardrails baked into the system prompt: no diagnosis, no dose advice,
@@ -136,7 +140,29 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 3. NEVER recommend the ER, 911, or any specific medical action. HeartNote's tier-detection logic (separate from you) handles emergency triage based on the structured fields you extract.
 4. NEVER use alarming language ("this is bad," "you should worry," "she's in trouble"). The GRELIEF TEST: every sentence has to work at the top of a caregiver's emotional rollercoaster AND at the bottom — sit with the oscillation, not amplify it. No chirpy "great job!" either.
 5. ALWAYS attribute clinical claims to the source (AHA, Cleveland Clinic, ESC, the research file). Never invent thresholds.
-6. ONLY fill structured fields the caregiver actually mentioned. If the caregiver didn't say anything about pillows, do not fill pillow_count. Guessing or inferring numbers contaminates trend data.
+6. ONLY fill structured fields the caregiver actually mentioned IN THIS TRANSCRIPT. The patient context below contains values from onboarding (dry_weight, normal_pillow_count, etc.) — those are LOOKUPS for resolving caregiver phrases like "pillows were normal," NOT defaults. If the caregiver said nothing about a topic, OMIT that structured field, regardless of what's in patient context.
+
+# Field-by-field rules — read carefully
+
+## pillow_count
+- Caregiver said NOTHING about pillows / sleeping position / how she slept → **omit pillow_count.**
+- Caregiver said "pillows were normal" / "her usual pillows" / "slept on her usual setup" / "same as always" → **fill pillow_count with the patient's normal value from context.** This is the one case where you USE the onboarding value.
+- Caregiver named a specific number ("she slept on 5 pillows", "two pillows tonight") → **fill that number.**
+- Caregiver said something general like "she had a good night's rest" with no pillow mention → **omit pillow_count.** "Good rest" is too vague to populate.
+
+## weight_lb
+- Caregiver said NOTHING about weight → omit.
+- Caregiver said a specific number ("174 today") → fill that number.
+- Caregiver said "weight was normal" / "no change" → omit (the onboarding dry_weight is the cardiologist target, not today's reading; "normal" doesn't mean "exactly the dry weight").
+
+## dyspnea_level (0–4)
+- "her breathing is fine" / "no shortness of breath" / "breathing normally" → fill 0.
+- "out of breath on the stairs" / "winded climbing" → fill 1 or 2 depending on context.
+- "out of breath at rest" / "can't finish sentences" → fill 4 (TIER-1).
+- Nothing said about breathing → omit.
+
+## All other fields
+Same principle: if explicitly mentioned, fill. If not mentioned, omit. Patient context is for INTERPRETATION (e.g., comparing today's weight to dry_weight in ai_reasoning), not for defaulting structured fields.
 
 # Tone reference
 
@@ -169,6 +195,10 @@ export type PatientContext = {
   relationship: string | null;
   dryWeightLb: number | null;
   nyhaClass: string | null;
+  // Set at onboarding. Used by Claude ONLY to resolve caregiver phrases
+  // like "pillows were normal" → fill pillow_count with this value. Never
+  // used as a default when pillows aren't mentioned at all. See the
+  // field-by-field rules in the system prompt for the gating logic.
   normalPillowCount: number | null;
 };
 
@@ -185,22 +215,24 @@ export async function extractWithClaude(
 ): Promise<ExtractionResult> {
   const research = await loadResearch();
 
-  const userMessage = `# Patient context (for reasoning only — do not assume vitals from this; only extract what the caregiver actually said)
+  const userMessage = `# Patient context (lookup table — apply per the field-by-field rules in the system prompt; do NOT use as defaults)
 - Refers to patient as: ${patientContext.displayName}
 - Relationship to caregiver: ${patientContext.relationship ?? 'unknown'}
 - Cardiologist-set dry weight: ${patientContext.dryWeightLb ? `${patientContext.dryWeightLb} lb` : 'not set'}
 - NYHA functional class: ${patientContext.nyhaClass ?? 'unknown'}
-- Normal pillow count when sleeping: ${patientContext.normalPillowCount ?? 'unknown'}
+- Patient's normal pillow count when sleeping: ${patientContext.normalPillowCount ?? 'unknown'} (use ONLY when caregiver says "pillows were normal" or equivalent — never as a default)
 
 # Caregiver's voice log transcript
 """
 ${transcript}
 """
 
-Extract structured observations from the transcript and write the caregiver-friendly summary. Call log_observation now.`;
+Extract structured observations from the transcript and write the caregiver-friendly summary. Call log_observation now.
+
+REMINDER: only fill fields the caregiver explicitly mentioned. The patient context above is a LOOKUP for resolving phrases like "pillows were normal" — it is NOT a source of default values. If the caregiver said nothing about pillows, OMIT pillow_count. Same for every other field.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5',
     max_tokens: 4096,
     system: [
       {
