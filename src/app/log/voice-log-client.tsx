@@ -55,6 +55,7 @@ type ClaudeTiles = {
   pillow_count: number | null;
   pnd_episode: boolean | null;
   cough_present: boolean | null;
+  cough_nocturnal: boolean | null;
   sputum_color: 'clear' | 'white' | 'pink_frothy' | null;
   swelling_severity: number | null;
   cyanosis: boolean | null;
@@ -207,7 +208,10 @@ function tileDisplay(
     }
     case 'cough': {
       if (claude?.cough_present === true) {
-        return { value: 'Yes', matched: isMatched };
+        return {
+          value: claude.cough_nocturnal ? 'Yes — nighttime' : 'Yes',
+          matched: isMatched,
+        };
       }
       // Explicit "no cough today" — render "None" so the tile leaves the
       // matched-but-unfilled "Heard — extracting…" state. Mirrors the

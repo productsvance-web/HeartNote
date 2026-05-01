@@ -204,6 +204,7 @@ export type Database = {
           created_at: string
           id: string
           log_date: string
+          nocturnal: boolean | null
           patient_id: string
           present: boolean
           recorded_at: string
@@ -218,6 +219,7 @@ export type Database = {
           created_at?: string
           id?: string
           log_date: string
+          nocturnal?: boolean | null
           patient_id: string
           present: boolean
           recorded_at?: string
@@ -232,6 +234,7 @@ export type Database = {
           created_at?: string
           id?: string
           log_date?: string
+          nocturnal?: boolean | null
           patient_id?: string
           present?: boolean
           recorded_at?: string

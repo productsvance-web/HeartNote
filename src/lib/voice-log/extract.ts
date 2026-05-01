@@ -98,6 +98,11 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
               description:
                 'Where on the body, if mentioned (e.g. "left calf" for swelling, "left arm" for chest pain radiation). Omit if not mentioned.',
             },
+            nocturnal: {
+              type: 'boolean',
+              description:
+                'true if the caregiver indicated the symptom happened at night ("coughed all night," "woke up coughing," "shortness of breath at 3 AM"). Omit when there is no nighttime cue. Most relevant for cough — new persistent nocturnal cough is a tier-2 signal in the research file.',
+            },
             sputum_color: {
               type: 'string',
               enum: ['clear', 'white', 'pink_frothy'],
@@ -186,6 +191,7 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - "winded climbing stairs" → { symptom: "dyspnea", present: true, severity: 1 or 2 }
 - "out of breath at rest, can't finish sentences" → { symptom: "dyspnea", present: true, severity: 4 } (TIER-1)
 - "swelling in her left calf" → { symptom: "swelling", present: true, severity: 2, body_region: "left calf" }
+- "coughed all night" / "woke up coughing" → { symptom: "cough", present: true, nocturnal: true } (TIER-2 if persistent over days)
 - "pink frothy sputum" (with or without saying "cough") → { symptom: "cough", present: true, sputum_color: "pink_frothy" } (TIER-1 pulmonary edema)
 - "no chest pain" → { symptom: "chest_pain", present: false }
 - "she fainted" → { symptom: "syncope", present: true } (TIER-1)
@@ -263,6 +269,7 @@ export type SymptomEventExtraction = {
   present: boolean;
   severity?: number;
   body_region?: string;
+  nocturnal?: boolean;
   sputum_color?: 'clear' | 'white' | 'pink_frothy';
   chest_pain_character?: string;
 };

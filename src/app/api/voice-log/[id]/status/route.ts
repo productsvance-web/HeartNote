@@ -40,6 +40,7 @@ type SymptomEvent = {
   present: boolean;
   severity: number | null;
   body_region: string | null;
+  nocturnal: boolean | null;
   sputum_color: 'clear' | 'white' | 'pink_frothy' | null;
   chest_pain_character: string | null;
   recorded_at: string;
@@ -112,7 +113,7 @@ export async function GET(
     supabase
       .from('daily_log_symptom_events')
       .select(
-        'symptom, present, severity, body_region, sputum_color, chest_pain_character, recorded_at'
+        'symptom, present, severity, body_region, nocturnal, sputum_color, chest_pain_character, recorded_at'
       )
       .eq('patient_id', log.patient_id)
       .eq('log_date', log.log_date)
@@ -166,6 +167,7 @@ export async function GET(
     pillow_count: latestNonNull(dayRows, 'pillow_count'),
     pnd_episode: pnd?.present ?? null,
     cough_present: cough?.present ?? null,
+    cough_nocturnal: cough?.nocturnal ?? null,
     sputum_color: cough?.sputum_color ?? null,
     swelling_severity: swelling?.present ? (swelling.severity ?? null) : swelling ? 0 : null,
     cyanosis: cyanosis?.present ?? null,

@@ -67,6 +67,12 @@ create table public.daily_log_symptom_events (
   present boolean not null,
   severity smallint check (severity is null or (severity between 0 and 4)),
   body_region text,
+  -- Time-of-day attribute. true = the caregiver indicated the symptom
+  -- occurred at night ("coughed all night," "woke up coughing"). Most
+  -- relevant for cough — the research file flags new persistent nocturnal
+  -- cough as a tier-2 signal — but applies wherever caregiver mentions
+  -- night context. NULL when the caregiver gave no time-of-day cue.
+  nocturnal boolean,
   sputum_color text check (
     sputum_color is null or sputum_color in ('clear','white','pink_frothy')
   ),
@@ -180,7 +186,7 @@ begin
   if jsonb_array_length(coalesce(p_symptom_events, '[]'::jsonb)) > 0 then
     insert into public.daily_log_symptom_events (
       patient_id, log_date, symptom, present, severity, body_region,
-      sputum_color, chest_pain_character, source_log_id
+      nocturnal, sputum_color, chest_pain_character, source_log_id
     )
     select v_patient_id,
            v_log_date,
@@ -188,6 +194,7 @@ begin
            (e->>'present')::boolean,
            nullif(e->>'severity','')::smallint,
            nullif(e->>'body_region',''),
+           nullif(e->>'nocturnal','')::boolean,
            nullif(e->>'sputum_color',''),
            nullif(e->>'chest_pain_character',''),
            p_log_id

@@ -47,6 +47,7 @@ const SymptomEventSchema = z.object({
   present: z.boolean(),
   severity: z.number().int().min(0).max(4).optional(),
   body_region: z.string().min(1).max(120).optional(),
+  nocturnal: z.boolean().optional(),
   sputum_color: z.enum(['clear', 'white', 'pink_frothy']).optional(),
   chest_pain_character: z.string().min(1).max(240).optional(),
 });
