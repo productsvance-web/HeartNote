@@ -55,6 +55,7 @@ export default async function Spo2DetailPage() {
           trend={trend}
           today={today}
           patientName={patient.display_name}
+          timezone={profile.timezone}
         />
       ) : (
         <EmptyView patientName={patient.display_name} />
@@ -67,10 +68,12 @@ function DataView({
   trend,
   today,
   patientName,
+  timezone,
 }: {
   trend: Awaited<ReturnType<typeof getSpo2Trend>>;
   today: string;
   patientName: string;
+  timezone: string;
 }) {
   const latest = trend.latest!;
   const footer =
@@ -91,7 +94,7 @@ function DataView({
           </p>
         </div>
         <p className="text-xs text-muted-foreground mt-1">
-          {formatLatestStamp(latest.recorded_at, today, latest.log_date)}
+          {formatLatestStamp(latest.recorded_at, today, latest.log_date, timezone)}
         </p>
 
         <div className="mt-5">
@@ -142,12 +145,15 @@ function formatLatestStamp(
   recordedAt: string,
   todayLogDate: string,
   logDate: string,
+  timezone: string,
 ): string {
-  // Locale pinned to en-US for predictability — these pages don't hydrate,
-  // so `undefined` would resolve to whatever locale the server runs in.
+  // Locale pinned to en-US, timezone pinned to the caregiver's. Without an
+  // explicit timeZone, server-rendered output uses the runtime's TZ (UTC on
+  // Vercel) and a 2:25 PM EDT reading prints as "6:25 PM."
   const time = new Date(recordedAt).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: timezone,
   });
   if (logDate === todayLogDate) return `Logged today at ${time}`;
   const diff = daysBetween(logDate, todayLogDate);
