@@ -374,7 +374,7 @@ export type Database = {
           medication_id: string
           notes: string | null
           patient_id: string
-          scheduled_at: string
+          scheduled_at: string | null
           status: Database["public"]["Enums"]["med_event_status"]
         }
         Insert: {
@@ -384,7 +384,7 @@ export type Database = {
           medication_id: string
           notes?: string | null
           patient_id: string
-          scheduled_at: string
+          scheduled_at?: string | null
           status: Database["public"]["Enums"]["med_event_status"]
         }
         Update: {
@@ -394,7 +394,7 @@ export type Database = {
           medication_id?: string
           notes?: string | null
           patient_id?: string
-          scheduled_at?: string
+          scheduled_at?: string | null
           status?: Database["public"]["Enums"]["med_event_status"]
         }
         Relationships: [
@@ -418,12 +418,14 @@ export type Database = {
         Row: {
           created_at: string
           dose: string | null
+          doses_per_day: number | null
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
           frequency: string | null
           id: string
           notes: string | null
           patient_id: string
+          schedule_times: string[] | null
           started_at: string | null
           stopped_at: string | null
           updated_at: string
@@ -431,12 +433,14 @@ export type Database = {
         Insert: {
           created_at?: string
           dose?: string | null
+          doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name: string
           frequency?: string | null
           id?: string
           notes?: string | null
           patient_id: string
+          schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
           updated_at?: string
@@ -444,12 +448,14 @@ export type Database = {
         Update: {
           created_at?: string
           dose?: string | null
+          doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name?: string
           frequency?: string | null
           id?: string
           notes?: string | null
           patient_id?: string
+          schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
           updated_at?: string
@@ -654,12 +660,23 @@ export type Database = {
     Functions: {
       apply_voice_log_extraction: {
         Args: {
+          p_day_level: Json
           p_log_id: string
           p_readings: Json
           p_symptom_events: Json
-          p_day_level: Json
         }
         Returns: undefined
+      }
+      medication_adherence_for_day: {
+        Args: { p_date: string; p_patient_id: string; p_tz: string }
+        Returns: {
+          doses_per_day: number
+          drug_class: Database["public"]["Enums"]["med_class"]
+          drug_name: string
+          medication_id: string
+          schedule_times: string[]
+          taken_today: number
+        }[]
       }
     }
     Enums: {

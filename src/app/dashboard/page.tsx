@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { StatusRing } from '@/components/heartnote/StatusRing';
+import { TodaysMedsCard } from '@/components/heartnote/TodaysMedsCard';
 import Link from 'next/link';
 
 function greet() {
@@ -140,6 +141,10 @@ export default async function DashboardPage() {
           </Link>
         )}
       </section>
+
+      {patient && (
+        <TodaysMedsCard patientId={patient.id} tz={profile.timezone} date={today} />
+      )}
 
       <Link
         href="/me"

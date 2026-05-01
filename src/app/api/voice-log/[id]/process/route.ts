@@ -50,18 +50,22 @@ export async function POST(
     .eq('id', id)
     .single();
   if (existing?.processing_status === 'complete') {
+    // Idempotent retry. unmatched_chips are render-once and not persisted —
+    // a re-fetch returns an empty array (architectural decision #8 in
+    // docs/plans/medication-flow-v1.md).
     return NextResponse.json({
       ok: true,
       alreadyComplete: true,
       processing_status: existing.processing_status,
       transcribed_text: existing.transcribed_text,
       structured_observations: existing.structured_observations,
+      unmatched_chips: [],
     });
   }
 
   try {
-    await processVoiceLog(id, user.id, parsed.data.transcript);
-    return NextResponse.json({ ok: true });
+    const result = await processVoiceLog(id, user.id, parsed.data.transcript);
+    return NextResponse.json({ ok: true, unmatched_chips: result.unmatched_chips });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unknown error';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
