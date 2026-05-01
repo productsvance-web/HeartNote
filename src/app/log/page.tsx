@@ -26,15 +26,19 @@ export default async function LogPage() {
 
   if (!patient) redirect('/onboarding');
 
-  // If today's log already exists, surface it. `today` is the caregiver's
-  // local calendar day, not UTC — see src/lib/dates/today.ts.
+  // A day can have many daily_logs rows (one per dictation). On page load,
+  // surface the most recent one so the caregiver sees their last entry.
+  // `today` is the caregiver's local calendar day, not UTC — see
+  // src/lib/dates/today.ts.
   const today = getTodayInTimezone(profile.timezone);
-  const { data: todaysLog } = await supabase
+  const { data: todaysLogs } = await supabase
     .from('daily_logs')
     .select('id, processing_status, transcribed_text, structured_observations, created_at')
     .eq('patient_id', patient.id)
     .eq('log_date', today)
-    .maybeSingle();
+    .order('created_at', { ascending: false })
+    .limit(1);
+  const todaysLog = todaysLogs?.[0] ?? null;
 
   return (
     <PhoneShell>

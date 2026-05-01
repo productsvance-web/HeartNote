@@ -2,9 +2,10 @@
 //
 // Why this exists: `new Date().toISOString().slice(0, 10)` returns the UTC
 // date, which crosses midnight at the wrong moment for any caregiver outside
-// UTC. The `daily_logs` table has UNIQUE(patient_id, log_date) and the upsert
-// in src/app/log/actions.ts uses that key — a UTC date string causes two
-// distinct local-day recordings to collide and clobber each other.
+// UTC. Each new daily_logs row stamps log_date so per-day queries (latest
+// reading, latest event, today's dictations) group correctly — a UTC date
+// string would split a caregiver's evening dictations from their morning ones
+// once midnight UTC crosses.
 //
 // Source of truth for the timezone is `profiles.timezone` (NOT NULL, defaults
 // to 'America/New_York' at the schema level). We fail closed: if the row is

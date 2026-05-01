@@ -2,21 +2,18 @@
 // observations + caregiver-friendly summary.
 //
 // - Haiku 4.5 with prompt caching against research/chf-source-of-truth.md.
-//   The extraction is a single forced tool call against a strict schema —
-//   Haiku handles structured output well and runs 2-3x faster than Sonnet,
-//   which makes the post-recording wait feel snappy. CLAUDE.md only locks
-//   Sonnet for trend synthesis and Opus for visit reports; voice-log
-//   extraction isn't pinned. The hard guardrails in the system prompt
-//   carry across models.
-// - tool_use with tool_choice forces a single structured call. The tool input shape
-//   mirrors daily_logs columns 1:1 so the upsert is mechanical.
-// - Hard guardrails baked into the system prompt: no diagnosis, no dose advice,
-//   no treatment recommendations, no alarming language. The "grelief test" is in
-//   the prompt because that's where it's enforced — pass it during generation,
-//   not as a post-hoc filter.
+// - tool_use with tool_choice forces a single structured call.
+// - Output shape: { readings[], symptom_events[], day_level{}, ... }
+//   Each multi-reading vital becomes one row in daily_log_readings.
+//   Each symptom report becomes one row in daily_log_symptom_events.
+//   day_level fields stay on daily_logs (sparse — only fields the caregiver
+//   actually mentioned).
+// - Hard guardrails baked into the system prompt: no diagnosis, no dose
+//   advice, no treatment recommendations, no alarming language. Grelief test
+//   in the prompt because that's where it's enforced.
 // - Research file is read once per process; cache_control on the system block
-//   means the FIRST call writes (~1.25× cost) and subsequent calls within 5 min
-//   read (~0.1× cost).
+//   means the FIRST call writes (~1.25× cost) and subsequent calls within 5
+//   min read (~0.1× cost).
 
 import Anthropic from '@anthropic-ai/sdk';
 import { readFile } from 'node:fs/promises';
@@ -35,86 +32,121 @@ async function loadResearch(): Promise<string> {
 const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
   name: 'log_observation',
   description:
-    'Extract structured CHF observations from a caregiver\'s voice log transcript and produce a brief caregiver-friendly summary. Every field is optional — only fill what the caregiver actually mentioned. Use null/omit instead of guessing.',
+    "Extract structured CHF observations from a caregiver's voice log transcript and produce a brief caregiver-friendly summary. Each array is empty if the caregiver mentioned nothing in that category. Day-level fields are omitted unless mentioned. Use null/omit instead of guessing.",
   input_schema: {
     type: 'object',
     properties: {
-      // Vitals
-      weight_lb: { type: 'number', description: 'Weight in pounds, if mentioned.' },
-      systolic_bp: { type: 'integer', description: 'Systolic BP, if mentioned.' },
-      diastolic_bp: { type: 'integer', description: 'Diastolic BP, if mentioned.' },
-      resting_hr: { type: 'integer', description: 'Resting heart rate (bpm), if mentioned.' },
-      spo2: { type: 'integer', description: 'Pulse oximeter reading (0–100), if mentioned.' },
-
-      // Subjective baseline
-      feeling_score: {
-        type: 'integer',
-        minimum: 1,
-        maximum: 5,
-        description: '1–5 scale of how the patient seemed overall today (5=best). Only fill if the caregiver gave enough cues to score this confidently.',
-      },
-
-      // Respiratory (tier-1 trip lines live here)
-      dyspnea_level: {
-        type: 'integer',
-        minimum: 0,
-        maximum: 4,
+      readings: {
+        type: 'array',
         description:
-          'Shortness of breath. 0=none. 1=on heavy exertion. 2=on normal walking. 3=on minimal activity. 4=at rest, can\'t finish sentences (TIER-1).',
+          'Numeric vitals the caregiver explicitly stated. One entry per measurement. Omit any vital the caregiver did not mention. Do not guess. If multiple readings of the same vital are given in this transcript, include each as a separate entry.',
+        items: {
+          type: 'object',
+          properties: {
+            field: {
+              type: 'string',
+              enum: ['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp'],
+            },
+            value: {
+              type: 'number',
+              description:
+                'The numeric value the caregiver stated. weight_lb in pounds, resting_hr in bpm, spo2 0–100, systolic_bp/diastolic_bp in mmHg.',
+            },
+          },
+          required: ['field', 'value'],
+        },
       },
-      pillow_count: { type: 'integer', description: 'Pillows the patient slept with last night, if mentioned.' },
-      pnd_episode: {
-        type: 'boolean',
-        description: 'Did the patient wake up gasping for breath 1–3 hours after lying down? (Paroxysmal nocturnal dyspnea — high-specificity decompensation sign.)',
-      },
-      cough_present: { type: 'boolean', description: 'Is the patient coughing today?' },
-      cough_nocturnal: { type: 'boolean', description: 'Is the cough specifically at night?' },
-      sputum_color: {
-        type: 'string',
-        enum: ['clear', 'white', 'pink_frothy'],
-        description: 'Color of any sputum produced. PINK FROTHY is a tier-1 (911) sign of acute pulmonary edema.',
-      },
-
-      // Circulatory
-      swelling_severity: {
-        type: 'integer',
-        minimum: 0,
-        maximum: 4,
+      symptom_events: {
+        type: 'array',
         description:
-          'Peripheral edema severity. 0=none. 1=mild ankle. 2=moderate (calf). 3=severe (knee+). 4=anasarca/abdominal distension.',
+          'Symptoms the caregiver explicitly addressed (either present or explicitly absent). One entry per symptom mentioned in this transcript. If the caregiver said nothing about a symptom, OMIT it entirely — do not include a present=false event for symptoms that were never raised.',
+        items: {
+          type: 'object',
+          properties: {
+            symptom: {
+              type: 'string',
+              enum: [
+                'dyspnea',
+                'cough',
+                'chest_pain',
+                'swelling',
+                'fatigue',
+                'pnd',
+                'syncope',
+                'cognition_change',
+                'extremities_cold_clammy',
+                'cyanosis',
+                'early_satiety',
+              ],
+              description:
+                'The symptom referenced. dyspnea=shortness of breath. pnd=paroxysmal nocturnal dyspnea (waking up gasping 1–3h after lying down). cyanosis=blue lips/fingers (TIER-1). syncope=fainted (TIER-1).',
+            },
+            present: {
+              type: 'boolean',
+              description:
+                'true = symptom is present (any severity, including severity=0 for explicitly-confirmed-absent graded symptoms like "breathing is fine"). false = explicitly denied ("no chest pain"). The "explicitly denied" form has clinical value — record it.',
+            },
+            severity: {
+              type: 'integer',
+              minimum: 0,
+              maximum: 4,
+              description:
+                "For graded symptoms (dyspnea, swelling, fatigue, cognition_change). Use the per-symptom anchors below. Omit for non-graded boolean symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety). DYSPNEA: 0=none/breathing fine. 1=on heavy exertion. 2=on normal walking. 3=on minimal activity. 4=at rest, can't finish sentences (TIER-1). SWELLING: 0=none. 1=mild ankle. 2=moderate (calf). 3=severe (knee+). 4=anasarca/abdominal. FATIGUE: 0=none. 1=mild. 2=moderate. 3=severe. 4=can't move from chair. COGNITION_CHANGE: 0=none. 1=mild fog (tier-3). 2=confusion (tier-2). 4=severe / unable to recognize family (TIER-1).",
+            },
+            body_region: {
+              type: 'string',
+              description:
+                'Where on the body, if mentioned (e.g. "left calf" for swelling, "left arm" for chest pain radiation). Omit if not mentioned.',
+            },
+            nocturnal: {
+              type: 'boolean',
+              description:
+                'true if the caregiver indicated the symptom happened at night ("coughed all night," "woke up coughing," "shortness of breath at 3 AM"). Omit when there is no nighttime cue. Most relevant for cough — new persistent nocturnal cough is a tier-2 signal in the research file.',
+            },
+            sputum_color: {
+              type: 'string',
+              enum: ['clear', 'white', 'pink_frothy'],
+              description:
+                'For cough events only. PINK FROTHY is a TIER-1 (911) sign of acute pulmonary edema. If the caregiver mentions pink frothy sputum without saying "cough," still record this as a cough event with present=true and sputum_color=pink_frothy — the sputum implies coughing.',
+            },
+            chest_pain_character: {
+              type: 'string',
+              description:
+                'For chest_pain events only. Brief description if mentioned (location, quality, radiation).',
+            },
+          },
+          required: ['symptom', 'present'],
+        },
       },
-      extremities_cold_clammy: { type: 'boolean', description: 'Are extremities cold or clammy? (Low-output sign.)' },
-      cyanosis: { type: 'boolean', description: 'Are lips or fingers blue / cyanotic? TIER-1.' },
-
-      // Acute neurological — tier-1 trip lines
-      chest_pain: { type: 'boolean', description: 'New chest pain or pressure? TIER-1.' },
-      chest_pain_character: { type: 'string', description: 'Brief description if mentioned (location, quality, radiation).' },
-      syncope: { type: 'boolean', description: 'Did the patient faint? TIER-1.' },
-
-      // Constitutional / GI / urinary
-      appetite_change: { type: 'string', enum: ['decreased', 'unchanged', 'increased'] },
-      early_satiety: { type: 'boolean', description: 'Filled up after only a few bites? (Gut-congestion sign.)' },
-      fatigue_level: { type: 'integer', minimum: 0, maximum: 4, description: 'Fatigue. 0=none. 1=mild. 2=moderate. 3=severe. 4=can\'t move from chair.' },
-      urine_output_change: { type: 'string', enum: ['decreased', 'unchanged', 'increased'] },
-
-      // Cognitive / mood
-      cognition_change: {
-        type: 'string',
-        enum: ['none', 'mild_fog', 'confusion', 'severe'],
-        description: 'Cognitive change vs. their baseline. mild_fog = tier-3. confusion = tier-2. severe / unable to recognize family = tier-1.',
+      day_level: {
+        type: 'object',
+        description:
+          "Fields that are summary-level for the day (not events). Each is OPTIONAL — only include fields the caregiver actually mentioned in this transcript.",
+        properties: {
+          pillow_count: {
+            type: 'integer',
+            description:
+              'Pillows the patient slept with last night. RULES: (a) caregiver said NOTHING about pillows → OMIT. (b) caregiver said "pillows were normal" / "her usual pillows" / "same as always" → fill with the patient\'s normal value from context. (c) caregiver named a specific number → fill that number. (d) caregiver said something general like "she had a good night\'s rest" with no pillow mention → OMIT.',
+          },
+          appetite_change: {
+            type: 'string',
+            enum: ['decreased', 'unchanged', 'increased'],
+          },
+          urine_output_change: {
+            type: 'string',
+            enum: ['decreased', 'unchanged', 'increased'],
+          },
+          activity_tolerance_change: {
+            type: 'string',
+            description:
+              "The caregiver's exact phrase about what the patient can or can't do today (e.g. \"stopped halfway up the stairs\", \"she walked to the bathroom fine\"). Omit if not mentioned.",
+          },
+        },
       },
-
-      // Activity tolerance — capture the caregiver's actual words
-      activity_tolerance_change: {
-        type: 'string',
-        description: 'The caregiver\'s exact phrase about what the patient can or can\'t do today (e.g. "stopped halfway up the stairs", "she walked to the bathroom fine"). Empty string if not mentioned.',
-      },
-
-      // AI commentary fields
       caregiver_summary: {
         type: 'string',
         description:
-          'A 1–2 sentence confirmation of what was logged, in warm caregiver-friendly language. PASS THE GRELIEF TEST: must read right at the top of the caregiver\'s rollercoaster AND at the bottom. Examples of good: "Got it — Mom is at 162 today, two pillows, and ankles look puffier than yesterday." / "Logged: BP 110/70, no swelling, breakfast eaten. Steady day." NEVER include diagnosis, medication recommendations, treatment advice, or alarming language. NEVER use phrases like "this looks serious" or "you should worry."',
+          'A 1–2 sentence confirmation of what was logged, in warm caregiver-friendly language. PASS THE GRELIEF TEST: must read right at the top of the caregiver\'s rollercoaster AND at the bottom. Examples: "Got it — Mom is at 162 today, two pillows, and ankles look puffier than yesterday." / "Logged: BP 110/70, no swelling, breakfast eaten. Steady day." NEVER include diagnosis, medication recommendations, treatment advice, or alarming language. NEVER use phrases like "this looks serious" or "you should worry."',
       },
       ai_reasoning: {
         type: 'string',
@@ -127,7 +159,7 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
           'OPTIONAL. ONE completeness question if something obvious is missing (e.g., "You mentioned weight but not how she\'s breathing — anything to note?"). Empty string if nothing important is missing. NEVER ask more than one. NEVER ask leading or alarming questions.',
       },
     },
-    required: ['caregiver_summary', 'ai_reasoning'],
+    required: ['readings', 'symptom_events', 'day_level', 'caregiver_summary', 'ai_reasoning'],
   },
 };
 
@@ -140,29 +172,44 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 3. NEVER recommend the ER, 911, or any specific medical action. HeartNote's tier-detection logic (separate from you) handles emergency triage based on the structured fields you extract.
 4. NEVER use alarming language ("this is bad," "you should worry," "she's in trouble"). The GRELIEF TEST: every sentence has to work at the top of a caregiver's emotional rollercoaster AND at the bottom — sit with the oscillation, not amplify it. No chirpy "great job!" either.
 5. ALWAYS attribute clinical claims to the source (AHA, Cleveland Clinic, ESC, the research file). Never invent thresholds.
-6. ONLY fill structured fields the caregiver actually mentioned IN THIS TRANSCRIPT. The patient context below contains values from onboarding (dry_weight, normal_pillow_count, etc.) — those are LOOKUPS for resolving caregiver phrases like "pillows were normal," NOT defaults. If the caregiver said nothing about a topic, OMIT that structured field, regardless of what's in patient context.
+6. ONLY include readings/events/day_level fields the caregiver actually mentioned IN THIS TRANSCRIPT. Patient context (dry_weight, normal_pillow_count) is a LOOKUP for resolving phrases like "pillows were normal" — NOT a default. If the caregiver said nothing about a topic, OMIT it.
 
-# Field-by-field rules — read carefully
+# How to fill the output
 
-## pillow_count
-- Caregiver said NOTHING about pillows / sleeping position / how she slept → **omit pillow_count.**
-- Caregiver said "pillows were normal" / "her usual pillows" / "slept on her usual setup" / "same as always" → **fill pillow_count with the patient's normal value from context.** This is the one case where you USE the onboarding value.
-- Caregiver named a specific number ("she slept on 5 pillows", "two pillows tonight") → **fill that number.**
-- Caregiver said something general like "she had a good night's rest" with no pillow mention → **omit pillow_count.** "Good rest" is too vague to populate.
+## readings[]
+- Each numeric vital the caregiver explicitly stated → one entry.
+- "her weight was 174" → { field: "weight_lb", value: 174 }
+- "BP 120 over 80" → two entries: { field: "systolic_bp", value: 120 } and { field: "diastolic_bp", value: 80 }
+- Multiple readings of the same vital in one transcript → multiple entries.
+- "weight was normal" / "BP was fine" → OMIT (not a number).
 
-## weight_lb
-- Caregiver said NOTHING about weight → omit.
-- Caregiver said a specific number ("174 today") → fill that number.
-- Caregiver said "weight was normal" / "no change" → omit (the onboarding dry_weight is the cardiologist target, not today's reading; "normal" doesn't mean "exactly the dry weight").
+## symptom_events[]
+- Each symptom the caregiver explicitly addressed → one entry. Both "she has X" and "she does NOT have X" are recordable; the second has clinical value.
+- "dry cough today" → { symptom: "cough", present: true }
+- "no cough" → { symptom: "cough", present: false }
+- "her breathing is fine" → { symptom: "dyspnea", present: true, severity: 0 }
+- "winded climbing stairs" → { symptom: "dyspnea", present: true, severity: 1 or 2 }
+- "out of breath at rest, can't finish sentences" → { symptom: "dyspnea", present: true, severity: 4 } (TIER-1)
+- "swelling in her left calf" → { symptom: "swelling", present: true, severity: 2, body_region: "left calf" }
+- "coughed all night" / "woke up coughing" → { symptom: "cough", present: true, nocturnal: true } (TIER-2 if persistent over days)
+- "pink frothy sputum" (with or without saying "cough") → { symptom: "cough", present: true, sputum_color: "pink_frothy" } (TIER-1 pulmonary edema)
+- "no chest pain" → { symptom: "chest_pain", present: false }
+- "she fainted" → { symptom: "syncope", present: true } (TIER-1)
+- "she's been confused all morning" → { symptom: "cognition_change", present: true, severity: 2 }
+- Symptoms with severity scales: dyspnea, swelling, fatigue, cognition_change. Other symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety) are boolean — fill present, omit severity.
+- Caregiver said nothing about a symptom → DO NOT include it. Empty array is correct when nothing was said.
 
-## dyspnea_level (0–4)
-- "her breathing is fine" / "no shortness of breath" / "breathing normally" → fill 0.
-- "out of breath on the stairs" / "winded climbing" → fill 1 or 2 depending on context.
-- "out of breath at rest" / "can't finish sentences" → fill 4 (TIER-1).
-- Nothing said about breathing → omit.
+## day_level
+- pillow_count: see the field rule below.
+- appetite_change / urine_output_change: only if the caregiver named one of decreased / unchanged / increased.
+- activity_tolerance_change: capture the caregiver's actual phrase if they described what the patient could or couldn't do.
+- Omit any field the caregiver didn't address. day_level: {} is valid.
 
-## All other fields
-Same principle: if explicitly mentioned, fill. If not mentioned, omit. Patient context is for INTERPRETATION (e.g., comparing today's weight to dry_weight in ai_reasoning), not for defaulting structured fields.
+# pillow_count rules — read carefully
+- Caregiver said NOTHING about pillows / sleeping position → OMIT pillow_count.
+- "pillows were normal" / "her usual pillows" / "same as always" → fill day_level.pillow_count with the patient's normal value from context. THIS IS THE ONE CASE WHERE YOU USE THE ONBOARDING VALUE.
+- Specific number ("she slept on 5 pillows") → fill that number.
+- "she had a good night's rest" with no pillow mention → OMIT.
 
 # Tone reference
 
@@ -175,7 +222,7 @@ Same principle: if explicitly mentioned, fill. If not mentioned, omit. Patient c
 - "This is concerning — please call the cardiologist immediately!" (alarming + medical recommendation)
 - "Great job logging today!" (chirpy / fails grelief test)
 - "Your mom appears to be experiencing decompensation." (diagnostic)
-- "Skip her diuretic today." (treatment recommendation)
+- Anything that tells the caregiver to change, hold, start, stop, or adjust a medication. The prescriber decides what to do; you only surface what was observed.
 
 # How to use ai_reasoning
 
@@ -196,14 +243,48 @@ export type PatientContext = {
   dryWeightLb: number | null;
   nyhaClass: string | null;
   // Set at onboarding. Used by Claude ONLY to resolve caregiver phrases
-  // like "pillows were normal" → fill pillow_count with this value. Never
-  // used as a default when pillows aren't mentioned at all. See the
-  // field-by-field rules in the system prompt for the gating logic.
+  // like "pillows were normal" → fill day_level.pillow_count with this value.
+  // Never used as a default when pillows aren't mentioned at all.
   normalPillowCount: number | null;
 };
 
+export type ReadingExtraction = {
+  field: 'weight_lb' | 'resting_hr' | 'spo2' | 'systolic_bp' | 'diastolic_bp';
+  value: number;
+};
+
+export type SymptomEventExtraction = {
+  symptom:
+    | 'dyspnea'
+    | 'cough'
+    | 'chest_pain'
+    | 'swelling'
+    | 'fatigue'
+    | 'pnd'
+    | 'syncope'
+    | 'cognition_change'
+    | 'extremities_cold_clammy'
+    | 'cyanosis'
+    | 'early_satiety';
+  present: boolean;
+  severity?: number;
+  body_region?: string;
+  nocturnal?: boolean;
+  sputum_color?: 'clear' | 'white' | 'pink_frothy';
+  chest_pain_character?: string;
+};
+
+export type DayLevelExtraction = {
+  pillow_count?: number;
+  appetite_change?: 'decreased' | 'unchanged' | 'increased';
+  urine_output_change?: 'decreased' | 'unchanged' | 'increased';
+  activity_tolerance_change?: string;
+};
+
 export type ExtractionResult = {
-  structuredFields: Record<string, unknown>;
+  readings: ReadingExtraction[];
+  symptomEvents: SymptomEventExtraction[];
+  dayLevel: DayLevelExtraction;
   caregiverSummary: string;
   aiReasoning: string;
   followUpQuestion: string;
@@ -227,9 +308,9 @@ export async function extractWithClaude(
 ${transcript}
 """
 
-Extract structured observations from the transcript and write the caregiver-friendly summary. Call log_observation now.
+Extract observations from the transcript and write the caregiver-friendly summary. Call log_observation now.
 
-REMINDER: only fill fields the caregiver explicitly mentioned. The patient context above is a LOOKUP for resolving phrases like "pillows were normal" — it is NOT a source of default values. If the caregiver said nothing about pillows, OMIT pillow_count. Same for every other field.`;
+REMINDER: only include readings, symptom_events, and day_level fields the caregiver explicitly mentioned. Empty arrays / empty day_level are valid. The patient context above is a LOOKUP for resolving phrases like "pillows were normal" — it is NOT a source of default values.`;
 
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5',
@@ -254,23 +335,21 @@ REMINDER: only fill fields the caregiver explicitly mentioned. The patient conte
     throw new Error(`Claude did not call log_observation. stop_reason=${response.stop_reason}`);
   }
 
-  const input = toolUseBlock.input as Record<string, unknown> & {
+  const input = toolUseBlock.input as {
+    readings?: ReadingExtraction[];
+    symptom_events?: SymptomEventExtraction[];
+    day_level?: DayLevelExtraction;
     caregiver_summary: string;
     ai_reasoning: string;
     follow_up_question?: string;
   };
 
-  const {
-    caregiver_summary,
-    ai_reasoning,
-    follow_up_question,
-    ...structuredFields
-  } = input;
-
   return {
-    structuredFields,
-    caregiverSummary: caregiver_summary,
-    aiReasoning: ai_reasoning,
-    followUpQuestion: follow_up_question ?? '',
+    readings: input.readings ?? [],
+    symptomEvents: input.symptom_events ?? [],
+    dayLevel: input.day_level ?? {},
+    caregiverSummary: input.caregiver_summary,
+    aiReasoning: input.ai_reasoning,
+    followUpQuestion: input.follow_up_question ?? '',
   };
 }
