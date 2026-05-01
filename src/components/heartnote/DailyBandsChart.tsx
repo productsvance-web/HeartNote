@@ -44,6 +44,10 @@ export function DailyBandsChart({
   const plotHeight = Math.max(0, height - padTop - padBottom);
   const colWidth = plotWidth / days.length;
 
+  // Values outside [Y_MIN, Y_MAX] clamp to the chart edge with no extra
+  // visual signal. Acceptable in v1 because we're descriptive only; once
+  // the alert engine ships, sub-Y_MIN readings will surface through
+  // alert UI rather than chart styling.
   const yFor = (v: number) => {
     const clamped = Math.max(Y_MIN, Math.min(Y_MAX, v));
     return padTop + plotHeight * (1 - (clamped - Y_MIN) / (Y_MAX - Y_MIN));

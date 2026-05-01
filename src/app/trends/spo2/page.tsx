@@ -76,7 +76,7 @@ function DataView({
   const footer =
     trend.daysLogged >= 3
       ? `${trend.daysLogged} of last ${WINDOW_DAYS} days logged.`
-      : `${trend.daysLogged} ${trend.daysLogged === 1 ? 'reading' : 'readings'} in the last ${WINDOW_DAYS} days. Not enough to see a pattern yet.`;
+      : `${trend.totalReadings} ${trend.totalReadings === 1 ? 'reading' : 'readings'} in the last ${WINDOW_DAYS} days. Not enough to see a pattern yet.`;
 
   return (
     <>
@@ -143,14 +143,16 @@ function formatLatestStamp(
   todayLogDate: string,
   logDate: string,
 ): string {
-  const time = new Date(recordedAt).toLocaleTimeString(undefined, {
+  // Locale pinned to en-US for predictability — these pages don't hydrate,
+  // so `undefined` would resolve to whatever locale the server runs in.
+  const time = new Date(recordedAt).toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
   });
   if (logDate === todayLogDate) return `Logged today at ${time}`;
   const diff = daysBetween(logDate, todayLogDate);
   if (diff === 1) return `Logged yesterday at ${time}`;
-  const date = new Date(`${logDate}T00:00:00Z`).toLocaleDateString(undefined, {
+  const date = new Date(`${logDate}T00:00:00Z`).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     timeZone: 'UTC',

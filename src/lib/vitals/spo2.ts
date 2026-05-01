@@ -29,14 +29,13 @@ export type Spo2Trend = {
   // Days array, length = windowDays, oldest → newest, today is the last entry.
   // Days with no readings have an empty `readings` array.
   days: Spo2DayBand[];
-  // Most recent reading anywhere in the fetch window (last 30 days),
-  // null if nothing in that window.
+  // Most recent reading inside the window, null if nothing in window.
   latest: Spo2Reading | null;
-  // Distinct days with ≥1 reading in the days[] window.
+  // Distinct days within the window with ≥1 reading.
   daysLogged: number;
+  // Total reading count within the window (used for the sparse-case footer).
+  totalReadings: number;
 };
-
-const FETCH_WINDOW_DAYS = 30;
 
 export async function getSpo2Trend(
   supabase: Client,
@@ -44,20 +43,14 @@ export async function getSpo2Trend(
   today: string,
   windowDays: number,
 ): Promise<Spo2Trend> {
-  if (windowDays < 1 || windowDays > FETCH_WINDOW_DAYS) {
-    throw new Error(
-      `getSpo2Trend: windowDays must be 1..${FETCH_WINDOW_DAYS}, got ${windowDays}`,
-    );
-  }
-
-  const fetchStart = subtractDaysUTC(today, FETCH_WINDOW_DAYS - 1);
+  const windowStart = addDaysUTC(today, -(windowDays - 1));
 
   const { data, error } = await supabase
     .from('daily_log_readings')
     .select('log_date, recorded_at, value')
     .eq('patient_id', patientId)
     .eq('field', 'spo2')
-    .gte('log_date', fetchStart)
+    .gte('log_date', windowStart)
     .lte('log_date', today)
     .order('log_date', { ascending: true })
     .order('recorded_at', { ascending: true });
@@ -72,25 +65,13 @@ export async function getSpo2Trend(
     value: Number(r.value),
   }));
 
-  const windowStart = subtractDaysUTC(today, windowDays - 1);
   const days = buildDayBands(readings, windowStart, today);
   const daysLogged = days.filter((d) => d.readings.length > 0).length;
+  const latest = readings.length > 0 ? readings[readings.length - 1] : null;
 
-  // Latest reading across the full fetch window (not just `days`), so the
-  // dashboard's "is the latest within the staleness window?" check has the
-  // right answer even if the displayed window is shorter.
-  const latest =
-    readings.length > 0
-      ? readings.reduce((a, b) =>
-          a.recorded_at >= b.recorded_at ? a : b,
-        )
-      : null;
-
-  return { days, latest, daysLogged };
+  return { days, latest, daysLogged, totalReadings: readings.length };
 }
 
-// Build N day-bands from `start` (inclusive) to `end` (inclusive). Both
-// strings are YYYY-MM-DD, treated as calendar dates.
 function buildDayBands(
   readings: Spo2Reading[],
   start: string,
@@ -105,7 +86,6 @@ function buildDayBands(
 
   const out: Spo2DayBand[] = [];
   let cursor = start;
-  // Loop guard: max 365 to prevent runaway from a malformed input.
   for (let i = 0; i < 365; i++) {
     out.push({ log_date: cursor, readings: grouped.get(cursor) ?? [] });
     if (cursor === end) return out;
@@ -122,8 +102,4 @@ function addDaysUTC(dateStr: string, days: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
-}
-
-function subtractDaysUTC(dateStr: string, days: number): string {
-  return addDaysUTC(dateStr, -days);
 }

@@ -6,7 +6,7 @@ import { Home, LineChart, Users, CalendarHeart, User } from 'lucide-react';
 
 const tabs = [
   { to: '/dashboard', label: 'Home', Icon: Home },
-  { to: '/trends', label: 'Trends', Icon: LineChart },
+  { to: '/trends/spo2', label: 'Trends', Icon: LineChart },
   { to: '/family', label: 'Family', Icon: Users },
   { to: '/visits', label: 'Visits', Icon: CalendarHeart },
   { to: '/me', label: 'Me', Icon: User },

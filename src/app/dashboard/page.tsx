@@ -50,10 +50,11 @@ export default async function DashboardPage() {
         .maybeSingle()
     : { data: null };
 
-  // SpO2 mini trend for the dashboard card. Falls back to null on query
-  // error so the card silently disappears rather than crashing the dashboard.
+  // SpO2 mini trend. Fetches the 30-day staleness window so the card hides
+  // when no readings exist in last 30 days; the card itself only displays
+  // the last 7 of those days.
   const spo2 = patient
-    ? await getSpo2Trend(supabase, patient.id, today, 7).catch(() => null)
+    ? await getSpo2Trend(supabase, patient.id, today, 30)
     : null;
 
   // Until we wire alert logic, derive a simple display status from the log state.
@@ -150,7 +151,7 @@ export default async function DashboardPage() {
 
       {spo2?.latest && (
         <SpO2Card
-          days={spo2.days}
+          days={spo2.days.slice(-7)}
           todayLogDate={today}
           latestValue={spo2.latest.value}
           latestLogDate={spo2.latest.log_date}
