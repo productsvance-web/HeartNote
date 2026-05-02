@@ -224,14 +224,14 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           />
           {unitLocked ? (
             <span
-              className="ml-1 flex items-center justify-center px-4 rounded-lg bg-white border border-border text-base font-bold text-foreground min-w-[72px]"
+              className="ml-1 flex items-center justify-center w-[80px] rounded-l-none rounded-r-lg bg-white border border-border text-base font-bold text-foreground"
               aria-label={`Unit fixed to ${unitLabel(doseUnit)}`}
             >
               {unitLabel(doseUnit)}
             </span>
           ) : (
             <select
-              className="ml-1 px-4 rounded-lg bg-white border border-border text-base font-bold text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring min-w-[88px]"
+              className="ml-1 w-[80px] rounded-l-none rounded-r-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
               value={doseUnit}
               onChange={(e) => setDoseUnit(e.target.value)}
               aria-label="Dose unit"
