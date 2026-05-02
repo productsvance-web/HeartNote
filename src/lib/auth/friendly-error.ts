@@ -8,6 +8,8 @@ export function friendlyError(key: string): string {
       return 'Email or password is incorrect.';
     case 'email_not_confirmed':
       return 'Check your email to confirm your account before signing in.';
+    case 'weak_password':
+      return 'That password has appeared in a known data breach. Pick a different one.';
 
     case 'oauth_cancelled':
       return 'You cancelled signing in with Google. Try again or sign in with your email.';

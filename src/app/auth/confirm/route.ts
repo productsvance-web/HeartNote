@@ -8,7 +8,10 @@ import { RECOVERY_COOKIE, RECOVERY_COOKIE_MAX_AGE_SECONDS } from '@/lib/auth/rec
 // canonical Next.js pattern: ?token_hash=...&type=... + verifyOtp.
 // (OAuth uses ?code= + exchangeCodeForSession on /auth/callback.)
 
-const ALLOWED_TYPES = new Set<EmailOtpType>(['signup', 'recovery', 'email_change', 'invite']);
+// Accept both 'signup' (legacy template) and 'email' (current canonical for verifyOtp).
+// The Supabase email template should emit ?type=email going forward; 'signup' kept for
+// any in-flight links sent before the template was updated.
+const ALLOWED_TYPES = new Set<EmailOtpType>(['signup', 'email', 'recovery', 'email_change', 'invite']);
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);

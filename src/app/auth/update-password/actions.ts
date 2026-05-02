@@ -43,6 +43,10 @@ export async function updatePassword(formData: FormData): Promise<ActionResult |
 
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
   if (error) {
+    const msg = error.message.toLowerCase();
+    if (msg.includes('weak_password') || msg.includes('compromised') || msg.includes('breach')) {
+      return { ok: false, error: 'weak_password' };
+    }
     return { ok: false, error: 'update_failed' };
   }
 

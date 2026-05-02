@@ -3,6 +3,8 @@
 import { useState, useTransition } from 'react';
 import { updatePassword } from './actions';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth/constants';
+import { friendlyError } from '@/lib/auth/friendly-error';
+import { PasswordInput } from '@/components/heartnote/PasswordInput';
 
 export function UpdatePasswordForm() {
   const [password, setPassword] = useState('');
@@ -28,31 +30,27 @@ export function UpdatePasswordForm() {
     <form onSubmit={onSubmit} className="space-y-3">
       <label className="block space-y-1.5">
         <span className="text-sm font-medium">New password</span>
-        <input
-          type="password"
+        <PasswordInput
           name="password"
+          value={password}
+          onChange={setPassword}
           required
           minLength={PASSWORD_MIN_LENGTH}
           autoComplete="new-password"
           autoFocus
           placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="input"
         />
       </label>
       <label className="block space-y-1.5">
         <span className="text-sm font-medium">Confirm new password</span>
-        <input
-          type="password"
+        <PasswordInput
           name="confirm"
+          value={confirm}
+          onChange={setConfirm}
           required
           minLength={PASSWORD_MIN_LENGTH}
           autoComplete="new-password"
           placeholder="Type it again"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          className="input"
         />
       </label>
       <button
@@ -77,6 +75,8 @@ function messageFor(key: string): string {
   switch (key) {
     case 'update_failed':
       return 'We couldn’t update your password. Try again.';
+    case 'weak_password':
+      return friendlyError(key);
     default:
       return key;
   }

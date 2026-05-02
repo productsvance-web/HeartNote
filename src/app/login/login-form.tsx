@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 import { signInWithPassword } from './actions';
 import { signInWithGoogle } from '@/lib/auth/oauth';
 import { friendlyError } from '@/lib/auth/friendly-error';
+import { PasswordInput } from '@/components/heartnote/PasswordInput';
 
 export function LoginForm() {
   const [email, setEmail] = useState('');
@@ -77,15 +78,13 @@ export function LoginForm() {
               Forgot password?
             </Link>
           </span>
-          <input
-            type="password"
+          <PasswordInput
             name="password"
+            value={password}
+            onChange={setPassword}
             required
             autoComplete="current-password"
             placeholder="Your password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="input"
           />
         </label>
         <button

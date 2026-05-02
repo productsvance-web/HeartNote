@@ -7,10 +7,16 @@ import { createClient } from '@/lib/supabase/server';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth/constants';
 import { resolveOrigin } from '@/lib/auth/origin';
 
-const SignUpSchema = z.object({
-  email: z.string().email('Enter a valid email address.'),
-  password: z.string().min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`),
-});
+const SignUpSchema = z
+  .object({
+    email: z.string().email('Enter a valid email address.'),
+    password: z.string().min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`),
+    confirm: z.string(),
+  })
+  .refine((data) => data.password === data.confirm, {
+    message: 'Passwords don’t match.',
+    path: ['confirm'],
+  });
 
 type ActionResult = { ok: false; error: string };
 
@@ -22,6 +28,7 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
   const parsed = SignUpSchema.safeParse({
     email: (formData.get('email') as string | null)?.trim() ?? '',
     password: (formData.get('password') as string | null) ?? '',
+    confirm: (formData.get('confirm') as string | null) ?? '',
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Check your email and password.' };
@@ -38,6 +45,11 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
 
   if (error) {
     const msg = error.message.toLowerCase();
+    // Supabase's HaveIBeenPwned check (when enabled in dashboard) returns a
+    // weak_password error code with this message text.
+    if (msg.includes('weak_password') || msg.includes('compromised') || msg.includes('breach')) {
+      return { ok: false, error: 'weak_password' };
+    }
     if (msg.includes('rate') || msg.includes('too many')) return { ok: false, error: 'rate_limited' };
     return { ok: false, error: 'signup_failed' };
   }

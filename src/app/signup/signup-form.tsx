@@ -5,10 +5,13 @@ import { useState, useTransition } from 'react';
 import { signUpWithPassword } from './actions';
 import { signInWithGoogle } from '@/lib/auth/oauth';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth/constants';
+import { friendlyError } from '@/lib/auth/friendly-error';
+import { PasswordInput } from '@/components/heartnote/PasswordInput';
 
 export function SignupForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [isPending, startTransition] = useTransition();
@@ -18,6 +21,7 @@ export function SignupForm() {
     const formData = new FormData(e.currentTarget);
     setEmail(((formData.get('email') as string | null) ?? '').trim());
     setPassword((formData.get('password') as string | null) ?? '');
+    setConfirm((formData.get('confirm') as string | null) ?? '');
     setErrorKey(null);
     setErrorMessage('');
 
@@ -65,16 +69,26 @@ export function SignupForm() {
         </label>
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">Password</span>
-          <input
-            type="password"
+          <PasswordInput
             name="password"
+            value={password}
+            onChange={setPassword}
             required
             minLength={PASSWORD_MIN_LENGTH}
             autoComplete="new-password"
             placeholder={`At least ${PASSWORD_MIN_LENGTH} characters`}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="input"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium">Confirm password</span>
+          <PasswordInput
+            name="confirm"
+            value={confirm}
+            onChange={setConfirm}
+            required
+            minLength={PASSWORD_MIN_LENGTH}
+            autoComplete="new-password"
+            placeholder="Type it again"
           />
         </label>
         <button
@@ -122,12 +136,13 @@ function messageFor(key: string): string {
   switch (key) {
     case 'email_exists':
       return 'This email already has an account.';
-    case 'rate_limited':
-      return 'Too many attempts. Wait a minute and try again.';
     case 'signup_failed':
       return 'We couldn’t create your account. Try again.';
+    case 'rate_limited':
+    case 'weak_password':
+      return friendlyError(key);
     default:
-      // Validation errors come back as raw user-friendly strings (already shaped by Zod).
+      // Zod validation messages already user-readable; render as-is.
       return key;
   }
 }

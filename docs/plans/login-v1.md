@@ -236,11 +236,89 @@ Requires the preview URL added to Google Cloud Console redirect URIs in advance.
 - No Apple button (deferred to iOS launch PR; data model is ready)
 - No phone / SMS (cut from v1)
 - No Apple "Hide My Email" private-relay support (acknowledged limitation; revisit when Apple ships)
-- No Resend / custom transactional email (deferred to the family-share alerts PR; flips signup to enumeration-safe at the same time)
+- No app-level Resend integration for custom transactional email (deferred to family-share alerts PR; flips signup to enumeration-safe at the same time). **Note:** Phase 2 wires Resend as Supabase's *SMTP transport* — different thing, no app code involved.
 - No splash photo screen
 - No new database tables or columns
 - No changes to RLS, onboarding flow, dashboard, or any post-login route
 - No analytics, no rate-limit infrastructure beyond Supabase's built-in + the 30s client-side resend gate
 - No `display_name` polish for Google users (known: falls back to email prefix; deferred)
 - No manual identity linking (different-email link-after-signin)
-- No support for Vercel preview Google OAuth out-of-the-box (requires per-preview redirect URI registration; default is production-only Google testing)
+- No support for Vercel preview Google OAuth out-of-the-box (Google does not accept wildcards; per-preview registration required, prod-only Google testing accepted)
+- No client-side password-strength meter (zxcvbn etc.) — Supabase Leaked Password Protection (HIBP) catches the high-risk cases server-side
+- No Secure Password Change (require current password to update) — recommend OFF for v1; recovery cookie + sign-out-after-update gives meaningful protection for the recovery flow
+
+---
+
+## Phase 2 — gap analysis fixes (post-smoke-test)
+
+After Phase 1 was deployed and smoke-tested, a comprehensive doc-driven gap analysis was run against Supabase's canonical Next.js + Auth patterns. Findings categorized BLOCKER / SHOULD-FIX / NIT.
+
+### BLOCKERs (all dashboard config — no app code)
+
+1. **Custom SMTP required.** Supabase built-in SMTP is rate-limited at **2 emails/hour project-wide** (Sep 2024 default) and uses a shared sender address that Hotmail/Outlook frequently drop. Resend (free tier 3000/month) configured as Supabase's SMTP transport. Doc: https://supabase.com/docs/guides/auth/auth-smtp.
+2. **Vercel preview wildcard added to redirect allow-list.** `https://heart-note-*.vercel.app/**` covers all preview URLs for email-link redirects (signup confirm, password reset). Google OAuth on previews remains unsupported — Google doesn't accept wildcards.
+3. **Google OAuth consent screen set to "In production".** While in "Testing" mode, only explicitly listed test users could sign in. For our `openid email profile` scopes (non-sensitive), publishing is one click and does NOT trigger Google verification.
+4. **Confirm-email = ON verified before each release.** Required for Supabase's Identity Linking pre-account-takeover guarantee to hold. Hard AC in the pre-merge checklist.
+
+### SHOULD-FIXes (code in this PR)
+
+5. **Confirm-password field on signup.** Was missing; standard UX everywhere. Added with Zod `refine()` matching server-side. (G4)
+6. **Show/hide password toggle.** New `<PasswordInput>` shared component used by `/login`, `/signup` (×2), and `/auth/update-password` (×2). Five sites — past rule of three. (G6)
+7. **`weak_password` error handling.** When Supabase Leaked Password Protection is enabled (dashboard toggle), `signUp` and `updateUser` reject HIBP-known passwords with this error. Both signup and update-password actions now catch it; `friendlyError` maps it to "That password has appeared in a known data breach. Pick a different one." (G9)
+8. **Middleware: `getUser()` → `getClaims()`.** Per current Supabase Next.js guide, `getClaims()` validates JWT locally instead of round-tripping to Auth on every matched request. `getUser()` remains correct in server components, server actions, and route handlers where authoritative identity is required. (G1)
+9. **`type=email` accepted in `/auth/confirm` allow-list.** Supabase's current canonical email template uses `?type=email` (the legacy `?type=signup` is deprecated for `verifyOtp`). Both kept in `ALLOWED_TYPES` to avoid breaking in-flight links. New email template uses `?type=email`. (G12)
+10. **Explicit `scopes` on Google OAuth start.** Defends against Google Workspace tenants that don't include the email scope by default. (G17)
+
+### Dashboard-only configs (in pre-merge checklist)
+
+11. **Leaked Password Protection ON.** Authentication → Policies → toggle. Required for #7 to actually catch breached passwords. (G8)
+12. **Password-changed notification email ON.** Authentication → Settings → notifications → password change. Standard security practice; lets a user notice if their password was changed without their knowledge. (G22)
+13. **Identity-linked notification email ON.** Same dashboard area. Tells users when a new sign-in method auto-links to their account. (G23)
+14. **Email template body uses `?type=email`.** Replace `{{ .ConfirmationURL }}` with `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email` in the Confirm Signup template. (G12 partner)
+15. **Site URL set to production domain; redirect list includes Vercel wildcard pattern + localhost.** (G24)
+
+### NITs not done
+
+- No client-side password strength meter (zxcvbn) — HIBP server-side check is sufficient; meter would add ~50KB JS for marginal value.
+- No `mailer_notifications_*` for less-critical events (email_change, MFA — MFA isn't in v1 anyway).
+- Env var rename `NEXT_PUBLIC_SUPABASE_ANON_KEY` → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` deferred. They're aliases today; renaming risks breaking deployments without functional gain.
+
+### Post-Phase-2 pre-merge checklist (replaces the original)
+
+Run this entire list before merging. The Co-work setup checklist (`docs/plans/login-v1-cowork-setup.md`) walks through each step click-by-click.
+
+**Google Cloud Console:**
+- [ ] OAuth Client ID created (Web application), name "HeartNote Web (Supabase)"
+- [ ] Authorized redirect URI: `https://jjuvsswrkibowvexbvro.supabase.co/auth/v1/callback`
+- [ ] OAuth consent screen: scopes `openid` + `email` + `profile`
+- [ ] OAuth consent screen: **Publishing status = "In production"** (one-click; non-sensitive scopes do not require Google verification)
+
+**Supabase dashboard (project `jjuvsswrkibowvexbvro`):**
+- [ ] Authentication → Providers → Google: Client ID + Secret pasted, Enabled = ON
+- [ ] Authentication → Settings → Email Auth → Confirm email = **ON**
+- [ ] Authentication → Settings → Email Auth → Secure email change = ON
+- [ ] Authentication → Policies → **Leaked Password Protection = ON**
+- [ ] Authentication → Settings → notifications → password change = ON
+- [ ] Authentication → Settings → notifications → identity linked = ON
+- [ ] Authentication → Settings → SMTP Settings → **Custom SMTP enabled with Resend** (host `smtp.resend.com`, port 465, user `resend`, password = Resend API key, sender `onboarding@resend.dev`)
+- [ ] Authentication → URL Configuration → Site URL = `https://heart-note-five.vercel.app`
+- [ ] Authentication → URL Configuration → Redirect URLs include:
+  - `https://heart-note-five.vercel.app/auth/callback`
+  - `https://heart-note-five.vercel.app/auth/confirm`
+  - `https://heart-note-*.vercel.app/auth/callback`
+  - `https://heart-note-*.vercel.app/auth/confirm`
+  - `http://localhost:3000/auth/callback`
+  - `http://localhost:3000/auth/confirm`
+- [ ] Authentication → Email Templates → Confirm signup → body updated to use `?type=email`
+- [ ] Authentication → Email Templates → Confirm signup + Reset password → copy matches drafts in this plan
+- [ ] Send a test email from the dashboard to a Hotmail address — arrives in inbox (or spam at worst, not undelivered)
+
+**Smoke test (browser, signed into Vercel):**
+- [ ] Sign up on preview with a fresh Hotmail or Gmail address → check-email page → confirmation email arrives → click → onboarding
+- [ ] Sign in with email + password → onboarding/dashboard
+- [ ] "Continue with Google" → consent → onboarding (production URL only — preview Google OAuth not supported)
+- [ ] Forgot-password → reset email → set new password → log in with new
+- [ ] Try a known-pwned password (e.g., `password123`) on signup → see "That password has appeared in a known data breach"
+- [ ] After password change, the user receives a "Your password was changed" notification email
+- [ ] Direct navigate to `/auth/update-password` while signed in → bounces to `/login?error=reset_session_expired`
+- [ ] Supabase Users dashboard shows linked identities for accounts that signed in via both email and Google
