@@ -331,3 +331,106 @@ export async function restartMedication(medicationId: string): Promise<ActionRes
   revalidatePath('/dashboard');
   redirect(`/me/medications/${medicationId}`);
 }
+
+// Bulk operations on the medication list. Selection lives in client state;
+// these actions receive the chosen ids and operate. RLS on `medications`
+// silently filters ids the caregiver does not own (intended: threat model
+// assumes caregivers cannot legitimately produce other caregivers' med ids).
+
+const IdsSchema = z.array(z.string().uuid()).min(1).max(50);
+
+export async function stopMedications(
+  ids: string[]
+): Promise<ActionResult & { stopped?: number }> {
+  const parsed = IdsSchema.safeParse(ids);
+  if (!parsed.success) return { ok: false, error: 'Invalid medication ids' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  const today = await getTodayForCaregiver(supabase, user.id);
+
+  // Pre-existing stopped meds in the selection get re-stamped to `today`.
+  // Caregiver-visible result is identical (the row stays in Past medications).
+  const { data, error } = await supabase
+    .from('medications')
+    .update({ stopped_at: today })
+    .in('id', parsed.data)
+    .select('id');
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/me/medications');
+  revalidatePath('/dashboard');
+  return { ok: true, stopped: (data ?? []).length };
+}
+
+export interface DeleteMedicationsImpact {
+  medications: Array<{ id: string; name: string; eventCount: number }>;
+  totalEvents: number;
+}
+
+type DeleteMedicationsResult =
+  | { ok: true; performed: false; impact: DeleteMedicationsImpact }
+  | { ok: true; performed: true; deleted: number }
+  | { ok: false; error: string };
+
+// `confirm=false` returns the impact preview for the dialog (med names +
+// event counts). `confirm=true` deletes; FK cascade removes medication_events
+// rows. Two-step flow lives in one action so impact preview and the
+// destructive call share validation/auth/RLS resolution.
+export async function deleteMedications(input: {
+  ids: string[];
+  confirm: boolean;
+}): Promise<DeleteMedicationsResult> {
+  const parsed = IdsSchema.safeParse(input.ids);
+  if (!parsed.success) return { ok: false, error: 'Invalid medication ids' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  if (!input.confirm) {
+    // RLS filters to caregiver's own meds. Foreign ids silently disappear.
+    const [medsResult, eventsResult] = await Promise.all([
+      supabase.from('medications').select('id, drug_name').in('id', parsed.data),
+      supabase
+        .from('medication_events')
+        .select('medication_id')
+        .in('medication_id', parsed.data),
+    ]);
+    if (medsResult.error) return { ok: false, error: medsResult.error.message };
+    if (eventsResult.error) return { ok: false, error: eventsResult.error.message };
+
+    const counts = new Map<string, number>();
+    for (const e of eventsResult.data ?? []) {
+      counts.set(e.medication_id, (counts.get(e.medication_id) ?? 0) + 1);
+    }
+    const medications = (medsResult.data ?? []).map((m) => ({
+      id: m.id,
+      name: m.drug_name,
+      eventCount: counts.get(m.id) ?? 0,
+    }));
+    const totalEvents = medications.reduce((s, m) => s + m.eventCount, 0);
+    return { ok: true, performed: false, impact: { medications, totalEvents } };
+  }
+
+  // confirm=true: perform delete. Cascade FK on medication_events removes
+  // history (per schema in 20260428153829_initial_schema.sql).
+  const { data, error } = await supabase
+    .from('medications')
+    .delete()
+    .in('id', parsed.data)
+    .select('id');
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/me/medications');
+  revalidatePath('/dashboard');
+  return { ok: true, performed: true, deleted: (data ?? []).length };
+}

@@ -2,28 +2,29 @@
 
 // React 19 useOptimistic for the dose-confirm + delete flows. The optimistic
 // state lives ONLY for the duration of the in-flight server action; once
-// revalidatePath fires and fresh server data arrives via props, useOptimistic
-// resets automatically. (The bug fix: prior versions kept independent
-// extraTaken / deletedIds state that never reset, causing the count to
-// drift forever as the user tapped Taken or deleted events.)
+// revalidatePath fires (or router.refresh on rejection) and fresh server
+// data arrives via props, useOptimistic resets automatically.
 //
 // Row tap → expansion with two sections:
 //   1. "Today's doses" — list of events with per-event delete (the
 //      caregiver-asked undo flow; replaces the absent undo button).
-//   2. "Log a dose" — four status buttons (Taken / Missed / Extra / Refused).
+//   2. "Log a dose" — three status buttons (Taken / Refused / Extra).
+//      Missed is no longer a manual surface; absence of a logged event is
+//      the implicit signal. `'missed'` enum still exists for voice-log.
 //
-// Schedule-time per-slot status is intentionally NOT shown — clock-time
-// matching is fragile (DST, late doses, out-of-order logging). schedule_times
-// remains in the DB for PR 3 (notifications) and PR 2 (slot-aware adherence
-// in the habit tile).
+// Slot-mute rule: when slotsResolved >= dosesPerDay (non-PRN only), Taken
+// and Refused are disabled. Extra remains tappable. Trash on any logged
+// event reopens its slot. Server enforces the same rule on confirmDose.
 
 import { useOptimistic, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { confirmDose, deleteDoseEvent } from '@/app/dashboard/actions';
-import type {
-  MedAdherenceEvent,
-  MedAdherenceRow,
-  MedEventStatus,
+import {
+  SLOT_CONSUMER_STATUSES,
+  type MedAdherenceEvent,
+  type MedAdherenceRow,
+  type MedEventStatus,
 } from '@/lib/medications/evaluate';
 
 interface Props {
@@ -40,13 +41,6 @@ const STATUS_LABEL: Record<MedEventStatus, string> = {
   early: 'Taken (early)',
   late: 'Taken (late)',
 };
-
-const TAKEN_COUNTING: ReadonlySet<MedEventStatus> = new Set([
-  'taken',
-  'early',
-  'late',
-  'double_dosed',
-]);
 
 function formatTime(iso: string, tz: string): string {
   return new Intl.DateTimeFormat('en-US', {
@@ -68,25 +62,24 @@ function applyOptimistic(
   return rows.map((r) => {
     if (r.medicationId !== action.medicationId) return r;
     if (action.type === 'add') {
-      const counts = TAKEN_COUNTING.has(action.event.status);
+      const counts = SLOT_CONSUMER_STATUSES.has(action.event.status);
+      const next = counts ? r.slotsResolved + 1 : r.slotsResolved;
       return {
         ...r,
         events: [action.event, ...r.events],
-        takenToday: counts ? r.takenToday + 1 : r.takenToday,
-        isComplete:
-          r.dosesPerDay !== null &&
-          (counts ? r.takenToday + 1 : r.takenToday) >= r.dosesPerDay,
+        slotsResolved: next,
+        isComplete: r.dosesPerDay !== null && next >= r.dosesPerDay,
       };
     }
     const ev = r.events.find((e) => e.id === action.eventId);
     if (!ev) return r;
-    const wasCounting = TAKEN_COUNTING.has(ev.status);
-    const newTaken = wasCounting ? Math.max(0, r.takenToday - 1) : r.takenToday;
+    const wasCounting = SLOT_CONSUMER_STATUSES.has(ev.status);
+    const next = wasCounting ? Math.max(0, r.slotsResolved - 1) : r.slotsResolved;
     return {
       ...r,
       events: r.events.filter((e) => e.id !== action.eventId),
-      takenToday: newTaken,
-      isComplete: r.dosesPerDay !== null && newTaken >= r.dosesPerDay,
+      slotsResolved: next,
+      isComplete: r.dosesPerDay !== null && next >= r.dosesPerDay,
     };
   });
 }
@@ -98,6 +91,7 @@ export function TodaysMedsList({ scheduled, prn, tz }: Props) {
   const [optimisticRows, addOptimistic] = useOptimistic(allRows, applyOptimistic);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   const optimisticScheduled = optimisticRows.filter((r) => r.dosesPerDay !== null);
   const optimisticPrn = optimisticRows.filter((r) => r.dosesPerDay === null);
@@ -114,9 +108,16 @@ export function TodaysMedsList({ scheduled, prn, tz }: Props) {
       addOptimistic({ type: 'add', medicationId, event: tempEvent });
       const result = await confirmDose({
         medicationId,
-        status: status as 'taken' | 'missed' | 'double_dosed' | 'refused',
+        status: status as 'taken' | 'double_dosed' | 'refused',
       });
-      if (!result.ok) setError(result.error);
+      if (!result.ok) {
+        setError(result.error);
+        // Drop the stale optimistic event by forcing a server-component
+        // re-render. confirmDose does not revalidatePath on rejection,
+        // so without this the temp event would linger until the next
+        // unrelated re-render.
+        router.refresh();
+      }
     });
   }
 
@@ -125,7 +126,10 @@ export function TodaysMedsList({ scheduled, prn, tz }: Props) {
     startTransition(async () => {
       addOptimistic({ type: 'delete', medicationId, eventId });
       const result = await deleteDoseEvent(eventId);
-      if (!result.ok) setError(result.error);
+      if (!result.ok) {
+        setError(result.error);
+        router.refresh();
+      }
     });
   }
 
@@ -184,7 +188,8 @@ interface RowProps {
 function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   const [open, setOpen] = useState(false);
   const expected = row.dosesPerDay ?? 0;
-  const isOver = row.takenToday > expected;
+  const isOver = row.slotsResolved > expected;
+  const slotsFull = row.dosesPerDay !== null && row.slotsResolved >= row.dosesPerDay;
 
   return (
     <li className="border-b border-border last:border-0">
@@ -198,14 +203,14 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold tabular-nums text-foreground">
-            {row.takenToday}/{expected}
+            {row.slotsResolved}/{expected}
           </span>
           {isOver && (
             <span
               className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground"
-              title={`${row.takenToday} doses logged for a ${expected}-dose schedule`}
+              title={`${row.slotsResolved} doses logged for a ${expected}-dose schedule`}
             >
-              {row.takenToday}×
+              {row.slotsResolved}×
             </span>
           )}
         </div>
@@ -217,6 +222,7 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
           tz={tz}
           events={row.events}
           isPending={isPending}
+          slotsFull={slotsFull}
           onConfirm={onConfirm}
           onDelete={onDelete}
         />
@@ -237,7 +243,7 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {row.takenToday === 0 ? 'none today' : `${row.takenToday} today`}
+            {row.slotsResolved === 0 ? 'none today' : `${row.slotsResolved} today`}
           </p>
         </div>
         <Plus size={18} className="text-muted-foreground" />
@@ -249,6 +255,7 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
           tz={tz}
           events={row.events}
           isPending={isPending}
+          slotsFull={false}
           onConfirm={onConfirm}
           onDelete={onDelete}
         />
@@ -259,9 +266,8 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
 
 const STATUSES: Array<{ value: MedEventStatus; label: string }> = [
   { value: 'taken', label: 'Taken' },
-  { value: 'missed', label: 'Missed' },
-  { value: 'double_dosed', label: 'Extra' },
   { value: 'refused', label: 'Refused' },
+  { value: 'double_dosed', label: 'Extra' },
 ];
 
 function Expansion({
@@ -269,6 +275,7 @@ function Expansion({
   tz,
   events,
   isPending,
+  slotsFull,
   onConfirm,
   onDelete,
 }: {
@@ -276,6 +283,7 @@ function Expansion({
   tz: string;
   events: MedAdherenceEvent[];
   isPending: boolean;
+  slotsFull: boolean;
   onConfirm: (status: MedEventStatus) => void;
   onDelete: (eventId: string) => void;
 }) {
@@ -312,19 +320,29 @@ function Expansion({
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">
           Log a dose for {drugName}
         </p>
-        <div className="grid grid-cols-2 gap-2">
-          {STATUSES.map((s) => (
-            <button
-              key={s.value}
-              type="button"
-              disabled={isPending}
-              onClick={() => onConfirm(s.value)}
-              className="rounded-full border border-border bg-background px-3 py-2 text-sm font-medium disabled:opacity-50 active:scale-[0.98] transition"
-            >
-              {s.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-3 gap-2">
+          {STATUSES.map((s) => {
+            const slotMuted = s.value !== 'double_dosed' && slotsFull;
+            const disabled = isPending || slotMuted;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                disabled={disabled}
+                aria-disabled={disabled || undefined}
+                onClick={() => onConfirm(s.value)}
+                className="rounded-full border border-border bg-background px-3 py-2 text-sm font-medium disabled:opacity-50 active:scale-[0.98] transition"
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
+        {slotsFull && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            All doses logged for today.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -676,7 +676,7 @@ export type Database = {
           events: Json
           medication_id: string
           schedule_times: string[]
-          taken_today: number
+          slots_resolved: number
         }[]
       }
     }
