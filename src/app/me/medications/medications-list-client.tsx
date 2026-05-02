@@ -8,7 +8,7 @@
 // Selection state is ephemeral — exiting Edit Mode or navigating away
 // clears it (component unmounts on navigation, so no persistence needed).
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Camera, ChevronRight, Pill, Plus } from 'lucide-react';
@@ -21,6 +21,52 @@ import {
 import type { Database } from '@/lib/supabase/types';
 
 type MedClass = Database['public']['Enums']['med_class'];
+
+const LONG_PRESS_MS = 500;
+
+// Long-press → enter Edit Mode + select that row. Common iOS pattern.
+// Suppresses the next click so the row's normal Link tap doesn't fire.
+// Touch movement cancels the press (the user is scrolling, not selecting).
+function useLongPress(onLongPress: () => void) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firedRef = useRef(false);
+
+  function clear() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+  function start() {
+    firedRef.current = false;
+    clear();
+    timerRef.current = setTimeout(() => {
+      firedRef.current = true;
+      timerRef.current = null;
+      if ('vibrate' in navigator) navigator.vibrate(10);
+      onLongPress();
+    }, LONG_PRESS_MS);
+  }
+  function onClick(e: React.MouseEvent) {
+    if (firedRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      firedRef.current = false;
+    }
+  }
+
+  return {
+    onTouchStart: start,
+    onTouchEnd: clear,
+    onTouchMove: clear,
+    onTouchCancel: clear,
+    onPointerDown: start,
+    onPointerUp: clear,
+    onPointerLeave: clear,
+    onPointerCancel: clear,
+    onClick,
+  };
+}
 
 export interface MedSummary {
   id: string;
@@ -75,6 +121,26 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
     setPendingImpact(null);
     setError(null);
   }
+
+  function handleLongPress(id: string) {
+    setEditMode(true);
+    setSelected(new Set([id]));
+  }
+
+  // Mark the body while in Edit Mode so global CSS hides the BottomNav.
+  // Required because the bulk-action toolbar is `fixed bottom-0 z-50` —
+  // without hiding the nav, the two compete visually on small viewports
+  // (especially iOS Safari where the URL bar can clip the area).
+  useEffect(() => {
+    if (editMode) {
+      document.body.dataset.bulkEdit = 'on';
+    } else {
+      delete document.body.dataset.bulkEdit;
+    }
+    return () => {
+      delete document.body.dataset.bulkEdit;
+    };
+  }, [editMode]);
 
   function handleStop() {
     if (selectedCount === 0) return;
@@ -171,6 +237,7 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
                 selected={selected.has(m.id)}
                 isJustAdded={addedId === m.id}
                 onToggle={() => toggleSelected(m.id)}
+                onLongPress={() => handleLongPress(m.id)}
               />
             ))}
           </ul>
@@ -207,6 +274,7 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
                 editMode={editMode}
                 selected={selected.has(m.id)}
                 onToggle={() => toggleSelected(m.id)}
+                onLongPress={() => handleLongPress(m.id)}
               />
             ))}
           </ul>
@@ -242,9 +310,18 @@ interface RowProps {
   editMode: boolean;
   selected: boolean;
   onToggle: () => void;
+  onLongPress: () => void;
 }
 
-function ActiveRow({ med, editMode, selected, isJustAdded, onToggle }: RowProps & { isJustAdded: boolean }) {
+function ActiveRow({
+  med,
+  editMode,
+  selected,
+  isJustAdded,
+  onToggle,
+  onLongPress,
+}: RowProps & { isJustAdded: boolean }) {
+  const longPress = useLongPress(onLongPress);
   const body = (
     <div className="flex-1 min-w-0">
       <p className="font-semibold text-foreground truncate">
@@ -277,7 +354,9 @@ function ActiveRow({ med, editMode, selected, isJustAdded, onToggle }: RowProps 
       ) : (
         <Link
           href={`/me/medications/${med.id}`}
-          className="flex items-start gap-3 p-4 active:bg-muted/40 transition"
+          {...longPress}
+          className="flex items-start gap-3 p-4 active:bg-muted/40 transition select-none"
+          style={{ WebkitTouchCallout: 'none' }}
         >
           {body}
           <ChevronRight size={18} className="text-muted-foreground mt-1 shrink-0" />
@@ -287,7 +366,8 @@ function ActiveRow({ med, editMode, selected, isJustAdded, onToggle }: RowProps 
   );
 }
 
-function StoppedRow({ med, editMode, selected, onToggle }: RowProps) {
+function StoppedRow({ med, editMode, selected, onToggle, onLongPress }: RowProps) {
+  const longPress = useLongPress(onLongPress);
   const body = (
     <span className="flex-1 text-sm truncate text-muted-foreground">
       {med.drug_name}
@@ -311,7 +391,9 @@ function StoppedRow({ med, editMode, selected, onToggle }: RowProps) {
       ) : (
         <Link
           href={`/me/medications/${med.id}`}
-          className="flex items-center gap-3 p-4 text-muted-foreground"
+          {...longPress}
+          className="flex items-center gap-3 p-4 text-muted-foreground select-none"
+          style={{ WebkitTouchCallout: 'none' }}
         >
           {body}
           <ChevronRight size={16} />
