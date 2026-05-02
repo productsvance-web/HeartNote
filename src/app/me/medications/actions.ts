@@ -7,17 +7,25 @@ import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
 import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
 
-// Form-side strength lookup for inline unit constraints. Returns null when
-// RxNorm has no consistent oral-solid strength (caregiver gets the full
-// unit picker in that case). Skips the network call entirely for short
-// strings so the form doesn't fire on every keystroke.
+// Form-side strength lookup for inline unit constraints AND the
+// "did you mean" spell-correction chip. Both fields ride the same
+// classifyDrugByName round-trip — no additional network calls. Skips
+// entirely for short strings so the form doesn't fire on every keystroke.
 export async function lookupDrugStrengths(
   drugName: string
-): Promise<{ allowedStrengths: AllowedStrengths | null }> {
+): Promise<{
+  allowedStrengths: AllowedStrengths | null;
+  suggestedName: string | null;
+}> {
   const trimmed = drugName.trim();
-  if (trimmed.length < 3) return { allowedStrengths: null };
+  if (trimmed.length < 3) {
+    return { allowedStrengths: null, suggestedName: null };
+  }
   const result = await classifyDrugByName(trimmed);
-  return { allowedStrengths: result.allowedStrengths ?? null };
+  return {
+    allowedStrengths: result.allowedStrengths ?? null,
+    suggestedName: result.suggestedName ?? null,
+  };
 }
 
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;

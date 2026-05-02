@@ -89,6 +89,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   const [allowedStrengths, setAllowedStrengths] = useState<AllowedStrengths | null>(
     initial?.allowedStrengths ?? null
   );
+  const [suggestedName, setSuggestedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const lastLookedUpRef = useRef<string | null>(null);
@@ -111,7 +112,8 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   // Debounced lookup as the caregiver types — fires 500ms after they stop.
   // Skips repeat lookups of the same name. The trim().length >= 3 guard
   // mirrors lookupDrugStrengths server-side so we don't burn requests on
-  // single-letter typing.
+  // single-letter typing. Same call powers both the dose-unit constraint
+  // and the spell-correction chip.
   useEffect(() => {
     const name = form.drugName.trim();
     if (name.length < 3 || name === lastLookedUpRef.current) return;
@@ -119,6 +121,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
       lastLookedUpRef.current = name;
       void lookupDrugStrengths(name).then((r) => {
         setAllowedStrengths(r.allowedStrengths);
+        setSuggestedName(r.suggestedName);
       });
     }, 500);
     return () => clearTimeout(timer);
@@ -197,6 +200,14 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     .map((v) => `${v} ${allowedStrengths.unit.toLowerCase()}`)
     .join(', ');
 
+  // RxNorm's approximate-match returns a corrected name when the typed
+  // name is close-but-not-exact. Render a one-tap chip; if the caregiver
+  // dismisses (just keeps typing), the insert still classifies correctly
+  // server-side because the corrected RxCUI is what reaches RxClass.
+  const showSuggestion =
+    !!suggestedName &&
+    suggestedName.toLowerCase() !== form.drugName.trim().toLowerCase();
+
   return (
     <div className="space-y-5">
       <Field label="Drug name">
@@ -207,6 +218,15 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           onChange={(e) => setForm({ ...form, drugName: e.target.value })}
           placeholder="Lasix"
         />
+        {showSuggestion && (
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, drugName: suggestedName! }))}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs text-foreground active:bg-muted/70"
+          >
+            Did you mean <span className="font-semibold">{suggestedName}</span>?
+          </button>
+        )}
       </Field>
 
       <div>
