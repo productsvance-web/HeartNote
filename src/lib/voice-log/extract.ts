@@ -131,7 +131,7 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
             },
             status: {
               type: 'string',
-              enum: ['taken', 'missed', 'double_dosed', 'refused'],
+              enum: ['taken', 'double_dosed', 'refused'],
             },
             note: {
               type: 'string',
@@ -237,8 +237,9 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - Caregiver said nothing about a symptom → DO NOT include it. Empty array is correct when nothing was said.
 
 ## medication_events[] / med_match_failures[]
-- If the caregiver mentions a medication BY NAME with a status (took, missed, skipped, double-dosed, refused), produce one medication_events[] entry with the exact drug name they said and the matching status. Examples: "Mom took her Lasix this morning" → { drug_name_stated: "Lasix", status: "taken" }. "She missed her evening Bumex" → { drug_name_stated: "Bumex", status: "missed" }. "I gave her an extra Lasix" → { drug_name_stated: "Lasix", status: "double_dosed" }. "She refused her metoprolol" → { drug_name_stated: "metoprolol", status: "refused" }.
-- If the caregiver references a drug ONLY by class or nickname ("her water pill," "the heart pill," "the blood thinner") with NO drug name, do NOT produce a medication_events[] entry. Add the phrase to med_match_failures[] instead. Examples: "she missed her water pill last night" → med_match_failures: ["water pill"]. "took her heart pill" → med_match_failures: ["heart pill"].
+- If the caregiver mentions a medication BY NAME with a status (took, double-dosed, refused), produce one medication_events[] entry with the exact drug name they said and the matching status. Examples: "Mom took her Lasix this morning" → { drug_name_stated: "Lasix", status: "taken" }. "I gave her an extra Lasix" → { drug_name_stated: "Lasix", status: "double_dosed" }. "She refused her metoprolol" → { drug_name_stated: "metoprolol", status: "refused" }.
+- If the caregiver says a dose was missed/skipped/forgotten ("she missed her morning Lasix," "I forgot her noon dose"), produce NO medication_events[] entry. Absence of a logged event is the implicit signal — do not emit a "missed" status.
+- If the caregiver references a drug ONLY by class or nickname ("her water pill," "the heart pill," "the blood thinner") with NO drug name, do NOT produce a medication_events[] entry. Add the phrase to med_match_failures[] instead. Examples: "she skipped her water pill last night" → med_match_failures: ["water pill"]. "took her heart pill" → med_match_failures: ["heart pill"].
 - This rule has NO exceptions. Do not guess which medication the caregiver meant — the app shows the match failures to the caregiver for clarification.
 - Caregiver mentioned no medications → both arrays are empty. That is correct.
 
@@ -327,7 +328,7 @@ export type DayLevelExtraction = {
 
 export type MedicationEventExtraction = {
   drug_name_stated: string;
-  status: 'taken' | 'missed' | 'double_dosed' | 'refused';
+  status: 'taken' | 'double_dosed' | 'refused';
   note?: string;
 };
 

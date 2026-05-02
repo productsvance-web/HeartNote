@@ -15,7 +15,10 @@ const tabs = [
 export function BottomNav() {
   const pathname = usePathname();
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/85 backdrop-blur-lg">
+    <nav
+      data-bottom-nav
+      className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/85 backdrop-blur-lg"
+    >
       <div className="mx-auto max-w-md grid grid-cols-5 px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {tabs.map(({ to, label, Icon }) => {
           const isActive = pathname === to || (to === '/dashboard' && pathname === '/');

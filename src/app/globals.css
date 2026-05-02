@@ -157,6 +157,13 @@
     font-family: var(--font-display);
     letter-spacing: -0.02em;
   }
+  /* Hide BottomNav while a bulk-edit session is active so the bulk-action
+     toolbar (rendered by MedicationsListClient at fixed bottom-0 z-50)
+     fully owns the bottom area. The body[data-bulk-edit="on"] attribute
+     is set/cleared by MedicationsListClient. */
+  body[data-bulk-edit="on"] [data-bottom-nav] {
+    display: none;
+  }
 }
 
 @layer components {

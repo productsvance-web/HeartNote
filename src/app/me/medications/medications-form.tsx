@@ -10,6 +10,7 @@ import {
 } from './actions';
 import type { MedicationPayload } from './actions';
 import type { AllowedStrengths } from '@/lib/medications/classify';
+import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
 
 type Mode = 'new' | 'edit';
 
@@ -20,46 +21,13 @@ interface Props {
     isStopped?: boolean;
     allowedStrengths?: AllowedStrengths | null;
   };
-}
-
-// Default unit list shown when RxNorm hasn't classified the drug. Matches
-// the regex in actions.ts; keep in sync if either changes.
-const ALL_UNITS = [
-  'mg',
-  'mcg',
-  'g',
-  'mL',
-  'L',
-  'units',
-  'tablet',
-  'capsule',
-  'puff',
-  'drop',
-  'tsp',
-  'tbsp',
-] as const;
-
-// Display labels: SI / medical abbreviations stay correctly cased (mg, mL, L,
-// tsp); English words get title case (Tablet, Units). Lookup is
-// case-insensitive so RxNorm-normalized lowercase values ('ml') still
-// display correctly ('mL').
-const UNIT_LABELS: Record<string, string> = {
-  mg: 'mg',
-  mcg: 'mcg',
-  g: 'g',
-  ml: 'mL',
-  l: 'L',
-  units: 'Units',
-  tablet: 'Tablet',
-  capsule: 'Capsule',
-  puff: 'Puff',
-  drop: 'Drop',
-  tsp: 'tsp',
-  tbsp: 'tbsp',
-};
-
-function unitLabel(u: string): string {
-  return UNIT_LABELS[u.toLowerCase()] ?? u;
+  // When provided, the form calls submitAction INSTEAD of addMedication /
+  // updateMedication, and onSaved fires on success. Used by the scan flow
+  // so saving stays within /me/medications/scan instead of redirecting.
+  submitAction?: (payload: MedicationPayload) => Promise<{ ok: boolean; error?: string }>;
+  onSaved?: () => void;
+  // Optional submit-button label override (e.g., "Add to my list" in scan).
+  submitLabel?: string;
 }
 
 const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/;
@@ -74,13 +42,21 @@ function parseDose(dose: string | undefined): { value: string; unit: string } {
 const blank: MedicationPayload = {
   drugName: '',
   dose: '',
+  pillsPerDose: 1,
   dosesPerDay: 1,
   scheduleTimes: null,
   startedAt: '',
   notes: '',
 };
 
-export function MedicationForm({ mode, medicationId, initial }: Props) {
+export function MedicationForm({
+  mode,
+  medicationId,
+  initial,
+  submitAction,
+  onSaved,
+  submitLabel,
+}: Props) {
   const initialDoses = initial?.dosesPerDay ?? blank.dosesPerDay;
   const initialDose = parseDose(initial?.dose);
   const [form, setForm] = useState<MedicationPayload>({ ...blank, ...initial });
@@ -89,6 +65,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   const [allowedStrengths, setAllowedStrengths] = useState<AllowedStrengths | null>(
     initial?.allowedStrengths ?? null
   );
+  const [suggestedName, setSuggestedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const lastLookedUpRef = useRef<string | null>(null);
@@ -111,7 +88,8 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   // Debounced lookup as the caregiver types — fires 500ms after they stop.
   // Skips repeat lookups of the same name. The trim().length >= 3 guard
   // mirrors lookupDrugStrengths server-side so we don't burn requests on
-  // single-letter typing.
+  // single-letter typing. Same call powers both the dose-unit constraint
+  // and the spell-correction chip.
   useEffect(() => {
     const name = form.drugName.trim();
     if (name.length < 3 || name === lastLookedUpRef.current) return;
@@ -119,6 +97,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
       lastLookedUpRef.current = name;
       void lookupDrugStrengths(name).then((r) => {
         setAllowedStrengths(r.allowedStrengths);
+        setSuggestedName(r.suggestedName);
       });
     }, 500);
     return () => clearTimeout(timer);
@@ -167,6 +146,15 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     const payload: MedicationPayload = { ...form, dose, scheduleTimes: cleanedTimes };
 
     startTransition(async () => {
+      if (submitAction) {
+        const result = await submitAction(payload);
+        if (!result.ok) {
+          setError(result.error ?? 'Save failed');
+        } else {
+          onSaved?.();
+        }
+        return;
+      }
       const result =
         mode === 'new'
           ? await addMedication(payload)
@@ -197,6 +185,14 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     .map((v) => `${v} ${allowedStrengths.unit.toLowerCase()}`)
     .join(', ');
 
+  // RxNorm's approximate-match returns a corrected name when the typed
+  // name is close-but-not-exact. Render a one-tap chip; if the caregiver
+  // dismisses (just keeps typing), the insert still classifies correctly
+  // server-side because the corrected RxCUI is what reaches RxClass.
+  const showSuggestion =
+    !!suggestedName &&
+    suggestedName.toLowerCase() !== form.drugName.trim().toLowerCase();
+
   return (
     <div className="space-y-5">
       <Field label="Drug name">
@@ -207,14 +203,47 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           onChange={(e) => setForm({ ...form, drugName: e.target.value })}
           placeholder="Lasix"
         />
+        {showSuggestion && (
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, drugName: suggestedName! }))}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs text-foreground active:bg-muted/70"
+          >
+            Did you mean <span className="font-semibold">{suggestedName}</span>?
+          </button>
+        )}
       </Field>
 
       <div>
         <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        {/* Outer pill holds the number input. Inner white chip floats with
-            margin all around (doesn't touch container borders), full-height
-            of the inner space, bold typography, properly-cased unit label. */}
+        {/* Combined dose pill: count chip · × · number · unit chip.
+            Reads "2 × 500 mg" — two pills of five-hundred milligrams.
+            Both count and unit are white chips bookending the dark pill;
+            count uses rounded-l, unit uses rounded-r so the seam reads as
+            one unit. The count select stays unitless ("1, 2, 3 ...") so
+            the same control works for tablets, puffs, drops, sprays —
+            the dose unit on the right side carries the form factor. */}
         <div className="flex items-stretch rounded-xl border border-border bg-background p-1 focus-within:ring-2 focus-within:ring-ring">
+          <select
+            value={String(form.pillsPerDose)}
+            onChange={(e) =>
+              setForm({ ...form, pillsPerDose: Number(e.target.value) })
+            }
+            aria-label="Pills per dose"
+            className="w-[60px] rounded-r-none rounded-l-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring appearance-none [&::-ms-expand]:hidden"
+          >
+            {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span
+            aria-hidden="true"
+            className="flex items-center px-2 text-base font-medium text-muted-foreground"
+          >
+            ×
+          </span>
           <input
             type="number"
             inputMode="decimal"
@@ -246,11 +275,11 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
             </select>
           )}
         </div>
-        {knownStrengths && (
-          <p className="text-xs text-muted-foreground mt-1.5">
-            Comes in {knownStrengths}
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground mt-1.5">
+          {knownStrengths
+            ? `Comes in ${knownStrengths}. e.g. 2 × 500 mg = two pills of 500 mg each.`
+            : 'e.g. 2 × 500 mg = two pills of 500 mg each.'}
+        </p>
       </div>
 
       <Field label="Doses per day">
@@ -338,7 +367,9 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           disabled={isPending || !form.drugName.trim()}
           className="flex-1 rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold disabled:opacity-50"
         >
-          {isPending ? 'Saving…' : mode === 'new' ? 'Add medication' : 'Save changes'}
+          {isPending
+            ? 'Saving…'
+            : (submitLabel ?? (mode === 'new' ? 'Add medication' : 'Save changes'))}
         </button>
       </div>
 

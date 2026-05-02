@@ -19,5 +19,8 @@
 4. **Read-only family share link.** Independent of the others; can be parallelized.
 5. **Stripe paywall on paid features.** After the architecture work in Pass 2.
 
+## Follow-ups (post-launch)
+- **Vertex AI auth → OIDC + Workload Identity Federation.** Medication-scan v1 uses long-lived service-account JSON (`GOOGLE_VERTEX_AI_CREDENTIALS_JSON`) on Vercel. Acceptable pre-launch / zero-customers; rotate to keyless OIDC before any real PHI volume.
+
 ## Recent commits
 Run `git log --oneline -25` for recent work.

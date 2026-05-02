@@ -425,6 +425,7 @@ export type Database = {
           id: string
           notes: string | null
           patient_id: string
+          pills_per_dose: number
           schedule_times: string[] | null
           started_at: string | null
           stopped_at: string | null
@@ -440,6 +441,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id: string
+          pills_per_dose?: number
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
@@ -455,6 +457,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id?: string
+          pills_per_dose?: number
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
@@ -676,7 +679,7 @@ export type Database = {
           events: Json
           medication_id: string
           schedule_times: string[]
-          taken_today: number
+          slots_resolved: number
         }[]
       }
     }
@@ -703,13 +706,7 @@ export type Database = {
         | "anticoagulant_doac"
         | "potassium_supplement"
         | "other"
-      med_event_status:
-        | "taken"
-        | "missed"
-        | "double_dosed"
-        | "refused"
-        | "early"
-        | "late"
+      med_event_status: "taken" | "double_dosed" | "refused" | "early" | "late"
       nyha_class: "I" | "II" | "III" | "IV" | "unknown"
       significant_event_type:
         | "fall"
@@ -878,14 +875,7 @@ export const Constants = {
         "potassium_supplement",
         "other",
       ],
-      med_event_status: [
-        "taken",
-        "missed",
-        "double_dosed",
-        "refused",
-        "early",
-        "late",
-      ],
+      med_event_status: ["taken", "double_dosed", "refused", "early", "late"],
       nyha_class: ["I", "II", "III", "IV", "unknown"],
       significant_event_type: [
         "fall",

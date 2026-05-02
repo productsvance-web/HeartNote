@@ -7,17 +7,25 @@ import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
 import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
 
-// Form-side strength lookup for inline unit constraints. Returns null when
-// RxNorm has no consistent oral-solid strength (caregiver gets the full
-// unit picker in that case). Skips the network call entirely for short
-// strings so the form doesn't fire on every keystroke.
+// Form-side strength lookup for inline unit constraints AND the
+// "did you mean" spell-correction chip. Both fields ride the same
+// classifyDrugByName round-trip — no additional network calls. Skips
+// entirely for short strings so the form doesn't fire on every keystroke.
 export async function lookupDrugStrengths(
   drugName: string
-): Promise<{ allowedStrengths: AllowedStrengths | null }> {
+): Promise<{
+  allowedStrengths: AllowedStrengths | null;
+  suggestedName: string | null;
+}> {
   const trimmed = drugName.trim();
-  if (trimmed.length < 3) return { allowedStrengths: null };
+  if (trimmed.length < 3) {
+    return { allowedStrengths: null, suggestedName: null };
+  }
   const result = await classifyDrugByName(trimmed);
-  return { allowedStrengths: result.allowedStrengths ?? null };
+  return {
+    allowedStrengths: result.allowedStrengths ?? null,
+    suggestedName: result.suggestedName ?? null,
+  };
 }
 
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -62,6 +70,9 @@ const MedicationPayloadSchema = z
       .refine((v) => !v || DOSE_FORMAT.test(v), {
         message: 'Dose must be a number and unit, e.g. "40 mg" or "1 tablet"',
       }),
+    // Number of pills per administration. Default 1 (one pill per dose).
+    // Range 1-20 mirrors the schema CHECK in the migration.
+    pillsPerDose: z.number().int().min(1).max(20).default(1),
     // null = PRN (as-needed); otherwise 1-12 doses per day.
     dosesPerDay: z.number().int().min(1).max(12).nullable(),
     // null when caregiver doesn't know clock times; otherwise length must equal dosesPerDay
@@ -95,24 +106,21 @@ async function resolvePatient(
   return data;
 }
 
-export async function addMedication(payload: MedicationPayload): Promise<ActionResult> {
+// Insert one medication for a resolved patient. Validate, classify,
+// dose-unit-check, insert. NO redirect, NO revalidatePath. The caller
+// owns those side effects so this can be reused from batch contexts
+// (scan flow) without hijacking the response.
+async function insertOneMedication(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  payload: MedicationPayload
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const parsed = MedicationPayloadSchema.safeParse(payload);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
-
-  const patient = await resolvePatient(supabase, user.id);
-  if (!patient) return { ok: false, error: 'No patient on file.' };
-
   const v = parsed.data;
-  // RxNorm classification is the only source of drug_class — caregiver no
-  // longer overrides at the form layer.
+  // RxNorm classification is the only source of drug_class.
   const classification = await classifyDrugByName(v.drugName);
 
   if (v.dose) {
@@ -127,10 +135,11 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   const { data: inserted, error: insertError } = await supabase
     .from('medications')
     .insert({
-      patient_id: patient.id,
+      patient_id: patientId,
       drug_name: v.drugName,
       drug_class: classification.medClass,
       dose: v.dose || null,
+      pills_per_dose: v.pillsPerDose,
       doses_per_day: v.dosesPerDay,
       schedule_times: v.scheduleTimes,
       started_at: v.startedAt || null,
@@ -145,10 +154,74 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   if (insertError || !inserted) {
     return { ok: false, error: insertError?.message ?? 'Insert failed' };
   }
+  return { ok: true, id: inserted.id };
+}
+
+export async function addMedication(payload: MedicationPayload): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  const patient = await resolvePatient(supabase, user.id);
+  if (!patient) return { ok: false, error: 'No patient on file.' };
+
+  const result = await insertOneMedication(supabase, patient.id, payload);
+  if (!result.ok) return result;
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications?added=${inserted.id}`);
+  redirect(`/me/medications?added=${result.id}`);
+}
+
+// Batch insert path used by the scan flow — both single-card "Add to my
+// list" (array of one) and "Add all" (array of many). No redirect: the
+// caller stays on /me/medications/scan and updates client state per row.
+// Returns indexes into the input array so the UI can keep failed rows
+// on screen with inline error messages.
+export async function addExtractedMedications(
+  payloads: MedicationPayload[]
+): Promise<{ added: number; failedIndexes: number[]; errors: string[] }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return {
+      added: 0,
+      failedIndexes: payloads.map((_, i) => i),
+      errors: payloads.map(() => 'Session expired. Please sign in again.'),
+    };
+  }
+  const patient = await resolvePatient(supabase, user.id);
+  if (!patient) {
+    return {
+      added: 0,
+      failedIndexes: payloads.map((_, i) => i),
+      errors: payloads.map(() => 'No patient on file.'),
+    };
+  }
+
+  const failedIndexes: number[] = [];
+  const errors: string[] = payloads.map(() => '');
+  let added = 0;
+  for (let i = 0; i < payloads.length; i++) {
+    const result = await insertOneMedication(supabase, patient.id, payloads[i]);
+    if (result.ok) {
+      added++;
+    } else {
+      failedIndexes.push(i);
+      errors[i] = result.error;
+    }
+  }
+
+  if (added > 0) {
+    revalidatePath('/me/medications');
+    revalidatePath('/dashboard');
+  }
+
+  return { added, failedIndexes, errors };
 }
 
 export async function updateMedication(
@@ -201,6 +274,7 @@ export async function updateMedication(
     .update({
       drug_name: v.drugName,
       dose: v.dose || null,
+      pills_per_dose: v.pillsPerDose,
       doses_per_day: v.dosesPerDay,
       schedule_times: scheduleTimes,
       started_at: v.startedAt || null,
@@ -261,4 +335,110 @@ export async function restartMedication(medicationId: string): Promise<ActionRes
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
   redirect(`/me/medications/${medicationId}`);
+}
+
+// Bulk operations on the medication list. Selection lives in client state;
+// these actions receive the chosen ids and operate. RLS on `medications`
+// silently filters ids the caregiver does not own (intended: threat model
+// assumes caregivers cannot legitimately produce other caregivers' med ids).
+
+const IdsSchema = z.array(z.string().uuid()).min(1).max(50);
+
+export async function stopMedications(
+  ids: string[]
+): Promise<ActionResult & { stopped?: number }> {
+  const parsed = IdsSchema.safeParse(ids);
+  if (!parsed.success) return { ok: false, error: 'Invalid medication ids' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  const today = await getTodayForCaregiver(supabase, user.id);
+
+  // Filter to currently-active meds so a re-stop doesn't overwrite the
+  // original `stopped_at` date on rows that were already in Past medications.
+  // Caregiver-visible result is identical either way; the predicate keeps
+  // "stopped X days ago" labels and any downstream trend logic accurate.
+  const { data, error } = await supabase
+    .from('medications')
+    .update({ stopped_at: today })
+    .in('id', parsed.data)
+    .is('stopped_at', null)
+    .select('id');
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/me/medications');
+  revalidatePath('/dashboard');
+  return { ok: true, stopped: (data ?? []).length };
+}
+
+export interface DeleteMedicationsImpact {
+  medications: Array<{ id: string; name: string; eventCount: number }>;
+  totalEvents: number;
+}
+
+type DeleteMedicationsResult =
+  | { ok: true; performed: false; impact: DeleteMedicationsImpact }
+  | { ok: true; performed: true; deleted: number }
+  | { ok: false; error: string };
+
+// `confirm=false` returns the impact preview for the dialog (med names +
+// event counts). `confirm=true` deletes; FK cascade removes medication_events
+// rows. Two-step flow lives in one action so impact preview and the
+// destructive call share validation/auth/RLS resolution.
+export async function deleteMedications(input: {
+  ids: string[];
+  confirm: boolean;
+}): Promise<DeleteMedicationsResult> {
+  const parsed = IdsSchema.safeParse(input.ids);
+  if (!parsed.success) return { ok: false, error: 'Invalid medication ids' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  if (!input.confirm) {
+    // RLS filters to caregiver's own meds. Foreign ids silently disappear.
+    const [medsResult, eventsResult] = await Promise.all([
+      supabase.from('medications').select('id, drug_name').in('id', parsed.data),
+      supabase
+        .from('medication_events')
+        .select('medication_id')
+        .in('medication_id', parsed.data),
+    ]);
+    if (medsResult.error) return { ok: false, error: medsResult.error.message };
+    if (eventsResult.error) return { ok: false, error: eventsResult.error.message };
+
+    const counts = new Map<string, number>();
+    for (const e of eventsResult.data ?? []) {
+      counts.set(e.medication_id, (counts.get(e.medication_id) ?? 0) + 1);
+    }
+    const medications = (medsResult.data ?? []).map((m) => ({
+      id: m.id,
+      name: m.drug_name,
+      eventCount: counts.get(m.id) ?? 0,
+    }));
+    const totalEvents = medications.reduce((s, m) => s + m.eventCount, 0);
+    return { ok: true, performed: false, impact: { medications, totalEvents } };
+  }
+
+  // confirm=true: perform delete. Cascade FK on medication_events removes
+  // history (per schema in 20260428153829_initial_schema.sql).
+  const { data, error } = await supabase
+    .from('medications')
+    .delete()
+    .in('id', parsed.data)
+    .select('id');
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/me/medications');
+  revalidatePath('/dashboard');
+  return { ok: true, performed: true, deleted: (data ?? []).length };
 }
