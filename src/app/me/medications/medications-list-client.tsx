@@ -49,6 +49,8 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
 
   const hasMeds = active.length > 0 || stopped.length > 0;
   const selectedCount = selected.size;
+  const totalMeds = active.length + stopped.length;
+  const allSelected = totalMeds > 0 && selectedCount === totalMeds;
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -57,6 +59,14 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
       else next.add(id);
       return next;
     });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set([...active, ...stopped].map((m) => m.id)));
+    }
   }
 
   function exitEditMode() {
@@ -114,7 +124,18 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
   return (
     <>
       {hasMeds && (
-        <div className="mt-4 mx-4 flex justify-end">
+        <div className="mt-4 mx-4 flex items-center justify-between">
+          {editMode ? (
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="text-sm text-muted-foreground underline underline-offset-2"
+            >
+              {allSelected ? 'Deselect all' : 'Select all'}
+            </button>
+          ) : (
+            <span aria-hidden="true" />
+          )}
           <button
             type="button"
             onClick={() => (editMode ? exitEditMode() : setEditMode(true))}
@@ -338,10 +359,13 @@ function BulkActionBar({
 }) {
   const empty = selectedCount === 0;
   return (
+    // z-50 sits above BottomNav (z-40) so the toolbar is visible while in
+    // Edit Mode. Opaque card background + safe-area padding ensure the
+    // toolbar fully covers the nav area on iOS.
     <div
       role="toolbar"
       aria-label="Bulk medication actions"
-      className="fixed inset-x-0 bottom-0 z-40 bg-card border-t border-border px-4 py-3 flex items-center justify-between gap-3 shadow-card"
+      className="fixed inset-x-0 bottom-0 z-50 bg-card border-t border-border px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3 shadow-card"
     >
       <p className="text-sm text-muted-foreground">
         {empty ? 'Select medications' : `${selectedCount} selected`}

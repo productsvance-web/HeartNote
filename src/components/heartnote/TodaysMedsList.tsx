@@ -22,6 +22,7 @@ import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { confirmDose, deleteDoseEvent } from '@/app/dashboard/actions';
 import {
   SLOT_CONSUMER_STATUSES,
+  TAKEN_DOSE_STATUSES,
   type MedAdherenceEvent,
   type MedAdherenceRow,
   type MedEventStatus,
@@ -62,24 +63,30 @@ function applyOptimistic(
   return rows.map((r) => {
     if (r.medicationId !== action.medicationId) return r;
     if (action.type === 'add') {
-      const counts = SLOT_CONSUMER_STATUSES.has(action.event.status);
-      const next = counts ? r.slotsResolved + 1 : r.slotsResolved;
+      const fillsSlot = SLOT_CONSUMER_STATUSES.has(action.event.status);
+      const isDose = TAKEN_DOSE_STATUSES.has(action.event.status);
+      const slots = fillsSlot ? r.slotsResolved + 1 : r.slotsResolved;
+      const taken = isDose ? r.takenCount + 1 : r.takenCount;
       return {
         ...r,
         events: [action.event, ...r.events],
-        slotsResolved: next,
-        isComplete: r.dosesPerDay !== null && next >= r.dosesPerDay,
+        slotsResolved: slots,
+        takenCount: taken,
+        isComplete: r.dosesPerDay !== null && slots >= r.dosesPerDay,
       };
     }
     const ev = r.events.find((e) => e.id === action.eventId);
     if (!ev) return r;
-    const wasCounting = SLOT_CONSUMER_STATUSES.has(ev.status);
-    const next = wasCounting ? Math.max(0, r.slotsResolved - 1) : r.slotsResolved;
+    const wasFillingSlot = SLOT_CONSUMER_STATUSES.has(ev.status);
+    const wasDose = TAKEN_DOSE_STATUSES.has(ev.status);
+    const slots = wasFillingSlot ? Math.max(0, r.slotsResolved - 1) : r.slotsResolved;
+    const taken = wasDose ? Math.max(0, r.takenCount - 1) : r.takenCount;
     return {
       ...r,
       events: r.events.filter((e) => e.id !== action.eventId),
-      slotsResolved: next,
-      isComplete: r.dosesPerDay !== null && next >= r.dosesPerDay,
+      slotsResolved: slots,
+      takenCount: taken,
+      isComplete: r.dosesPerDay !== null && slots >= r.dosesPerDay,
     };
   });
 }
@@ -188,8 +195,15 @@ interface RowProps {
 function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   const [open, setOpen] = useState(false);
   const expected = row.dosesPerDay ?? 0;
-  const isOver = row.slotsResolved > expected;
+  // Numerator = doses actually administered (taken/early/late/double_dosed).
+  // `isOver` fires when the patient has been given more than the schedule.
+  const isOver = row.takenCount > expected;
+  // Slot mute uses `slotsResolved` so a Refused/Missed entry still completes
+  // the day's logging. Decoupled from the displayed numerator on purpose.
   const slotsFull = row.dosesPerDay !== null && row.slotsResolved >= row.dosesPerDay;
+  // Marker for "schedule logged but not all doses were taken" — at least one
+  // refused/missed today. The expansion lists the specific events.
+  const hasSkipped = row.slotsResolved > row.takenCount;
 
   return (
     <li className="border-b border-border last:border-0">
@@ -203,14 +217,21 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold tabular-nums text-foreground">
-            {row.slotsResolved}/{expected}
+            {row.takenCount}/{expected}
           </span>
+          {hasSkipped && (
+            <span
+              aria-label={`${row.slotsResolved - row.takenCount} not taken today`}
+              title={`${row.slotsResolved - row.takenCount} not taken today`}
+              className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
+            />
+          )}
           {isOver && (
             <span
               className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground"
-              title={`${row.slotsResolved} doses logged for a ${expected}-dose schedule`}
+              title={`${row.takenCount} doses given for a ${expected}-dose schedule`}
             >
-              {row.slotsResolved}×
+              {row.takenCount}×
             </span>
           )}
         </div>
@@ -243,7 +264,7 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {row.slotsResolved === 0 ? 'none today' : `${row.slotsResolved} today`}
+            {row.takenCount === 0 ? 'none today' : `${row.takenCount} today`}
           </p>
         </div>
         <Plus size={18} className="text-muted-foreground" />
