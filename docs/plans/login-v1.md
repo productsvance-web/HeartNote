@@ -225,7 +225,7 @@ Requires the preview URL added to Google Cloud Console redirect URIs in advance.
 
 - [ ] Supabase: Authentication → Providers → Google enabled with Client ID + Secret
 - [ ] Supabase: Authentication → Settings → "Confirm email" = ON
-- [ ] Supabase: Authentication → URL Configuration → Site URL set; redirect list includes `/auth/callback` and `/auth/confirm` for prod + localhost
+- [ ] Supabase: Authentication → URL Configuration → Site URL set; redirect list includes `/auth/callback` for prod (incl. Vercel preview wildcard) + localhost (Phase 3 OTP flow needs no `/auth/confirm` entries)
 - [ ] Supabase: Email templates updated with the drafts from this plan
 - [ ] Google Cloud Console: OAuth Client ID created, redirect URI = `https://<supabase>.supabase.co/auth/v1/callback`
 - [ ] Google Cloud Console: OAuth consent screen configured with `openid email profile` scopes
