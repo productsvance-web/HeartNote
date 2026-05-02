@@ -40,6 +40,29 @@ const ALL_UNITS = [
   'tbsp',
 ] as const;
 
+// Display labels: SI / medical abbreviations stay correctly cased (mg, mL, L,
+// tsp); English words get title case (Tablet, Units). Lookup is
+// case-insensitive so RxNorm-normalized lowercase values ('ml') still
+// display correctly ('mL').
+const UNIT_LABELS: Record<string, string> = {
+  mg: 'mg',
+  mcg: 'mcg',
+  g: 'g',
+  ml: 'mL',
+  l: 'L',
+  units: 'Units',
+  tablet: 'Tablet',
+  capsule: 'Capsule',
+  puff: 'Puff',
+  drop: 'Drop',
+  tsp: 'tsp',
+  tbsp: 'tbsp',
+};
+
+function unitLabel(u: string): string {
+  return UNIT_LABELS[u.toLowerCase()] ?? u;
+}
+
 const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/;
 
 function parseDose(dose: string | undefined): { value: string; unit: string } {
@@ -186,36 +209,36 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
 
       <div>
         <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        {/* Single pill: number input fills the left; unit chip flush-right,
-            full-height, white, square on the left (abuts input), rounded
-            on the right to match the container's pill shape. */}
-        <div className="flex items-stretch rounded-xl border border-border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring">
+        {/* Outer pill holds the number input. Inner white chip floats with
+            margin all around (doesn't touch container borders), full-height
+            of the inner space, bold typography, properly-cased unit label. */}
+        <div className="flex items-stretch rounded-xl border border-border bg-background p-1 focus-within:ring-2 focus-within:ring-ring">
           <input
             type="number"
             inputMode="decimal"
             step="any"
-            className="flex-1 min-w-0 bg-transparent border-0 px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
+            className="flex-1 min-w-0 bg-transparent border-0 px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
             value={doseValue}
             onChange={(e) => setDoseValue(e.target.value)}
             placeholder="40"
           />
           {unitLocked ? (
             <span
-              className="flex items-center justify-center px-5 bg-white border-l border-border text-base font-bold text-foreground min-w-[72px]"
-              aria-label={`Unit fixed to ${doseUnit}`}
+              className="ml-1 flex items-center justify-center px-4 rounded-lg bg-white border border-border text-base font-bold text-foreground min-w-[72px]"
+              aria-label={`Unit fixed to ${unitLabel(doseUnit)}`}
             >
-              {doseUnit}
+              {unitLabel(doseUnit)}
             </span>
           ) : (
             <select
-              className="px-5 bg-white border-l border-border text-base font-bold text-foreground cursor-pointer focus:outline-none min-w-[88px]"
+              className="ml-1 px-4 rounded-lg bg-white border border-border text-base font-bold text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring min-w-[88px]"
               value={doseUnit}
               onChange={(e) => setDoseUnit(e.target.value)}
               aria-label="Dose unit"
             >
               {ALL_UNITS.map((u) => (
                 <option key={u} value={u}>
-                  {u}
+                  {unitLabel(u)}
                 </option>
               ))}
             </select>
