@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Camera, ChevronRight, Pill, Plus } from 'lucide-react';
+import { Camera, ChevronRight, Pill, Plus, Upload } from 'lucide-react';
 import { MED_CLASS_LABEL } from '@/lib/medications/classes';
 import {
   deleteMedications,
@@ -246,16 +246,11 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
       </section>
 
       <section className="mx-4 mt-4 space-y-2">
-        {/* Scan is the primary affordance — fastest path for caregivers
-            holding a bottle. Filled treatment makes it the obvious
-            default; manual entry is the secondary, outlined fallback. */}
-        <Link
-          href="/me/medications/scan"
-          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold bg-foreground text-background"
-        >
-          <Camera size={18} />
-          Scan medication label
-        </Link>
+        {/* Scan is the primary affordance, split into two halves of one
+            pill: Scan (camera) and Upload (gallery). The shared center
+            seam reads as one control with two actions. Manual entry sits
+            below as the outlined secondary. */}
+        <ScanSplitButton />
         <Link
           href="/me/medications/new"
           className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium border border-border bg-card text-foreground"
@@ -483,6 +478,33 @@ function BulkActionBar({
           Delete
         </button>
       </div>
+    </div>
+  );
+}
+
+// One pill, two halves. The seam between them reads as a single control
+// with two actions. Each half links to /me/medications/scan with a
+// `source` param that auto-triggers the matching picker on mount.
+function ScanSplitButton() {
+  const halfClass =
+    'flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold bg-foreground text-background active:bg-foreground/90 transition';
+  return (
+    <div className="w-full flex rounded-full overflow-hidden">
+      <Link
+        href="/me/medications/scan?source=camera"
+        className={`${halfClass} rounded-l-full rounded-r-none`}
+      >
+        <Camera size={18} />
+        Scan
+      </Link>
+      <span aria-hidden="true" className="w-px bg-background/30" />
+      <Link
+        href="/me/medications/scan?source=photos"
+        className={`${halfClass} rounded-l-none rounded-r-full`}
+      >
+        <Upload size={18} />
+        Upload
+      </Link>
     </div>
   );
 }

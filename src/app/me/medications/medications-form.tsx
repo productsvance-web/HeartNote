@@ -216,10 +216,34 @@ export function MedicationForm({
 
       <div>
         <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        {/* Outer pill holds the number input. Inner white chip floats with
-            margin all around (doesn't touch container borders), full-height
-            of the inner space, bold typography, properly-cased unit label. */}
+        {/* Combined dose pill: count chip · × · number · unit chip.
+            Reads "2 × 500 mg" — two pills of five-hundred milligrams.
+            Both count and unit are white chips bookending the dark pill;
+            count uses rounded-l, unit uses rounded-r so the seam reads as
+            one unit. The count select stays unitless ("1, 2, 3 ...") so
+            the same control works for tablets, puffs, drops, sprays —
+            the dose unit on the right side carries the form factor. */}
         <div className="flex items-stretch rounded-xl border border-border bg-background p-1 focus-within:ring-2 focus-within:ring-ring">
+          <select
+            value={String(form.pillsPerDose)}
+            onChange={(e) =>
+              setForm({ ...form, pillsPerDose: Number(e.target.value) })
+            }
+            aria-label="Pills per dose"
+            className="w-[60px] rounded-r-none rounded-l-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring appearance-none [&::-ms-expand]:hidden"
+          >
+            {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span
+            aria-hidden="true"
+            className="flex items-center px-2 text-base font-medium text-muted-foreground"
+          >
+            ×
+          </span>
           <input
             type="number"
             inputMode="decimal"
@@ -251,31 +275,12 @@ export function MedicationForm({
             </select>
           )}
         </div>
-        {knownStrengths && (
-          <p className="text-xs text-muted-foreground mt-1.5">
-            Comes in {knownStrengths}
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground mt-1.5">
+          {knownStrengths
+            ? `Comes in ${knownStrengths}. e.g. 2 × 500 mg = two pills of 500 mg each.`
+            : 'e.g. 2 × 500 mg = two pills of 500 mg each.'}
+        </p>
       </div>
-
-      <Field
-        label="Pills per dose"
-        hint="How many pills are taken at one time. Leave at 1 for liquids, drops, or single-pill doses."
-      >
-        <select
-          className={inputClass}
-          value={String(form.pillsPerDose)}
-          onChange={(e) =>
-            setForm({ ...form, pillsPerDose: Number(e.target.value) })
-          }
-        >
-          {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
-            <option key={n} value={n}>
-              {n} {n === 1 ? 'pill' : 'pills'} per dose
-            </option>
-          ))}
-        </select>
-      </Field>
 
       <Field label="Doses per day">
         <select

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Camera as CameraIcon, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import type { ExtractedMed } from '@/lib/medications/scan/schema';
@@ -49,6 +50,25 @@ export function ScanClient() {
   const [state, setState] = useState<State>({ kind: 'capture' });
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [addAllPending, setAddAllPending] = useState(false);
+  const searchParams = useSearchParams();
+  const autoTriggeredRef = useRef(false);
+
+  // Auto-trigger the picker once on mount when entered with ?source=camera
+  // or ?source=photos — caregiver tapped Scan or Upload from the previous
+  // page. The ref guard prevents re-firing on subsequent re-renders or
+  // when the picker state changes the URL.
+  useEffect(() => {
+    if (autoTriggeredRef.current) return;
+    const source = searchParams.get('source');
+    if (source === 'camera') {
+      autoTriggeredRef.current = true;
+      void pickImage(CameraSource.Camera);
+    } else if (source === 'photos') {
+      autoTriggeredRef.current = true;
+      void pickImage(CameraSource.Photos);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function pickImage(source: CameraSource) {
     try {
