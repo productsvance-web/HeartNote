@@ -42,6 +42,23 @@ export class ExtractionError extends Error {
   }
 }
 
+export class RateLimitError extends Error {
+  constructor() {
+    super('Vertex AI rate limit');
+    this.name = 'RateLimitError';
+  }
+}
+
+function isRateLimit(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: number | string; status?: number; message?: string };
+  if (e.code === 429 || e.code === '429' || e.status === 429) return true;
+  if (typeof e.message === 'string' && /\b429\b|rate ?limit|quota|resource ?exhausted/i.test(e.message)) {
+    return true;
+  }
+  return false;
+}
+
 let cachedClient: VertexAI | null = null;
 function getVertexClient(): VertexAI {
   if (cachedClient) return cachedClient;
@@ -72,7 +89,7 @@ function getVertexClient(): VertexAI {
 export async function extractMedicationsFromImage(
   bytes: Uint8Array,
   mimeType: 'image/jpeg' | 'image/png'
-): Promise<{ medications: ExtractedMed[] }> {
+): Promise<{ medications: ExtractedMed[]; truncated: boolean }> {
   const model = getVertexClient().getGenerativeModel({
     model: MODEL,
     systemInstruction: {
@@ -106,8 +123,12 @@ export async function extractMedicationsFromImage(
   try {
     result = await Promise.race([generatePromise, timeoutPromise]);
   } catch (err) {
+    if (isRateLimit(err)) {
+      console.warn('[extractMedicationsFromImage] rate-limit');
+      throw new RateLimitError();
+    }
     console.warn(
-      `[extractMedicationsFromImage] ${err instanceof Error ? err.message : 'unknown'}`
+      `[extractMedicationsFromImage] ${err instanceof Error ? err.name : 'unknown'}`
     );
     throw err;
   } finally {
@@ -154,5 +175,7 @@ export async function extractMedicationsFromImage(
     throw new ExtractionError('schema-fail');
   }
 
-  return { medications: validation.data.medications.slice(0, MAX_MEDS) };
+  const all = validation.data.medications;
+  const truncated = all.length > MAX_MEDS;
+  return { medications: all.slice(0, MAX_MEDS), truncated };
 }

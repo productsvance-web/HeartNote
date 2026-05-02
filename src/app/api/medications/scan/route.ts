@@ -5,6 +5,7 @@ import {
   extractMedicationsFromImage,
   SafetyFilterError,
   ExtractionError,
+  RateLimitError,
 } from '@/lib/medications/scan/extract';
 
 // Photo extraction endpoint. Accepts a base64 data URL, runs it through
@@ -82,6 +83,12 @@ export async function POST(request: NextRequest) {
     const result = await extractMedicationsFromImage(decoded.bytes, decoded.mimeType);
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: 'Try again in a moment.' },
+        { status: 429 }
+      );
+    }
     if (err instanceof SafetyFilterError) {
       return NextResponse.json(
         { error: "We couldn't process this image. Try another." },
@@ -94,8 +101,12 @@ export async function POST(request: NextRequest) {
         { status: 504 }
       );
     }
-    // Env-missing or other unexpected — log and surface a generic 500.
-    console.error('[POST /api/medications/scan]', err);
+    // Env-missing or other unexpected — log message + name only. The raw
+    // error object can contain the request payload (image bytes are PHI),
+    // so never pass `err` itself to console.error.
+    const name = err instanceof Error ? err.name : 'unknown';
+    const message = err instanceof Error ? err.message : 'unknown';
+    console.error(`[POST /api/medications/scan] ${name}: ${message}`);
     return NextResponse.json({ error: 'Server misconfigured.' }, { status: 500 });
   }
 }

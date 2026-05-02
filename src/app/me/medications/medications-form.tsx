@@ -10,6 +10,7 @@ import {
 } from './actions';
 import type { MedicationPayload } from './actions';
 import type { AllowedStrengths } from '@/lib/medications/classify';
+import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
 
 type Mode = 'new' | 'edit';
 
@@ -20,46 +21,13 @@ interface Props {
     isStopped?: boolean;
     allowedStrengths?: AllowedStrengths | null;
   };
-}
-
-// Default unit list shown when RxNorm hasn't classified the drug. Matches
-// the regex in actions.ts; keep in sync if either changes.
-const ALL_UNITS = [
-  'mg',
-  'mcg',
-  'g',
-  'mL',
-  'L',
-  'units',
-  'tablet',
-  'capsule',
-  'puff',
-  'drop',
-  'tsp',
-  'tbsp',
-] as const;
-
-// Display labels: SI / medical abbreviations stay correctly cased (mg, mL, L,
-// tsp); English words get title case (Tablet, Units). Lookup is
-// case-insensitive so RxNorm-normalized lowercase values ('ml') still
-// display correctly ('mL').
-const UNIT_LABELS: Record<string, string> = {
-  mg: 'mg',
-  mcg: 'mcg',
-  g: 'g',
-  ml: 'mL',
-  l: 'L',
-  units: 'Units',
-  tablet: 'Tablet',
-  capsule: 'Capsule',
-  puff: 'Puff',
-  drop: 'Drop',
-  tsp: 'tsp',
-  tbsp: 'tbsp',
-};
-
-function unitLabel(u: string): string {
-  return UNIT_LABELS[u.toLowerCase()] ?? u;
+  // When provided, the form calls submitAction INSTEAD of addMedication /
+  // updateMedication, and onSaved fires on success. Used by the scan flow
+  // so saving stays within /me/medications/scan instead of redirecting.
+  submitAction?: (payload: MedicationPayload) => Promise<{ ok: boolean; error?: string }>;
+  onSaved?: () => void;
+  // Optional submit-button label override (e.g., "Add to my list" in scan).
+  submitLabel?: string;
 }
 
 const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/;
@@ -80,7 +48,14 @@ const blank: MedicationPayload = {
   notes: '',
 };
 
-export function MedicationForm({ mode, medicationId, initial }: Props) {
+export function MedicationForm({
+  mode,
+  medicationId,
+  initial,
+  submitAction,
+  onSaved,
+  submitLabel,
+}: Props) {
   const initialDoses = initial?.dosesPerDay ?? blank.dosesPerDay;
   const initialDose = parseDose(initial?.dose);
   const [form, setForm] = useState<MedicationPayload>({ ...blank, ...initial });
@@ -170,6 +145,15 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     const payload: MedicationPayload = { ...form, dose, scheduleTimes: cleanedTimes };
 
     startTransition(async () => {
+      if (submitAction) {
+        const result = await submitAction(payload);
+        if (!result.ok) {
+          setError(result.error ?? 'Save failed');
+        } else {
+          onSaved?.();
+        }
+        return;
+      }
       const result =
         mode === 'new'
           ? await addMedication(payload)
@@ -358,7 +342,9 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           disabled={isPending || !form.drugName.trim()}
           className="flex-1 rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold disabled:opacity-50"
         >
-          {isPending ? 'Saving…' : mode === 'new' ? 'Add medication' : 'Save changes'}
+          {isPending
+            ? 'Saving…'
+            : (submitLabel ?? (mode === 'new' ? 'Add medication' : 'Save changes'))}
         </button>
       </div>
 

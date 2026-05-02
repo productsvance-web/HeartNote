@@ -35,7 +35,12 @@ type State =
   | { kind: 'capture' }
   | { kind: 'preview'; dataUrl: string }
   | { kind: 'processing' }
-  | { kind: 'review'; medications: ExtractedMed[]; addAllSummary: string | null }
+  | {
+      kind: 'review';
+      medications: ExtractedMed[];
+      addAllSummary: string | null;
+      truncated: boolean;
+    }
   | { kind: 'empty' }
   | { kind: 'safety' }
   | { kind: 'error'; message: string };
@@ -43,6 +48,7 @@ type State =
 export function ScanClient() {
   const [state, setState] = useState<State>({ kind: 'capture' });
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [addAllPending, setAddAllPending] = useState(false);
 
   async function pickImage(source: CameraSource) {
     try {
@@ -57,8 +63,14 @@ export function ScanClient() {
       }
       setState({ kind: 'preview', dataUrl: photo.dataUrl });
     } catch (err) {
+      const errName = err instanceof Error ? err.name : '';
       const message = err instanceof Error ? err.message.toLowerCase() : '';
-      if (message.includes('permission') || message.includes('denied')) {
+      if (
+        errName === 'NotAllowedError' ||
+        errName === 'PermissionDeniedError' ||
+        message.includes('permission') ||
+        message.includes('denied')
+      ) {
         setPermissionDenied(true);
       } else if (!message.includes('cancel')) {
         // Genuine error (not a user-cancel). Don't toast on cancel.
@@ -88,12 +100,20 @@ export function ScanClient() {
         });
         return;
       }
-      const data = (await resp.json()) as { medications: ExtractedMed[] };
+      const data = (await resp.json()) as {
+        medications: ExtractedMed[];
+        truncated?: boolean;
+      };
       if (data.medications.length === 0) {
         setState({ kind: 'empty' });
         return;
       }
-      setState({ kind: 'review', medications: data.medications, addAllSummary: null });
+      setState({
+        kind: 'review',
+        medications: data.medications,
+        addAllSummary: null,
+        truncated: !!data.truncated,
+      });
     } catch {
       setState({
         kind: 'error',
@@ -116,8 +136,9 @@ export function ScanClient() {
     });
   }
 
+
   async function addAll() {
-    if (state.kind !== 'review') return;
+    if (state.kind !== 'review' || addAllPending) return;
     // Dose-change cards never participate in Add all; they require
     // prescriber confirmation per build conv #6.
     const candidatePayloads: MedicationPayload[] = [];
@@ -128,21 +149,34 @@ export function ScanClient() {
       candidateOrigIndexes.push(i);
     });
     if (candidatePayloads.length === 0) return;
-    const result = await addExtractedMedications(candidatePayloads);
-    setState((s) => {
-      if (s.kind !== 'review') return s;
-      const failedOrigIndexes = new Set(
-        result.failedIndexes.map((i) => candidateOrigIndexes[i])
-      );
-      const next = s.medications.filter(
-        (med, i) => med.is_dose_change || failedOrigIndexes.has(i)
-      );
-      const summary =
-        result.failedIndexes.length === 0
-          ? `${result.added} added`
-          : `${result.added} added, ${result.failedIndexes.length} need a fix`;
-      return { kind: 'review', medications: next, addAllSummary: summary };
-    });
+    setAddAllPending(true);
+    try {
+      const result = await addExtractedMedications(candidatePayloads);
+      setState((s) => {
+        if (s.kind !== 'review') return s;
+        const failedOrigIndexes = new Set(
+          result.failedIndexes.map((i) => candidateOrigIndexes[i])
+        );
+        const next = s.medications.filter(
+          (med, i) => med.is_dose_change || failedOrigIndexes.has(i)
+        );
+        const summary =
+          result.failedIndexes.length === 0
+            ? `${result.added} added`
+            : `${result.added} added, ${result.failedIndexes.length} need a fix`;
+        if (next.length === 0) {
+          return { kind: 'capture' };
+        }
+        return {
+          kind: 'review',
+          medications: next,
+          addAllSummary: summary,
+          truncated: s.truncated,
+        };
+      });
+    } finally {
+      setAddAllPending(false);
+    }
   }
 
   // Capture state
@@ -284,19 +318,29 @@ export function ScanClient() {
         )}
       </div>
 
+      {state.truncated && (
+        <p className="text-xs text-muted-foreground bg-muted/60 rounded-lg px-3 py-2">
+          Showing the first 30 medications. Re-scan with a tighter crop if needed.
+        </p>
+      )}
+
       <div className="flex gap-2">
         <button
           type="button"
           onClick={addAll}
-          disabled={state.medications.every((m) => m.is_dose_change)}
+          disabled={
+            addAllPending ||
+            state.medications.every((m) => m.is_dose_change)
+          }
           className="flex-1 rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
         >
-          Add all
+          {addAllPending ? 'Adding…' : 'Add all'}
         </button>
         <button
           type="button"
           onClick={reset}
-          className="flex-1 rounded-full border border-border bg-card px-4 py-3 text-sm font-medium"
+          disabled={addAllPending}
+          className="flex-1 rounded-full border border-border bg-card px-4 py-3 text-sm font-medium disabled:opacity-50"
         >
           Take another
         </button>
@@ -309,6 +353,7 @@ export function ScanClient() {
               med={med}
               onSkip={() => removeMed(i)}
               onAdded={() => removeMed(i)}
+              disabled={addAllPending}
             />
           </li>
         ))}

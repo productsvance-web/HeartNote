@@ -1,43 +1,42 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState } from 'react';
 import { Check, AlertTriangle } from 'lucide-react';
 import type { ExtractedMed } from '@/lib/medications/scan/schema';
 import { addExtractedMedications, type MedicationPayload } from '../actions';
+import { MedicationForm } from '../medications-form';
 import { extractedMedToPayload } from './extracted-to-payload';
+import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
 
-// Per-card UX:
-//   - Three field cells (drug name, dose, doses-per-day). Each cell shows
-//     its extracted value editable inline, plus a Confirm checkbox.
-//   - Once all three cells are confirmed AND non-empty, the card's
-//     "Add to my list" button enables.
-//   - Saves via addExtractedMedications([payload]) — non-redirecting so
-//     the parent ScanClient can keep working through other cards.
-//   - Dose-change-flagged meds skip the cell UX entirely and render a
-//     non-interactive notice (build convention #6).
+// Per-card UX (matches plan §Surfaces / scan-review-card):
+//   1. Three confirm cells (drug name, dose, doses-per-day) with the
+//      extracted values editable inline.
+//   2. Once all three cells are confirmed AND non-empty, the card's
+//      "Add to my list" button enables.
+//   3. Tapping it expands the existing MedicationForm inline, pre-filled
+//      with the confirmed cell values. Caregiver can edit additional
+//      fields (schedule_times, started_at, notes) before final save.
+//   4. Form save calls addExtractedMedications via submitAction so the
+//      caregiver stays on /me/medications/scan; onSaved removes the card.
+//
+// Dose-change-flagged meds skip the cell UX entirely and render a
+// non-interactive notice (build convention #6 — never auto-ingest a
+// dose change as if it were a stable prescription).
 
 interface Props {
   med: ExtractedMed;
   onSkip: () => void;
   onAdded: () => void;
+  // Set when an "Add all" pass is in flight; per-card buttons disable
+  // to prevent races with the batch insert.
+  disabled?: boolean;
 }
 
-const ALL_UNITS = [
-  'mg', 'mcg', 'g', 'mL', 'L', 'units',
-  'tablet', 'capsule', 'puff', 'drop', 'tsp', 'tbsp',
-] as const;
-
-const UNIT_LABELS: Record<string, string> = {
-  mg: 'mg', mcg: 'mcg', g: 'g', ml: 'mL', l: 'L',
-  units: 'Units', tablet: 'Tablet', capsule: 'Capsule',
-  puff: 'Puff', drop: 'Drop', tsp: 'tsp', tbsp: 'tbsp',
-};
-
-export function ScanReviewCard({ med, onSkip, onAdded }: Props) {
+export function ScanReviewCard({ med, onSkip, onAdded, disabled }: Props) {
   if (med.is_dose_change) {
     return <DoseChangeNotice drugName={med.drug_name} onSkip={onSkip} />;
   }
-  return <EditableCard med={med} onSkip={onSkip} onAdded={onAdded} />;
+  return <EditableCard med={med} onSkip={onSkip} onAdded={onAdded} disabled={disabled} />;
 }
 
 function DoseChangeNotice({
@@ -71,7 +70,7 @@ function DoseChangeNotice({
   );
 }
 
-function EditableCard({ med, onSkip, onAdded }: Props) {
+function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
   const initialDoseValue =
     med.dose_value !== null ? String(med.dose_value) : '';
   const initialDoseUnit =
@@ -88,8 +87,8 @@ function EditableCard({ med, onSkip, onAdded }: Props) {
   const [doseOK, setDoseOK] = useState(false);
   const [dosesOK, setDosesOK] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [expanded, setExpanded] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const allConfirmed =
     drugNameOK &&
@@ -97,23 +96,55 @@ function EditableCard({ med, onSkip, onAdded }: Props) {
     dosesOK &&
     drugName.trim().length > 0;
 
-  function save() {
-    setError(null);
-    const payload: MedicationPayload = extractedMedToPayload({
+  // The form's submitAction; resolves the inserted med via the
+  // non-redirecting addExtractedMedications batch action so the
+  // caregiver stays on /me/medications/scan.
+  async function submitFromForm(payload: MedicationPayload) {
+    const result = await addExtractedMedications([payload]);
+    if (result.failedIndexes.length === 0) {
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: result.errors[0] ?? 'Could not save.' };
+  }
+
+  if (expanded) {
+    const initialPayload = extractedMedToPayload({
       drug_name: drugName,
       dose_value: doseValue.trim() ? Number(doseValue) : null,
       dose_unit: doseValue.trim() ? doseUnit : null,
       doses_per_day: dosesPerDay,
       is_dose_change: false,
     });
-    startTransition(async () => {
-      const result = await addExtractedMedications([payload]);
-      if (result.failedIndexes.length === 0) {
-        onAdded();
-      } else {
-        setError(result.errors[0] ?? 'Could not save.');
-      }
-    });
+    return (
+      <div className="rounded-2xl bg-card shadow-card p-4">
+        {formError && (
+          <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 mb-3">
+            {formError}
+          </p>
+        )}
+        <MedicationForm
+          mode="new"
+          initial={initialPayload}
+          submitAction={async (payload) => {
+            setFormError(null);
+            const result = await submitFromForm(payload);
+            if (!result.ok) setFormError(result.error ?? 'Save failed');
+            return result;
+          }}
+          onSaved={onAdded}
+          submitLabel="Add to my list"
+        />
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="text-xs text-muted-foreground underline"
+          >
+            Back to confirm step
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -162,7 +193,7 @@ function EditableCard({ med, onSkip, onAdded }: Props) {
           >
             {ALL_UNITS.map((u) => (
               <option key={u} value={u.toLowerCase()}>
-                {UNIT_LABELS[u.toLowerCase()] ?? u}
+                {unitLabel(u)}
               </option>
             ))}
           </select>
@@ -191,26 +222,20 @@ function EditableCard({ med, onSkip, onAdded }: Props) {
         </select>
       </Cell>
 
-      {error && (
-        <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
-          {error}
-        </p>
-      )}
-
       <div className="flex gap-2 pt-1">
         <button
           type="button"
-          onClick={save}
-          disabled={!allConfirmed || isPending}
+          onClick={() => setExpanded(true)}
+          disabled={!allConfirmed || disabled}
           className="flex-1 rounded-full bg-foreground text-background px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
         >
-          {isPending ? 'Adding…' : 'Add to my list'}
+          Add to my list
         </button>
         <button
           type="button"
           onClick={onSkip}
-          disabled={isPending}
-          className="rounded-full border border-border bg-card px-4 py-2.5 text-sm font-medium"
+          disabled={disabled}
+          className="rounded-full border border-border bg-card px-4 py-2.5 text-sm font-medium disabled:opacity-50"
         >
           Skip
         </button>

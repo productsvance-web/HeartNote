@@ -29,8 +29,11 @@ export const ExtractedMedSchema = z.object({
 });
 export type ExtractedMed = z.infer<typeof ExtractedMedSchema>;
 
+// Schema allows headroom over the displayed cap so we can truncate-and-
+// flag gracefully if the model returns more than 30 (e.g., on a portal
+// screenshot of high-polypharmacy patients). The prompt asks for ≤30.
 export const ExtractionResponseSchema = z.object({
-  medications: z.array(ExtractedMedSchema).max(30),
+  medications: z.array(ExtractedMedSchema).max(60),
 });
 export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>;
 
