@@ -59,6 +59,21 @@ export default async function LoginPage({
             </div>
           )}
 
+          {notice === 'account_deleted' && (
+            <div
+              className="rounded-2xl p-4 flex gap-3 items-start"
+              style={{
+                background: 'var(--status-good-soft)',
+                color: 'var(--status-good-foreground)',
+              }}
+            >
+              <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" />
+              <p className="text-sm leading-relaxed">
+                Account deleted. Your data is gone.
+              </p>
+            </div>
+          )}
+
           {error && (
             <div
               className="rounded-2xl p-4 flex gap-3 items-start"
