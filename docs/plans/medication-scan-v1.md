@@ -1,13 +1,13 @@
 # Medication scan v1 — photo extraction + spell-correction chip
 
-**Status:** PROPOSED. Pre-review. Plan-review subagent to run before any code is written.
+**Status:** REVISED. Plan-review subagent ran; this revision incorporates all 3 blockers + 10 should-fix + 5 nits, with caregiver decisions on dual-mode UX and "Add all" shortcut.
 
 ## Goal
 
 Caregivers can add medications two new ways without typing the drug name from scratch:
 
 1. **Spell-correction chip** — when typing a drug name into the manual-add form, if RxNorm's approximate match returns a corrected name (e.g., typed "Furosemde" → RxNorm returns "Furosemide"), surface a one-tap chip *"Did you mean Furosemide?"* under the drug-name field.
-2. **Photo extraction** — open `/me/medications/scan`, capture or upload an image of a pill bottle, prescription label, or screenshot of a med list, and have a vision model extract `{drug_name, dose, doses_per_day}` per detected medication. Caregiver reviews each extracted med, optionally edits, and confirms — each confirmed med routes through the existing `addMedication` insert path (which already auto-classifies via RxNorm and validates dose units).
+2. **Photo extraction** — open `/me/medications/scan`, capture or upload an image of a pill bottle, prescription label, or screenshot of a med list, and have a vision model extract `{drug_name, dose, doses_per_day}` per detected medication. Caregiver reviews each extracted med (per-field confirmation by default; *Add all* shortcut available when the list looks correct at a glance) and saves — confirmed meds route through the existing `addMedication` insert path (which already auto-classifies via RxNorm and validates dose units).
 
 Both surfaces feed the same downstream pipeline: extracted/typed name → `classifyDrugByName` → drug_class + allowed_strengths → standard `medications` row insert. No new clinical inference. No alert-engine integration.
 
@@ -15,31 +15,36 @@ Both surfaces feed the same downstream pipeline: extracted/typed name → `class
 
 - **No `schedule_times` extraction from photos.** Pill bottles do not reliably state clock times; "twice daily" sig phrases parse to `doses_per_day=2`, not 8am/8pm. Caregiver fills schedule_times manually after import.
 - **No notes/allergy/Rx-number extraction.** Only the four fields above. Pharmacy-issued labels carry far more data; we ignore everything except drug name, dose, doses-per-day.
-- **No persistent image storage.** Bytes pass through the API route once, go to Gemini, and are dropped. No Supabase Storage bucket. No debug retention. No signed URLs. (Caregiver's question on this was decided in conversation: simplest path.)
+- **No persistent image storage.** Bytes pass through the API route once, go to Gemini, and are dropped. No Supabase Storage bucket. No debug retention. No signed URLs.
 - **No multi-image batch upload.** One image per scan in v1. Caregiver re-runs the flow for additional photos.
 - **No editing of an existing medication via photo.** Scan only creates new med rows.
-- **No on-device OCR.** The hybrid Apple-Vision-on-device + cloud-cleanup pipeline researched as the v2 wildcard is deferred. Reason: requires Capacitor Vision-framework plugin work that doesn't exist; v1 is a single cloud round-trip.
+- **No on-device OCR.** The hybrid Apple-Vision-on-device + cloud-cleanup pipeline researched as the v2 wildcard is deferred. v1 is a single cloud round-trip.
 - **No spell-correction chip in voice-log med-mention chips.** The voice path's strict-match design at `src/app/api/voice-log/[id]/process/route.ts` is intentional. Out of scope.
-- **No user-visible confidence scores.** The model returns `confidence` per field; we use it internally as a "needs verification" flag (rendering the row in tap-each-field-to-confirm mode below threshold) but never display the number.
-- **No course-tracking ("2× for 7 days" antibiotic flow).** Already deferred from medication-flow-v1; not introduced here.
+- **No model-confidence-based UX gating.** The model's confidence score is *not* requested in the structured output and is not used anywhere — we always render extracted values for caregiver confirmation.
+- **No dose-change extraction.** If a label contains taper/future-dose language ("increase to 80 mg starting Monday," "taper to 20 mg over 2 weeks"), the medication is *not* extracted — instead a flag fires that the UI surfaces as *"This label has dose-change instructions — confirm with the prescriber and add manually."* Build convention #6.
+- **No course-tracking** ("2× for 7 days" antibiotic flow). Already deferred from medication-flow-v1; not introduced here.
 - **No multi-vendor abstraction.** Direct Vertex AI client, no provider-swap layer.
 
 ## Architectural decisions (locked)
 
-1. **Vision model: Gemini 2.5 Flash via Vertex AI** (not consumer Gemini API). Chosen over Claude Sonnet 4.6 vision based on the research recommendation: best real-world OCR on curved/glare pill-bottle photos per OmniAI + Reducto benchmarks, ~10× cheaper at our scale ($0.0013/image vs $0.012/image), native structured-output with `responseSchema`. Vertex AI is the BAA-eligible / no-train-on-input tier.
-2. **Camera plugin: `@capacitor/camera`.** Capacitor core (8.3.1) is already in `package.json`. Add `@capacitor/camera` dep. Its web fallback uses the browser file picker automatically when running outside a Capacitor WebView, so this works in dev/Vercel preview today and switches to native camera once the iOS/Android projects are generated. One code path.
-3. **Image compression: client-side Canvas API.** Resize to max 1280px on the long edge, encode as JPEG at quality 0.8, target ≤800KB. No external service. Falls within Gemini's per-image token sweet spot.
+1. **Vision model: Gemini 2.5 Flash via Vertex AI** (not consumer Gemini API). Chosen over Claude Sonnet 4.6 vision based on the research recommendation: best real-world OCR on curved/glare pill-bottle photos per OmniAI + Reducto benchmarks, ~10× cheaper at our scale, native structured-output with `responseSchema`. Vertex AI is the BAA-eligible / no-train-on-input tier.
+2. **Camera plugin: `@capacitor/camera` + `@ionic/pwa-elements`.** Capacitor core (8.3.1) is already in `package.json`. Add `@capacitor/camera` and `@ionic/pwa-elements` deps. PWA Elements is registered once via `defineCustomElements(window)` in a small client-boundary module included by `src/app/layout.tsx`. Without PWA Elements, the plugin's web shim ignores `CameraSource.Camera` — its inclusion is mandatory, not optional. Once iOS/Android Capacitor projects are generated, the same code path uses native camera.
+3. **Image compression: client-side Canvas API.** Resize to max 1280px on the long edge, encode as JPEG at quality 0.8, target ≤800KB. No external service. Compression-then-OCR-quality tradeoff at this target is unverified; AC adds an empirical step before merge (read ≥10 representative pill-bottle photos at this setting and confirm extraction quality).
 4. **No image storage.** Image bytes flow request body → API route → Gemini → discarded. Not written to disk, Supabase Storage, or DB. PHI minimization (pill bottles often show patient name).
-5. **No prefill drafts table.** The entire scan→review→confirm flow lives in client state on a single client component. No DB intermediate. No URL params with encoded JSON. State drops on navigation away — expected and acceptable.
-6. **Confidence threshold: 0.7.** Below threshold, the review row renders in "tap each field to confirm" mode (drug name, dose, doses_per_day each get an explicit confirm tap before the row is eligible for save). Above threshold, single "Add to my list" CTA. Threshold value lives in `src/lib/medications/scan/extract.ts` as `CONFIDENCE_FLOOR`.
-7. **Multi-med ceiling: 20.** If Gemini returns >20 extracted meds, we truncate to the first 20 and show "Showing the first 20 medications. Re-scan with a tighter crop if needed." Prevents pathological screenshots from blowing up the UI.
-8. **Single-med vs multi-med UX is one component.** The review screen is a list-of-cards. With one extracted med it shows one card; with five it shows five. No conditional routing. Each card supports inline edit-then-save via the existing `MedicationForm` component (passed `prefill` props).
-9. **Re-classification through existing `classifyDrugByName`.** Extracted drug names go through the same RxNorm pipeline as manual entry. Same `drug_class` taxonomy. Same `allowed_strengths`. Same dose-unit validation. If the extracted dose conflicts with RxNorm-known strengths (e.g., model misreads "10 mL Jardiance"), the existing server-side validation in `addMedication` rejects it and the caregiver edits inline before resubmit.
-10. **Outbound payload to Gemini is image bytes + system prompt + JSON schema only.** No `patient_id`, no `caregiver_id`, no Supabase user JWT. PHI risk surface is the bottle itself (label data) — that's intentional input; we add no additional identifier.
-11. **Env vars fail closed.** Missing `GOOGLE_VERTEX_AI_PROJECT_ID`, `GOOGLE_VERTEX_AI_LOCATION`, or `GOOGLE_VERTEX_AI_CREDENTIALS_JSON` → `/api/medications/scan` route throws on first call. No fallback to consumer Gemini API. (Build convention #11.)
-12. **Spell-correction is a UI surface for existing data.** `classifyDrugByName` already returns `suggestedName` (`src/lib/medications/classify.ts:93-95`). The existing 500ms-debounced `lookupDrugStrengths` action throws this away (`src/app/me/medications/actions.ts:14-21`). We thread it through, no new RxNorm call.
-13. **Spell-correction never auto-corrects.** Chip is one-tap-to-accept. If caregiver dismisses or ignores, their literal text submits and `classifyDrugByName` server-side still computes `drug_class` correctly (RxNorm uses the corrected RxCUI internally even when the user keeps the typo).
-14. **Cache_control on the extraction system prompt.** The Gemini system instruction + JSON schema are set up as the cacheable portion of the request. Vertex AI's caching is request-scoped; we structure the request to maximize cache reuse across consecutive scans within the same caregiver session.
+5. **No prefill drafts table.** The entire scan→review→confirm flow lives in client state on a single client component. No DB intermediate. State drops on navigation away — caregiver re-runs scan if they navigate back too soon (UX copy acknowledges this empathetically).
+6. **No confidence-based UX gating, no confidence in the schema.** The model is not asked to produce a confidence field. Every extracted med renders the same way: tap-each-field-to-confirm. There is no "confident mode" / "needs-verification mode" split. Removing the dual-mode UX removes the unbenchmarked 0.7 threshold and the structural ambiguity it created.
+7. **Per-card confirmation by default; *Add all* as a power-user shortcut.** The default save flow on every card requires the caregiver to tap-confirm `drug_name`, `dose`, and `doses_per_day` (each tap either confirms the extracted value or opens an inline edit) before that card's *"Add to my list"* button enables. A top-of-list *"Add all"* button is always available and bypasses per-field confirmation — saves all currently displayed cards as-extracted. Caregiver takes responsibility for the visual review when they choose this path.
+8. **Multi-med ceiling: 30.** If Gemini returns >30 extracted meds, we truncate to the first 30 and show *"Showing the first 30 medications. Re-scan with a tighter crop if needed."* Generous enough for portal screenshots of high-polypharmacy patients.
+9. **Single-med vs multi-med UX is one component.** The review screen is a list-of-cards. With one extracted med it shows one card; with five it shows five. No conditional routing. Each card supports inline edit-then-save via the existing `MedicationForm` component (passed as initial values).
+10. **Re-classification through existing `classifyDrugByName`.** Extracted drug names go through the same RxNorm pipeline as manual entry. Same `drug_class` taxonomy. Same `allowed_strengths`. Same dose-unit validation. If the extracted dose conflicts with RxNorm-known strengths (e.g., model misreads "10 mL Jardiance"), the existing server-side validation in `addMedication` rejects it and the caregiver edits inline before resubmit.
+11. **Vertex caching is *not* enabled in v1.** Build convention #3 ("prompt caching enabled from day 1") is Anthropic-specific. Vertex AI's `createCachedContent` is a separate provisioned-resource model (not request-scoped) with cache lifecycle, naming, and TTL overhead that isn't justified at our scale: the system prompt is ~400 tokens and a caregiver scans a few times per day at most. Documented here so a future reviewer doesn't read silence as oversight.
+12. **Outbound payload to Gemini is image bytes + system prompt + JSON schema only.** No `patient_id`, no `caregiver_id`, no Supabase user JWT. PHI risk surface is the bottle itself (label data) — that's intentional input; we add no additional identifier.
+13. **Auth: long-lived service-account JSON for v1.** `GOOGLE_VERTEX_AI_CREDENTIALS_JSON` (base64-encoded SA JSON) for the Vertex client. Pre-launch / zero-customers — the rotation cost is acceptable. Post-launch migration to OIDC + Workload Identity Federation is recorded in `docs/status.md` as a follow-up. Pick one, document the deferral; don't leave both as open questions.
+14. **Env vars fail closed.** Missing `GOOGLE_VERTEX_AI_PROJECT_ID`, `GOOGLE_VERTEX_AI_LOCATION`, or `GOOGLE_VERTEX_AI_CREDENTIALS_JSON` → `/api/medications/scan` route throws on first call. No fallback to consumer Gemini API. (Build convention #11.)
+15. **Spell-correction is a UI surface for existing data.** `classifyDrugByName` already returns `suggestedName` (`src/lib/medications/classify.ts:93-95`). The existing 500ms-debounced `lookupDrugStrengths` action throws this away (`src/app/me/medications/actions.ts:14-21`). We thread it through, no new RxNorm call.
+16. **Spell-correction never auto-corrects.** Chip is one-tap-to-accept. If caregiver dismisses or ignores, their literal text submits and `classifyDrugByName` server-side still computes `drug_class` correctly (RxNorm uses the corrected RxCUI internally even when the user keeps the typo).
+17. **API output schema vs form payload schema — divergence by design.** `ExtractedMedSchema` (returned by `/api/medications/scan`) carries the *model's* shape: `dose_value: number`, `dose_unit: string` as separate fields, because that's what Gemini's structured output produces cleanly. `MedicationPayloadSchema` (consumed by `addMedication`) carries the *form's* shape: `dose: string` matching `DOSE_FORMAT` (e.g., `"40 mg"`). The boundary between them is the `<ScanReviewCard />` adapter: when the caregiver taps *"Add to my list"*, the card combines `${dose_value} ${dose_unit}` into the payload string and submits. Documented to prevent a future reader from "unifying" the schemas without understanding why they differ.
+18. **Primary-CTA hierarchy on `/me/medications`:** *"Add medication"* stays primary (existing prominent rounded-full button). *"Scan a label"* is added as a secondary affordance — smaller, less visually weighted, positioned adjacent or directly below. Manual entry remains the default; scan is an alternative path, not the new primary.
 
 ## Schema changes
 
@@ -66,13 +71,15 @@ Client component owning the entire flow. Three sub-states:
 
 - **Capture state.** Two CTAs: *"Take photo"* and *"Upload image."* Both call `Camera.getPhoto()` from `@capacitor/camera` with `source: CameraSource.Camera` or `CameraSource.Photos` respectively. Returns `dataUrl`.
 - **Processing state.** Captured image rendered as preview thumbnail. Inline spinner. Client-side compression via Canvas API (max 1280px, JPEG 0.8). POST to `/api/medications/scan` with the compressed base64. Loading state should clear within ~5s p50.
-- **Review state.** List of extracted med cards. Each card = `<ScanReviewCard />` (see below). Two top-of-list CTAs: *"Add all"* (only when no card is in confirm-each-field mode, i.e. all confidences ≥ 0.7) and *"Skip all."* Bottom CTA: *"Take another photo"* — returns to capture state.
+- **Review state.** List of extracted med cards. Each card = `<ScanReviewCard />` (see below). Two top-of-list CTAs: *"Add all"* (always available, bypasses per-field confirmation) and *"Skip all"*. Bottom CTA: *"Take another photo"* — returns to capture state.
+
+If `/api/medications/scan` returns the dose-change-instruction flag for any extracted med, that med renders as a non-interactive notice card (*"This label has dose-change instructions — confirm with the prescriber and add manually."*) — no save path, only *Skip*.
 
 ### New: `src/app/me/medications/scan/scan-review-card.tsx`
-Client component. Receives one extracted med plus its confidence. Two render modes:
+Client component. Receives one extracted med. Single render mode (no confidence-based variants):
 
-- **Confident mode** (`confidence >= CONFIDENCE_FLOOR`). Shows drug name + dose + doses-per-day in compact form. Two buttons: *"Add to my list"* and *"Skip."* "Add" expands the existing `<MedicationForm mode="new" initial={...} />` inline (already a client component, takes `initial` props). Caregiver can edit before final save. "Skip" removes the card from the list.
-- **Needs-verification mode** (`confidence < CONFIDENCE_FLOOR`). Shows the same fields but each is a tappable confirm cell — caregiver taps drug name to confirm/edit, taps dose to confirm/edit, taps doses-per-day to confirm/edit. Once all three are confirmed, the card promotes to confident mode and the *"Add to my list"* button enables.
+- Three field cells: *Drug name*, *Dose*, *Doses per day*. Each cell shows the extracted value with a tap-to-confirm/edit affordance. On first tap, the cell either confirms (if value is correct) or opens an inline edit. Once all three are confirmed, the card's *"Add to my list"* button enables. Tapping *"Add to my list"* expands the existing `<MedicationForm mode="new" initial={...} />` inline (already a client component, takes `initial` props); caregiver can edit additional fields (schedule_times, started_at, notes) before final save.
+- *"Skip"* removes the card from the list.
 
 ### New: `src/app/api/medications/scan/route.ts`
 POST endpoint. Body: `{ imageDataUrl: string }` validated with Zod (max 1.2MB after base64 decode, MIME prefix `image/jpeg` or `image/png` required). On success, returns `{ medications: ExtractedMed[] }`.
@@ -94,34 +101,42 @@ Single function: `extractMedicationsFromImage(bytes: Uint8Array): Promise<{ medi
   - System instruction (loaded from `prompt.ts`, see below).
   - JSON response schema (loaded from `schema.ts`, see below) bound via `responseSchema` parameter — Gemini returns guaranteed-valid JSON.
   - Image part: `{inlineData: {mimeType, data: base64}}`.
-- Parses response, validates with Zod against `ExtractedMedSchema`.
-- Truncates to first 20 entries.
-- Returns.
-- 15s hard timeout via AbortController. On timeout/error: throws — API route catches, returns 504.
-- On any error, server-side `console.warn` for ops visibility (no PHI in the warning, just `[scan-extract] timeout` etc.).
+- Inspects `candidates[0].finishReason`:
+  - `"STOP"` → parse `medications[]` and return.
+  - `"SAFETY"` / `"BLOCKLIST"` / `"PROHIBITED_CONTENT"` → throw a typed `SafetyFilterError`; API route returns 422 with a UI message *"We couldn't process this image. Try another."* (distinct from genuine zero-meds).
+  - `"MAX_TOKENS"` / other → throw generic; API route returns 504.
+- Validates with Zod against `ExtractedMedSchema`. Truncates to first 30 entries.
+- 15s hard timeout via AbortController. On timeout: throws — API route catches, returns 504.
+- On any error, server-side `console.warn('[extractMedicationsFromImage] ...')` (matches existing convention from `[classifyDrugByName]`). No PHI in the warning, just `timeout`, `safety-filter`, `schema-fail`.
 
 ### New: `src/lib/medications/scan/prompt.ts`
-Single export: `EXTRACTION_SYSTEM_PROMPT`. Specifies:
+Single export: `EXTRACTION_SYSTEM_PROMPT`. Specifies (paraphrased; final wording in code):
+
 - Extract only medications visible in the image. Do not invent.
-- Each medication has: `drug_name` (string), `dose_value` (number or null), `dose_unit` (string or null), `doses_per_day` (1–12 or null for PRN/unknown), `confidence` (0–1).
+- Each medication has: `drug_name` (string), `dose_value` (number or null), `dose_unit` (string or null), `doses_per_day` (1–12 or null for PRN/unknown), `is_dose_change` (boolean — see below).
 - If the image contains no medications, return `{medications: []}`.
-- Return at most 20 medications (truncate visually-distant entries first).
+- Return at most 30 medications.
 - Do NOT extract: schedule times, notes, prescriber names, Rx numbers, refill counts, patient names.
+- **Dose-change rule (load-bearing):** if the label or list states a dose change, taper, or future-dated instruction (e.g., *"increase to 80 mg starting Monday,"* *"taper to 20 mg over 2 weeks,"* *"reduce by half on Thursday"*), set `is_dose_change: true` for that medication, return the medication name only, and leave dose fields null. Do **not** extract the new dose value as if it were the current one. This rule has no exceptions.
 - Hard rule: never invent values for fields you cannot see clearly. Prefer omitting (null) over guessing.
 
 ### New: `src/lib/medications/scan/schema.ts`
 Two exports:
-- `ExtractedMedSchema` — Zod schema for one extracted med (matches the four fields above plus confidence).
-- `extractedMedsResponseSchema` — Gemini structured-output JSON schema (the one bound to `responseSchema`).
+- `ExtractedMedSchema` — Zod schema for one extracted med: `{drug_name: string, dose_value: number | null, dose_unit: string | null, doses_per_day: number | null, is_dose_change: boolean}`. **No confidence field.**
+- `extractedMedsResponseSchema` — Gemini structured-output JSON schema (matches the Zod shape).
 
-Both must declare the same shape; Zod validates Gemini's output, and the JSON schema constrains it.
+A header comment in this file documents the divergence vs `MedicationPayloadSchema` per architectural decision #17.
 
 ### Modified: `src/app/me/medications/page.tsx`
-One new button: *"Scan a label"* → links to `/me/medications/scan`. Placed adjacent to the existing "Add medication" button. Per the scoping decision, this button only renders on `/me/medications` — does not appear on `/dashboard`, `/log`, `/me`, or anywhere else.
+Add a secondary *"Scan a label"* button below the existing *"Add medication"* primary button → links to `/me/medications/scan`. Per architectural decision #18, the secondary button is visually less weighted (e.g., smaller, ghost/outline style instead of filled). Per the scoping decision, this button only renders on `/me/medications`.
+
+### Modified: `src/app/layout.tsx`
+Adds a `<PwaElementsBootstrap />` client-boundary component (one-line `defineCustomElements(window)` call wrapped in a `'use client'` component with a `useEffect`) so PWA Elements register exactly once on app boot. Required for `@capacitor/camera` web fallback per architectural decision #2.
 
 ### Modified: `package.json`
 Add deps:
 - `@capacitor/camera` (matched to existing `@capacitor/core@^8.3.1` major)
+- `@ionic/pwa-elements` (matches Capacitor 8.x compatible release)
 - `@google-cloud/vertexai`
 
 ### Modified: `.env.example`
@@ -133,14 +148,14 @@ Add three entries (no values):
 ## Acceptance criteria
 
 ### Engineering
-- [ ] Plan reviewed by fresh-context subagent before any code (per `.claude/rules/feature-workflow.md` step 3).
+- [ ] Plan reviewed by fresh-context subagent (done — 3 blockers + 10 should-fix + 5 nits applied).
 - [ ] No new abstractions beyond `src/lib/medications/scan/{extract.ts, prompt.ts, schema.ts}`.
-- [ ] `cache_control` / structured-output caching pattern used on Vertex calls (build conv #3).
 - [ ] Server-side classification reuses `classifyDrugByName` — no duplicate logic (`code-quality.md` rule 2).
-- [ ] No clinical numbers hardcoded (this PR has none — extraction reads what's printed).
-- [ ] Diff scoped to: `src/app/me/medications/`, `src/lib/medications/scan/`, `src/app/api/medications/scan/route.ts`, `package.json`, `.env.example`. No edits to unrelated files. No edits to voice-log code.
+- [ ] No clinical numbers hardcoded.
+- [ ] Diff scoped to: `src/app/me/medications/`, `src/lib/medications/scan/`, `src/app/api/medications/scan/route.ts`, `src/app/layout.tsx`, `package.json`, `.env.example`. No edits to unrelated files. No edits to voice-log code.
 - [ ] No edits to `src/app/me/medications/actions.ts` beyond extending `lookupDrugStrengths` return shape.
-- [ ] Spell-correction and scan land in one PR (caregiver decision).
+- [ ] Spell-correction and scan land in one PR — same `classify.ts` thread-through plus shared inline `MedicationForm` reuse means review concentration is the right tradeoff over revert clarity.
+- [ ] `docs/status.md` follow-up logged: post-launch migration from SA-JSON auth to OIDC + Workload Identity Federation.
 
 ### Functional — happy path: spell-correction chip
 - [ ] Caregiver types `Furosemde` (typo) into the drug-name field on `/me/medications/new`. Within ~600ms (existing 500ms debounce + ≤2s RxNorm budget already implemented), a chip renders below the field reading *"Did you mean Furosemide?"*.
@@ -151,36 +166,45 @@ Add three entries (no values):
 - [ ] If caregiver dismisses chip and submits `Furosemde`, the insert proceeds; `classifyDrugByName` server-side computes the correct `drug_class` from the corrected RxCUI.
 
 ### Functional — happy path: photo extraction
-- [ ] Caregiver opens `/me/medications/scan`, taps *"Take photo"* → `Camera.getPhoto` opens native camera (Capacitor) or browser file picker (web fallback). On capture, image renders in preview within 1s.
+- [ ] Caregiver opens `/me/medications/scan`, taps *"Take photo"* → `Camera.getPhoto` opens native camera (Capacitor) or browser file picker (web fallback via PWA Elements). On capture, the captured `dataUrl` is set into an `<img src>` and `onLoad` has fired within 1s on iPhone-13-class hardware.
 - [ ] Tapping *"Use this photo"* fires client-side compression → POST to `/api/medications/scan` → review state appears with extracted med cards within p50 ≤6s, p95 ≤10s.
-- [ ] Single-med happy path: photo of a Lasix bottle → review screen shows one card *"Lasix · 40 mg · 1× per day"* in confident mode → tap *"Add to my list"* → inline `MedicationForm` opens pre-filled → tap *Save* → med appears on `/me/medications` and `<TodaysMedsCard>` on `/dashboard`.
-- [ ] Multi-med happy path: screenshot of a 5-drug list from a portal → review screen shows 5 cards → tap *"Add all"* (when all 5 are confident) → all 5 land in DB via the existing `addMedication` insert path with correct `drug_class` via RxNorm.
+- [ ] **Per-card confirm path:** review screen shows one or more cards. On each card, caregiver taps *Drug name* (confirms or edits), then *Dose* (confirms or edits), then *Doses per day* (confirms or edits). Once all three fields confirmed, the card's *"Add to my list"* button enables. Tapping it expands the inline `MedicationForm` pre-filled — caregiver saves → med appears on `/me/medications` and `<TodaysMedsCard>` on `/dashboard`.
+- [ ] **"Add all" path:** review screen shows N cards. Caregiver visually scans the list, sees all values look correct, taps *"Add all"* (top-of-list, always available). All N cards are saved via the existing `addMedication` insert path. Manual verification step covers a 5-med screenshot scenario.
+- [ ] Manual verification sample for happy path: a Lasix bottle photo extracts to one card with the printed drug name (brand `Lasix` *or* generic `Furosemide`, whichever is on the bottle), `40 mg` (or whatever's printed), and *1× per day* (or any rendering of `1×`/`once daily`/`q.d.` — we trust the printed name; classification handles brand→generic separately).
 - [ ] *"Take another photo"* CTA returns the user to the capture state, clearing prior extracted cards.
 
+### Functional — dose-change rule (build conv #6)
+- [ ] Photo of a label saying *"increase to 80 mg starting Monday"* extracts as `{drug_name: <name>, is_dose_change: true, dose_value: null, dose_unit: null, doses_per_day: null}`.
+- [ ] The card renders as a non-interactive notice: *"This label has dose-change instructions — confirm with the prescriber and add manually."* No *"Add to my list"* button. Only *"Skip"*.
+- [ ] *"Add all"* button **does not** insert dose-change-flagged cards (they remain in the list, only flagged cards persist).
+
 ### Edge cases
-- [ ] **Empty image** (white/black frame, cat photo, unrelated screenshot): Gemini returns 0 meds → review screen shows *"No medications detected. Try a clearer photo."* Single CTA: *"Take another."*
-- [ ] **Handwritten prescription**: Gemini's confidence drops below 0.7 → cards render in needs-verification mode; caregiver taps each field to confirm/edit before save eligible.
-- [ ] **>20 meds detected**: review screen shows first 20 cards plus a banner *"Showing the first 20 medications. Re-scan with a tighter crop if needed."*
+- [ ] **Empty image** (white/black frame, cat photo, unrelated screenshot): Gemini returns 0 meds with `finishReason='STOP'` → review screen shows *"No medications detected. Try a clearer photo."* Single CTA: *"Take another."*
+- [ ] **Safety-filter response** (`finishReason='SAFETY'` etc.): API returns 422; UI shows *"We couldn't process this image. Try another."* — distinct from genuine zero-meds.
+- [ ] **Handwritten or low-quality prescription**: extraction may return missing fields (null `dose_value`, etc.). The card still renders; the missing fields show "—" and the caregiver fills them in via the per-field confirm tap (which opens an editor).
+- [ ] **>30 meds detected**: review screen shows first 30 cards plus a banner *"Showing the first 30 medications. Re-scan with a tighter crop if needed."*
 - [ ] **Drug name that fails RxNorm classification**: insert still proceeds with `drug_class='other'` (matches manual-entry behavior).
 - [ ] **Dose-unit mismatch on extracted med** (e.g., model returns "10 L Jardiance"): existing `validateDoseAgainstStrengths` in `addMedication` rejects with the standard error message → caregiver lands back on the form with the error inline → caregiver edits unit → resubmits.
 - [ ] **Spell-correction chip + scan interaction**: caregiver scans an image where Gemini returns a typo'd name (e.g., "Furosemde"); the inline `MedicationForm` that opens after *"Add to my list"* shows the spell-correction chip with *"Did you mean Furosemide?"* — same code path.
-- [ ] **Image larger than 1.2MB after compression**: API route returns 400 with *"Image too large. Try a closer photo."* (Compression should make this rare; this is the server-side guard.)
+- [ ] **Image larger than 1.2MB after compression**: API route returns 400 with *"Image too large. Try a closer photo."*
 - [ ] **Camera permission denied** (mobile Safari or Capacitor native): explainer shown — *"HeartNote needs camera access to scan labels. Use Upload instead."* Only the Upload CTA visible.
-- [ ] **Caregiver navigates away mid-flow**: review state is dropped from React state. No persistence. Caregiver re-runs scan.
+- [ ] **Caregiver navigates back mid-flow**: browser back button returns to `/me/medications` (the route that linked to `/scan`). All scan state — captured image, extracted cards, in-progress confirms — is dropped from React state. UI on `/me/medications/scan` includes a one-line empathetic note in the review state: *"Tapped Back too soon? Scan again from the list."* Re-running the scan starts from a clean state.
 
 ### Error states
 - [ ] **Network failure mid-upload**: client retries once automatically; on second failure, shows *"Couldn't reach the server — try again."* with retry CTA. No partial server state (no DB writes occurred).
 - [ ] **Vertex AI timeout (>15s)**: `/api/medications/scan` returns 504. UI shows *"Couldn't read this one — try a clearer photo or add manually."* No retry loop.
-- [ ] **Vertex AI returns invalid JSON despite responseSchema**: API route catches, returns 504, logs `[scan-extract] schema-fail` server-side. Same UI message.
-- [ ] **Vertex AI rate limit**: 429 from upstream → API route returns 429 → UI shows *"Try again in a moment."* Friendly, no crash.
+- [ ] **Vertex AI returns invalid JSON despite responseSchema**: API route catches, returns 504, logs `[extractMedicationsFromImage] schema-fail` server-side. Same UI message.
+- [ ] **Vertex AI rate limit**: 429 from upstream → API route returns 429 → UI shows *"Try again in a moment."*
 - [ ] **Auth missing**: API route returns 401, UI redirects to `/login`.
 - [ ] **Vertex env vars missing**: API route throws at module-init — first request returns 500 with *"Server misconfigured."* No fallback to consumer Gemini.
-- [ ] **`addMedication` server-side rejects (RLS, unit mismatch, etc.)**: review card stays in the list with the specific error message inline; caregiver can edit and retry without losing other extracted cards.
+- [ ] **`addMedication` server-side rejects single card** (RLS, unit mismatch, etc.): review card stays in the list with the specific error message inline; caregiver can edit and retry without losing other extracted cards.
+- [ ] **`addMedication` partial failure on *"Add all"***: succeeded cards disappear from the list; failed cards remain in the list with per-card error chips inline; top-of-list summary reads *"3 added, 2 need a fix."* Caregiver works the remaining cards individually.
 
 ### Performance
-- [ ] Camera-to-preview ≤1s on mid-tier mobile (iPhone 13).
+- [ ] Camera-to-preview ≤1s on iPhone-13-class hardware (verified by `onLoad` timing).
 - [ ] Compression-to-preview-render ≤300ms for a 4MB source image.
-- [ ] `/api/medications/scan` round-trip p50 ≤6s, p95 ≤10s.
+- [ ] `/api/medications/scan` round-trip p50 ≤6s, p95 ≤10s. **Measurement plan:** ≥10 representative pill-bottle photos (mix of clean labels, glare, curved bottles) at 1280px/JPEG-0.8, measured against `us-central1` from a Vercel preview deployment.
+- [ ] Compression-output-quality verification: same 10-photo corpus, confirm extraction quality is unchanged (or document any degradation) before merge. Empirical, not assumed.
 - [ ] Review-state render after API response: ≤200ms.
 - [ ] Compressed image payload ≤800KB target (1.2MB hard ceiling).
 - [ ] Spell-correction chip renders within ~600ms of caregiver stopping typing (existing debounce + RxNorm).
@@ -199,27 +223,24 @@ Add three entries (no values):
 
 ### Side effects
 - [ ] Successful "Add" on a scanned med = identical side effects to manual `addMedication`: `revalidatePath('/me/medications')` + `revalidatePath('/dashboard')`.
-- [ ] No alert engine signals (build conv #4 — alerts are a separate engine; this is data entry).
+- [ ] No alert engine signals (alerts are a separate engine; this is data entry).
 - [ ] No `medication_events` rows created (scan is med setup, not dose tracking).
 - [ ] No router push to other routes from inside `/me/medications/scan` except: (a) auth redirect, (b) caregiver-initiated tap on *"Done"* / *"Back"* link to `/me/medications`.
 
 ### Manual verification (~3-min reproduction)
-1. Sign in as a test caregiver. Confirm the scan button only appears on `/me/medications` (not on `/dashboard`, `/log`, `/me`).
+1. Sign in as a test caregiver. Confirm the *"Scan a label"* button only appears on `/me/medications` (not on `/dashboard`, `/log`, `/me`).
 2. Type `Furosemde` in the drug-name field on `/me/medications/new`. Wait ~600ms. Verify chip *"Did you mean Furosemide?"* appears. Tap. Verify input becomes `Furosemide`, chip disappears, "Comes in 20 mg, 40 mg, …" hint renders.
 3. Type `asdfgh`. Verify no chip ever appears.
 4. Type `Lasix`. Verify no chip appears (exact match, no correction).
-5. Navigate to `/me/medications`, tap *"Scan a label."* On a phone, tap *"Take photo"*; in browser, tap *"Upload image"* and pick a Lasix bottle photo. Verify preview renders <1s.
-6. Confirm the photo. Verify processing state shows for ≤8s, then review screen renders with one card *"Lasix · 40 mg · 1× per day"* in confident mode.
-7. Tap *"Add to my list."* Inline `MedicationForm` opens, pre-filled. Tap *Save*. Verify Lasix is on `/me/medications` with `drug_class=loop_diuretic` and on `/dashboard`'s `<TodaysMedsCard>`.
-8. Run scan again with a screenshot of a 5-drug list. Verify 5 cards render. Tap *"Add all."* Verify all 5 land in `/me/medications`.
-9. Run scan with a cat photo. Verify *"No medications detected"* state.
-10. Run scan with a deliberately blurry/handwritten image. Verify cards render in needs-verification mode (per-field tap-to-confirm); verify *"Add"* is disabled until all three fields confirmed.
+5. Navigate to `/me/medications`, tap *"Scan a label."* On a phone, tap *"Take photo"*; in browser, tap *"Upload image"* and pick a Lasix bottle photo. Verify preview `<img>` `onLoad` fires within 1s.
+6. Confirm the photo. Verify processing state shows for ≤8s, then review screen renders with one card showing the printed drug name (`Lasix` or `Furosemide`), the printed dose, and the printed frequency in any format.
+7. Tap *Drug name* — confirm. Tap *Dose* — confirm. Tap *Doses per day* — confirm. Verify *"Add to my list"* button enables. Tap it. Inline `MedicationForm` opens, pre-filled. Tap *Save*. Verify the med is on `/me/medications` with correct `drug_class` and on `/dashboard`'s `<TodaysMedsCard>`.
+8. Run scan again with a screenshot of a 5-drug list. Verify 5 cards render. Tap *"Add all."* Verify all 5 land in `/me/medications` (or, if any failed, the failed cards remain with error chips and summary reads *"X added, Y need a fix"*).
+9. Run scan with a deliberately-included taper instruction (e.g., a label that says *"increase to 80 mg starting Monday"*). Verify that med renders as a non-interactive notice card with the "confirm with prescriber" copy and only a *Skip* CTA.
+10. Run scan with a cat photo. Verify *"No medications detected"* state.
 11. Run scan offline (airplane mode). Verify error state with retry CTA. Verify no orphaned UI state on retry success.
 12. Inspect outbound request to Vertex AI in dev tools network panel. Verify body contains image base64 + system prompt + schema only — no `patient_id`, no JWT, no `caregiver_id`.
 
-## Open questions for the plan-review subagent
+## Open questions
 
-1. **Vertex AI auth in Vercel deployments.** `GOOGLE_VERTEX_AI_CREDENTIALS_JSON` as a base64-encoded service-account JSON env var is one pattern. Does Vercel have a more idiomatic way (Workload Identity Federation? OIDC?) that avoids long-lived service-account keys? Flag if so; this PR adopts the simplest path unless there's a better one.
-2. **Confidence threshold = 0.7.** Pulled from heuristic, not a benchmark. Reviewer: should this be lower (more cards in confident mode, more risk of bad data) or higher (more cards in needs-verification mode, more friction)? No strong prior.
-3. **`@capacitor/camera` web-fallback file-picker UX.** Spec-confirmed it auto-falls-back, but in practice mobile-Safari behavior varies. Reviewer: should we ship an explicit `<input type="file" accept="image/*" capture="environment">` fallback if the Capacitor plugin's web shim has known quirks?
-4. **Should the "Add all" CTA gate on each med having passed RxNorm classification?** Currently it gates only on confidence ≥ 0.7. If the model is confident but the drug name fails RxNorm (returns `medClass='other'`), insert still proceeds with class='other'. Reviewer: is that acceptable, or should we surface a class-confirm step?
+None remaining. All review-surfaced questions are now locked decisions in §Architectural decisions or §Non-goals.
