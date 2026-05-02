@@ -1,4 +1,5 @@
-import { Heart, AlertCircle, CheckCircle2 } from 'lucide-react';
+import Image from 'next/image';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { LoginForm } from './login-form';
 import { friendlyError } from '@/lib/auth/friendly-error';
 
@@ -11,17 +12,17 @@ export default async function LoginPage({
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6 bg-gradient-to-b from-cream to-background">
-      <div className="w-full max-w-md space-y-8">
+      <div className="w-full max-w-md space-y-6">
         <div className="space-y-3 text-center">
-          <div
-            className="mx-auto h-14 w-14 rounded-2xl flex items-center justify-center shadow-soft"
-            style={{
-              background:
-                'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 60%, white))',
-            }}
-            aria-hidden
-          >
-            <Heart size={26} className="text-white" fill="currentColor" />
+          <div className="mx-auto rounded-3xl overflow-hidden shadow-card" style={{ width: 192, height: 256 }}>
+            <Image
+              src="/login-hero.png"
+              alt="A caregiver embracing her mother."
+              width={384}
+              height={512}
+              priority
+              className="object-cover w-full h-full"
+            />
           </div>
           <h1 className="font-display text-4xl text-foreground">HeartNote</h1>
           <p className="text-sm text-muted-foreground max-w-sm mx-auto">
