@@ -73,6 +73,7 @@ export interface MedSummary {
   drug_name: string;
   drug_class: MedClass;
   dose: string | null;
+  pills_per_dose: number;
   doses_per_day: number | null;
   schedule_times: string[] | null;
   stopped_at: string | null;
@@ -245,19 +246,22 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
       </section>
 
       <section className="mx-4 mt-4 space-y-2">
-        <Link
-          href="/me/medications/new"
-          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold border border-border bg-card"
-        >
-          <Plus size={16} />
-          Add medication
-        </Link>
+        {/* Scan is the primary affordance — fastest path for caregivers
+            holding a bottle. Filled treatment makes it the obvious
+            default; manual entry is the secondary, outlined fallback. */}
         <Link
           href="/me/medications/scan"
-          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-3 text-xs font-medium text-muted-foreground"
+          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold bg-foreground text-background"
         >
-          <Camera size={14} />
-          Scan a label
+          <Camera size={18} />
+          Scan medication label
+        </Link>
+        <Link
+          href="/me/medications/new"
+          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-medium border border-border bg-card text-foreground"
+        >
+          <Plus size={16} />
+          Add manually
         </Link>
       </section>
 
@@ -313,6 +317,11 @@ interface RowProps {
   onLongPress: () => void;
 }
 
+function formatDose(med: MedSummary): string {
+  if (!med.dose) return '';
+  return med.pills_per_dose > 1 ? `${med.pills_per_dose} × ${med.dose}` : med.dose;
+}
+
 function ActiveRow({
   med,
   editMode,
@@ -322,11 +331,12 @@ function ActiveRow({
   onLongPress,
 }: RowProps & { isJustAdded: boolean }) {
   const longPress = useLongPress(onLongPress);
+  const dose = formatDose(med);
   const body = (
     <div className="flex-1 min-w-0">
       <p className="font-semibold text-foreground truncate">
         {med.drug_name}
-        {med.dose ? ` · ${med.dose}` : ''}
+        {dose ? ` · ${dose}` : ''}
       </p>
       <p className="text-xs text-muted-foreground mt-0.5 truncate">
         {med.doses_per_day === null ? 'as needed' : `${med.doses_per_day}× per day`}
@@ -368,10 +378,11 @@ function ActiveRow({
 
 function StoppedRow({ med, editMode, selected, onToggle, onLongPress }: RowProps) {
   const longPress = useLongPress(onLongPress);
+  const dose = formatDose(med);
   const body = (
     <span className="flex-1 text-sm truncate text-muted-foreground">
       {med.drug_name}
-      {med.dose ? ` · ${med.dose}` : ''}
+      {dose ? ` · ${dose}` : ''}
       <span className="ml-2 text-xs">stopped {med.stopped_at}</span>
     </span>
   );

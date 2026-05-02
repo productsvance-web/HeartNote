@@ -4,6 +4,11 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import {
+  SLOT_CONSUMER_STATUSES,
+  TAKEN_DOSE_STATUSES,
+  type MedEventStatus,
+} from '@/lib/medications/evaluate';
 
 const UuidSchema = z.string().uuid();
 
@@ -50,21 +55,17 @@ export async function confirmDose(
   if (!med) return { ok: false, error: 'Medication not found.' };
   if (med.stopped_at) return { ok: false, error: 'This medication has been stopped.' };
 
-  // Slot capacity gate. Only enforced for non-PRN meds (`doses_per_day`
-  // non-null) AND non-Extra inserts (`double_dosed` is supernumerary).
-  // Voice-log path inserts directly into medication_events and bypasses
-  // this gate by design — voice records what was said happened, even when
-  // that exceeds the schedule. The dashboard's `isOver` badge surfaces
-  // any over-capacity state regardless of source.
+  // Manual-tap server gates (non-PRN only). Two rules:
+  //   1. Slot capacity: Taken/Refused rejected once `slotsResolved >=
+  //      dosesPerDay`. Forces caregiver to delete an event to change.
+  //   2. Extra requires baseline doses: `'double_dosed'` rejected if any
+  //      refused/missed entry exists today (Extra is supernumerary on top
+  //      of regular doses; without baseline doses, "extra" is incoherent).
   //
-  // Advisory, not transactional: this is a read-then-insert pair, not a
-  // single statement. Two near-simultaneous taps could both pass and both
-  // insert. Practical risk is low — single caregiver per patient, the
-  // client also mutes the buttons after the first tap — and the over-
-  // capacity case surfaces in the UI via the existing `isOver` badge.
-  // Stronger guarantees would require a unique partial index keyed on
-  // (medication_id, day_in_tz) which we're not adding pre-launch.
-  if (med.doses_per_day !== null && parsed.data.status !== 'double_dosed') {
+  // Both gates are advisory (read-then-insert, not transactional). Voice-
+  // log path bypasses both by design — voice records what was said
+  // happened. The dashboard surfaces over-capacity via the `isOver` badge.
+  if (med.doses_per_day !== null) {
     const { data: profile } = await supabase
       .from('profiles')
       .select('timezone')
@@ -75,9 +76,11 @@ export async function confirmDose(
     }
     const today = getTodayInTimezone(profile.timezone);
 
-    // Reuse the dashboard's adherence RPC so the displayed mute and the
-    // server gate share one source of truth (the SQL `slots_resolved`
-    // filter — see migration 20260502070034_medication_slots_resolved.sql).
+    // Reuse the dashboard's adherence RPC so the client mute, the slot
+    // gate, and the Extra gate share one source of truth (the SQL
+    // `slots_resolved` filter — see migration
+    // 20260502070034_medication_slots_resolved.sql). Events are returned
+    // alongside so the Extra rule can inspect statuses directly.
     const { data: rows, error: rpcError } = await supabase.rpc(
       'medication_adherence_for_day',
       {
@@ -91,7 +94,21 @@ export async function confirmDose(
     const target = (rows ?? []).find(
       (r) => r.medication_id === parsed.data.medicationId
     );
-    if (target && target.slots_resolved >= med.doses_per_day) {
+
+    if (parsed.data.status === 'double_dosed') {
+      const events = (target?.events ?? []) as Array<{ status: MedEventStatus }>;
+      const hasSkipped = events.some(
+        (e) =>
+          SLOT_CONSUMER_STATUSES.has(e.status) &&
+          !TAKEN_DOSE_STATUSES.has(e.status)
+      );
+      if (hasSkipped) {
+        return {
+          ok: false,
+          error: 'Extra needs at least one taken dose first. Delete a refused or missed entry to log Extra.',
+        };
+      }
+    } else if (target && target.slots_resolved >= med.doses_per_day) {
       return {
         ok: false,
         error: 'This dose is already logged for today. Undo a logged event to change.',

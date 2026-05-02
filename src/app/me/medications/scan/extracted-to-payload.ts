@@ -14,6 +14,10 @@ export function extractedMedToPayload(med: ExtractedMed): MedicationPayload {
   return {
     drugName: med.drug_name.trim(),
     dose,
+    // Photo-scan extraction does not currently parse pills-per-dose from
+    // the bottle (the prompt schema doesn't include it). Default 1; the
+    // caregiver can adjust on the review card before saving.
+    pillsPerDose: 1,
     dosesPerDay: med.doses_per_day,
     scheduleTimes: null,
     startedAt: '',

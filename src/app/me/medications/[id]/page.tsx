@@ -28,7 +28,7 @@ export default async function EditMedicationPage({ params }: PageProps) {
   const { data: med } = await supabase
     .from('medications')
     .select(
-      'id, drug_name, drug_class, dose, doses_per_day, schedule_times, started_at, notes, stopped_at, allowed_strengths'
+      'id, drug_name, drug_class, dose, pills_per_dose, doses_per_day, schedule_times, started_at, notes, stopped_at, allowed_strengths'
     )
     .eq('id', id)
     .eq('patient_id', patient.id)
@@ -55,6 +55,7 @@ export default async function EditMedicationPage({ params }: PageProps) {
           initial={{
             drugName: med.drug_name,
             dose: med.dose ?? '',
+            pillsPerDose: med.pills_per_dose,
             dosesPerDay: med.doses_per_day,
             scheduleTimes: med.schedule_times,
             startedAt: med.started_at ?? '',

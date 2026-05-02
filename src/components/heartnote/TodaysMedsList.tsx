@@ -244,6 +244,7 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
           events={row.events}
           isPending={isPending}
           slotsFull={slotsFull}
+          extraDisabled={hasSkipped}
           onConfirm={onConfirm}
           onDelete={onDelete}
         />
@@ -277,6 +278,7 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
           events={row.events}
           isPending={isPending}
           slotsFull={false}
+          extraDisabled={false}
           onConfirm={onConfirm}
           onDelete={onDelete}
         />
@@ -297,6 +299,7 @@ function Expansion({
   events,
   isPending,
   slotsFull,
+  extraDisabled,
   onConfirm,
   onDelete,
 }: {
@@ -305,6 +308,11 @@ function Expansion({
   events: MedAdherenceEvent[];
   isPending: boolean;
   slotsFull: boolean;
+  // True when at least one refused/missed event exists today. Extra is
+  // supernumerary on top of regular doses; if regular doses haven't been
+  // given (refused/missed instead), Extra is incoherent — caregiver should
+  // delete the refused entry first to log a Taken.
+  extraDisabled: boolean;
   onConfirm: (status: MedEventStatus) => void;
   onDelete: (eventId: string) => void;
 }) {
@@ -344,7 +352,8 @@ function Expansion({
         <div className="grid grid-cols-3 gap-2">
           {STATUSES.map((s) => {
             const slotMuted = s.value !== 'double_dosed' && slotsFull;
-            const disabled = isPending || slotMuted;
+            const extraMuted = s.value === 'double_dosed' && extraDisabled;
+            const disabled = isPending || slotMuted || extraMuted;
             return (
               <button
                 key={s.value}
@@ -362,6 +371,11 @@ function Expansion({
         {slotsFull && (
           <p className="mt-2 text-[11px] text-muted-foreground">
             All doses logged for today.
+          </p>
+        )}
+        {!slotsFull && extraDisabled && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Extra needs at least one taken dose. Delete a refused or missed entry to log Extra.
           </p>
         )}
       </div>

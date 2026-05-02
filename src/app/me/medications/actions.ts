@@ -70,6 +70,9 @@ const MedicationPayloadSchema = z
       .refine((v) => !v || DOSE_FORMAT.test(v), {
         message: 'Dose must be a number and unit, e.g. "40 mg" or "1 tablet"',
       }),
+    // Number of pills per administration. Default 1 (one pill per dose).
+    // Range 1-20 mirrors the schema CHECK in the migration.
+    pillsPerDose: z.number().int().min(1).max(20).default(1),
     // null = PRN (as-needed); otherwise 1-12 doses per day.
     dosesPerDay: z.number().int().min(1).max(12).nullable(),
     // null when caregiver doesn't know clock times; otherwise length must equal dosesPerDay
@@ -136,6 +139,7 @@ async function insertOneMedication(
       drug_name: v.drugName,
       drug_class: classification.medClass,
       dose: v.dose || null,
+      pills_per_dose: v.pillsPerDose,
       doses_per_day: v.dosesPerDay,
       schedule_times: v.scheduleTimes,
       started_at: v.startedAt || null,
@@ -270,6 +274,7 @@ export async function updateMedication(
     .update({
       drug_name: v.drugName,
       dose: v.dose || null,
+      pills_per_dose: v.pillsPerDose,
       doses_per_day: v.dosesPerDay,
       schedule_times: scheduleTimes,
       started_at: v.startedAt || null,

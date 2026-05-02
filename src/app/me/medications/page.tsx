@@ -32,7 +32,7 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
   // together (see src/lib/medications/classes.ts).
   const { data: meds } = await supabase
     .from('medications')
-    .select('id, drug_name, drug_class, dose, doses_per_day, schedule_times, stopped_at')
+    .select('id, drug_name, drug_class, dose, pills_per_dose, doses_per_day, schedule_times, stopped_at')
     .eq('patient_id', patient.id)
     .order('drug_class', { ascending: true })
     .order('drug_name', { ascending: true });

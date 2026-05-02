@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { Camera } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { MedicationForm } from '../medications-form';
@@ -32,7 +33,17 @@ export default async function NewMedicationPage() {
         </p>
       </header>
 
-      <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6">
+      <div className="mx-4 mt-5">
+        <Link
+          href="/me/medications/scan"
+          className="flex items-center justify-center gap-2 rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold"
+        >
+          <Camera size={18} />
+          Have the bottle? Scan it instead
+        </Link>
+      </div>
+
+      <section className="mt-4 mx-4 rounded-3xl bg-card shadow-card p-6">
         <MedicationForm mode="new" />
       </section>
     </PhoneShell>

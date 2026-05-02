@@ -42,6 +42,7 @@ function parseDose(dose: string | undefined): { value: string; unit: string } {
 const blank: MedicationPayload = {
   drugName: '',
   dose: '',
+  pillsPerDose: 1,
   dosesPerDay: 1,
   scheduleTimes: null,
   startedAt: '',
@@ -256,6 +257,25 @@ export function MedicationForm({
           </p>
         )}
       </div>
+
+      <Field
+        label="Pills per dose"
+        hint="How many pills are taken at one time. Leave at 1 for liquids, drops, or single-pill doses."
+      >
+        <select
+          className={inputClass}
+          value={String(form.pillsPerDose)}
+          onChange={(e) =>
+            setForm({ ...form, pillsPerDose: Number(e.target.value) })
+          }
+        >
+          {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>
+              {n} {n === 1 ? 'pill' : 'pills'} per dose
+            </option>
+          ))}
+        </select>
+      </Field>
 
       <Field label="Doses per day">
         <select

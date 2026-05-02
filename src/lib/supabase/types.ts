@@ -425,6 +425,7 @@ export type Database = {
           id: string
           notes: string | null
           patient_id: string
+          pills_per_dose: number
           schedule_times: string[] | null
           started_at: string | null
           stopped_at: string | null
@@ -440,6 +441,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id: string
+          pills_per_dose?: number
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
@@ -455,6 +457,7 @@ export type Database = {
           id?: string
           notes?: string | null
           patient_id?: string
+          pills_per_dose?: number
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
