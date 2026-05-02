@@ -1,13 +1,14 @@
-import { Heart, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { LoginForm } from './login-form';
+import Link from 'next/link';
+import { Heart, AlertCircle } from 'lucide-react';
+import { ForgotPasswordForm } from './forgot-password-form';
 import { friendlyError } from '@/lib/auth/friendly-error';
 
-export default async function LoginPage({
+export default async function ForgotPasswordPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; notice?: string }>;
+  searchParams: Promise<{ email?: string; error?: string }>;
 }) {
-  const { error, notice } = await searchParams;
+  const { email, error } = await searchParams;
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6 bg-gradient-to-b from-cream to-background">
@@ -23,26 +24,11 @@ export default async function LoginPage({
           >
             <Heart size={26} className="text-white" fill="currentColor" />
           </div>
-          <h1 className="font-display text-4xl text-foreground">HeartNote</h1>
+          <h1 className="font-display text-3xl text-foreground">Reset your password</h1>
           <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-            A quieter way to keep watch over a parent with heart failure.
+            We&apos;ll email you a link to set a new password.
           </p>
         </div>
-
-        {notice === 'password_updated' && (
-          <div
-            className="rounded-2xl p-4 flex gap-3 items-start"
-            style={{
-              background: 'var(--status-good-soft)',
-              color: 'var(--status-good-foreground)',
-            }}
-          >
-            <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" />
-            <p className="text-sm leading-relaxed">
-              Password updated. Sign in with your new password.
-            </p>
-          </div>
-        )}
 
         {error && (
           <div
@@ -58,8 +44,14 @@ export default async function LoginPage({
         )}
 
         <div className="bg-card rounded-3xl shadow-card p-6 animate-fade-up">
-          <LoginForm />
+          <ForgotPasswordForm initialEmail={email ?? ''} />
         </div>
+
+        <p className="text-sm text-muted-foreground text-center">
+          <Link href="/login" className="font-medium text-foreground hover:underline">
+            Back to sign in
+          </Link>
+        </p>
       </div>
     </main>
   );
