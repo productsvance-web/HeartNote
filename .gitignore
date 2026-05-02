@@ -35,6 +35,11 @@ yarn-error.log*
 .env
 !.env*.example
 
+# downloaded service-account JSON keys (Vertex AI, etc.) — never commit
+/for vercel.json
+*-service-account*.json
+*-credentials*.json
+
 # vercel
 .vercel
 
