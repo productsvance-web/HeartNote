@@ -6,7 +6,6 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
 import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
-import { MED_CLASS_VALUES } from '@/lib/medications/classes';
 
 // Form-side strength lookup for inline unit constraints. Returns null when
 // RxNorm has no consistent oral-solid strength (caregiver gets the full
@@ -63,16 +62,12 @@ const MedicationPayloadSchema = z
       .refine((v) => !v || DOSE_FORMAT.test(v), {
         message: 'Dose must be a number and unit, e.g. "40 mg" or "1 tablet"',
       }),
-    frequency: z.string().trim().max(200).optional().or(z.literal('')),
     // null = PRN (as-needed); otherwise 1-12 doses per day.
     dosesPerDay: z.number().int().min(1).max(12).nullable(),
     // null when caregiver doesn't know clock times; otherwise length must equal dosesPerDay
     scheduleTimes: z.array(z.string().regex(HH_MM, 'Times must be HH:MM')).nullable(),
     startedAt: z.string().optional(), // YYYY-MM-DD or empty
     notes: z.string().trim().max(1000).optional().or(z.literal('')),
-    // Optional manual override of drug_class. When unset on add, server
-    // classifies via RxNorm.
-    drugClass: z.enum(MED_CLASS_VALUES).optional(),
   })
   .refine(
     (v) =>
@@ -116,10 +111,9 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   if (!patient) return { ok: false, error: 'No patient on file.' };
 
   const v = parsed.data;
-  // Always classify on add — caregiver-supplied drugClass overrides only
-  // the class field, never the strengths (which are RxNorm-sourced fact).
+  // RxNorm classification is the only source of drug_class — caregiver no
+  // longer overrides at the form layer.
   const classification = await classifyDrugByName(v.drugName);
-  const drugClass = v.drugClass ?? classification.medClass;
 
   if (v.dose) {
     const unitError = validateDoseAgainstStrengths(
@@ -135,9 +129,8 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
     .insert({
       patient_id: patient.id,
       drug_name: v.drugName,
-      drug_class: drugClass,
+      drug_class: classification.medClass,
       dose: v.dose || null,
-      frequency: v.frequency || null,
       doses_per_day: v.dosesPerDay,
       schedule_times: v.scheduleTimes,
       started_at: v.startedAt || null,
@@ -183,7 +176,7 @@ export async function updateMedication(
   const scheduleTimes = dosesPerDayChanged ? null : v.scheduleTimes;
 
   // Validate dose against existing allowed_strengths. If caregiver renamed
-  // the drug, re-classify so strengths reflect the new name.
+  // the drug, re-classify so strengths AND drug_class reflect the new name.
   const { data: existing } = await supabase
     .from('medications')
     .select('drug_name, allowed_strengths')
@@ -192,11 +185,10 @@ export async function updateMedication(
     .single();
 
   let allowedStrengths = existing?.allowed_strengths as AllowedStrengths | null | undefined;
-  let classRefresh: { medClass?: never } | null = null;
+  let reclassified: Awaited<ReturnType<typeof classifyDrugByName>> | null = null;
   if (existing && existing.drug_name.trim().toLowerCase() !== v.drugName.trim().toLowerCase()) {
-    const reclass = await classifyDrugByName(v.drugName);
-    allowedStrengths = reclass.allowedStrengths ?? null;
-    classRefresh = {};
+    reclassified = await classifyDrugByName(v.drugName);
+    allowedStrengths = reclassified.allowedStrengths ?? null;
   }
 
   if (v.dose) {
@@ -204,21 +196,22 @@ export async function updateMedication(
     if (unitError) return { ok: false, error: unitError };
   }
 
-  // Omit drug_class from the update when the caller didn't provide it — never
-  // silently downgrade a previously-classified med to 'other'.
   const { error: updateError } = await supabase
     .from('medications')
     .update({
       drug_name: v.drugName,
-      ...(v.drugClass !== undefined ? { drug_class: v.drugClass } : {}),
       dose: v.dose || null,
-      frequency: v.frequency || null,
       doses_per_day: v.dosesPerDay,
       schedule_times: scheduleTimes,
       started_at: v.startedAt || null,
       notes: v.notes || null,
-      ...(classRefresh
-        ? { allowed_strengths: allowedStrengths ? (allowedStrengths as unknown as never) : null }
+      ...(reclassified
+        ? {
+            drug_class: reclassified.medClass,
+            allowed_strengths: allowedStrengths
+              ? (allowedStrengths as unknown as never)
+              : null,
+          }
         : {}),
     })
     .eq('id', medicationId)

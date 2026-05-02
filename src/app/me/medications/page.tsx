@@ -33,7 +33,7 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
   // together (see src/lib/medications/classes.ts).
   const { data: meds } = await supabase
     .from('medications')
-    .select('id, drug_name, drug_class, dose, frequency, doses_per_day, schedule_times, stopped_at')
+    .select('id, drug_name, drug_class, dose, doses_per_day, schedule_times, stopped_at')
     .eq('patient_id', patient.id)
     .order('drug_class', { ascending: true })
     .order('drug_name', { ascending: true });
@@ -78,11 +78,7 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
                         {m.dose ? ` · ${m.dose}` : ''}
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {m.frequency
-                          ? m.frequency
-                          : m.doses_per_day === null
-                            ? 'as needed'
-                            : `${m.doses_per_day}× per day`}
+                        {m.doses_per_day === null ? 'as needed' : `${m.doses_per_day}× per day`}
                       </p>
                       {isJustAdded && (
                         <p className="text-xs mt-2 inline-block rounded-full bg-muted px-2.5 py-1 text-foreground">

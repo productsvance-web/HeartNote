@@ -422,7 +422,6 @@ export type Database = {
           doses_per_day: number | null
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
-          frequency: string | null
           id: string
           notes: string | null
           patient_id: string
@@ -438,7 +437,6 @@ export type Database = {
           doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name: string
-          frequency?: string | null
           id?: string
           notes?: string | null
           patient_id: string
@@ -454,7 +452,6 @@ export type Database = {
           doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name?: string
-          frequency?: string | null
           id?: string
           notes?: string | null
           patient_id?: string

@@ -10,7 +10,6 @@ import {
 } from './actions';
 import type { MedicationPayload } from './actions';
 import type { AllowedStrengths } from '@/lib/medications/classify';
-import { MED_CLASS_ORDER, type MedClass } from '@/lib/medications/classes';
 
 type Mode = 'new' | 'edit';
 
@@ -75,7 +74,6 @@ function parseDose(dose: string | undefined): { value: string; unit: string } {
 const blank: MedicationPayload = {
   drugName: '',
   dose: '',
-  frequency: '',
   dosesPerDay: 1,
   scheduleTimes: null,
   startedAt: '',
@@ -110,16 +108,21 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     }
   }, [allowedStrengths, doseUnit]);
 
-  // Lookup drug strengths on drug-name blur. Skips repeat lookups of the
-  // same name (cheap guard against accidental refires).
-  function lookupStrengthsForCurrent() {
+  // Debounced lookup as the caregiver types — fires 500ms after they stop.
+  // Skips repeat lookups of the same name. The trim().length >= 3 guard
+  // mirrors lookupDrugStrengths server-side so we don't burn requests on
+  // single-letter typing.
+  useEffect(() => {
     const name = form.drugName.trim();
-    if (!name || name === lastLookedUpRef.current) return;
-    lastLookedUpRef.current = name;
-    void lookupDrugStrengths(name).then((r) => {
-      setAllowedStrengths(r.allowedStrengths);
-    });
-  }
+    if (name.length < 3 || name === lastLookedUpRef.current) return;
+    const timer = setTimeout(() => {
+      lastLookedUpRef.current = name;
+      void lookupDrugStrengths(name).then((r) => {
+        setAllowedStrengths(r.allowedStrengths);
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [form.drugName]);
 
   function setDosesPerDay(n: number | null) {
     setForm((f) => {
@@ -202,7 +205,6 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           className={inputClass}
           value={form.drugName}
           onChange={(e) => setForm({ ...form, drugName: e.target.value })}
-          onBlur={lookupStrengthsForCurrent}
           placeholder="Lasix"
         />
       </Field>
@@ -231,7 +233,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
             </span>
           ) : (
             <select
-              className="ml-1 w-[80px] rounded-l-none rounded-r-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
+              className="ml-1 w-[80px] rounded-l-none rounded-r-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring appearance-none [&::-ms-expand]:hidden"
               value={doseUnit}
               onChange={(e) => setDoseUnit(e.target.value)}
               aria-label="Dose unit"
@@ -250,15 +252,6 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           </p>
         )}
       </div>
-
-      <Field label="Frequency" hint="Free-form. Example: every morning">
-        <input
-          className={inputClass}
-          value={form.frequency ?? ''}
-          onChange={(e) => setForm({ ...form, frequency: e.target.value })}
-          placeholder="every morning"
-        />
-      </Field>
 
       <Field label="Doses per day">
         <select
@@ -333,22 +326,6 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
         />
       </Field>
-
-      {mode === 'edit' && (
-        <Field label="Drug class">
-          <select
-            className={inputClass}
-            value={form.drugClass ?? 'other'}
-            onChange={(e) => setForm({ ...form, drugClass: e.target.value as MedClass })}
-          >
-            {MED_CLASS_ORDER.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
 
       {error && (
         <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{error}</p>
