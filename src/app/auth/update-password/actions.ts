@@ -52,7 +52,9 @@ export async function updatePassword(formData: FormData): Promise<ActionResult |
 
   // Clear the recovery flag and force a fresh sign-in. Invalidates the
   // recovery-session cookie so a stolen reset link can't be reused.
-  cookieStore.delete(RECOVERY_COOKIE);
+  // Path must match the original set() — Next.js cookies.delete() defaults
+  // to path '/' and would silently no-op against a path-scoped cookie.
+  cookieStore.set(RECOVERY_COOKIE, '', { path: '/auth/update-password', maxAge: 0 });
   await supabase.auth.signOut();
   redirect('/login?notice=password_updated');
 }

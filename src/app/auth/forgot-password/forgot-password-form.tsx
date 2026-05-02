@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { requestPasswordReset, verifyRecoveryCode } from './actions';
 import { OtpInput } from '@/components/heartnote/OtpInput';
+import { friendlyError } from '@/lib/auth/friendly-error';
 
 const RESEND_COOLDOWN_SECONDS = 30;
 
@@ -57,7 +58,7 @@ export function ForgotPasswordForm({ initialEmail }: { initialEmail: string }) {
       const result = await verifyRecoveryCode(email, submitted);
       // result is undefined on success (action redirects). Only reach here on failure.
       if (result && !result.ok) {
-        setErrorText(messageFor(result.error));
+        setErrorText(friendlyError(result.error));
         setCode('');
       }
     });
@@ -162,17 +163,4 @@ export function ForgotPasswordForm({ initialEmail }: { initialEmail: string }) {
       </div>
     </div>
   );
-}
-
-function messageFor(key: string): string {
-  switch (key) {
-    case 'invalid_code':
-      return 'That code didn’t match. Check the email and try again.';
-    case 'code_expired':
-      return 'That code expired. Tap “Resend code” for a fresh one.';
-    case 'rate_limited':
-      return 'Too many attempts. Wait a minute and try again.';
-    default:
-      return 'We couldn’t verify that code. Try again, or resend.';
-  }
 }

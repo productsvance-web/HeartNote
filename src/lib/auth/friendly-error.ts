@@ -26,6 +26,11 @@ export function friendlyError(key: string): string {
     case 'session_failed':
       return 'We couldn’t finish signing you in. Try again.';
 
+    case 'invalid_code':
+      return 'That code didn’t match. Check the email and try again.';
+    case 'code_expired':
+      return 'That code expired. Tap “Resend code” for a fresh one.';
+
     case 'rate_limited':
       return 'Too many attempts. Wait a minute and try again.';
 
