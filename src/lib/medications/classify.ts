@@ -18,10 +18,43 @@ import { classifyByAtcCodes, type MedClass } from './atc-map';
 const RXNAV_BASE = 'https://rxnav.nlm.nih.gov/REST';
 const TIMEOUT_MS = 2000;
 
+export interface AllowedStrengths {
+  // Normalized to RxNorm's uppercase ('MG', 'MCG', 'G', etc.)
+  unit: string;
+  // Sorted ascending. Used for soft-warning on outliers in future PR; v1
+  // only checks unit-class membership.
+  values: number[];
+}
+
 export interface ClassifyResult {
   medClass: MedClass;
   rxcui?: string;
   suggestedName?: string;
+  // Set only when RxNorm returns a consistent oral-solid-form strength.
+  // Liquids, inhalers, patches → undefined (no validation).
+  allowedStrengths?: AllowedStrengths;
+}
+
+// Conservative parser: only oral tablets/capsules with consistent simple
+// units (MG / MCG / G). Mixed-unit drugs and non-solid forms return null
+// — better to skip validation than to wrongly block a real prescription.
+function parseAllowedStrengths(names: readonly string[]): AllowedStrengths | undefined {
+  const units = new Set<string>();
+  const values = new Set<number>();
+  const STRENGTH = /(\d+(?:\.\d+)?)\s+(MG|MCG|G)\b/i;
+  for (const name of names) {
+    if (!/\b(Tablet|Capsule)\b/i.test(name)) continue;
+    const m = STRENGTH.exec(name);
+    if (m) {
+      units.add(m[2].toUpperCase());
+      values.add(parseFloat(m[1]));
+    }
+  }
+  if (units.size !== 1 || values.size === 0) return undefined;
+  return {
+    unit: Array.from(units)[0],
+    values: Array.from(values).sort((a, b) => a - b),
+  };
 }
 
 export async function classifyDrugByName(drugName: string): Promise<ClassifyResult> {
@@ -68,26 +101,52 @@ export async function classifyDrugByName(drugName: string): Promise<ClassifyResu
       return { medClass: 'other' };
     }
 
-    const classResp = await fetch(
-      `${RXNAV_BASE}/rxclass/class/byRxcui.json?rxcui=${encodeURIComponent(rxcui)}&relaSource=ATC`,
-      { signal: controller.signal }
-    );
-    if (!classResp.ok) {
+    // Parallel: ATC class lookup + drugs (for strengths). One round trip.
+    const [classResp, drugsResp] = await Promise.all([
+      fetch(
+        `${RXNAV_BASE}/rxclass/class/byRxcui.json?rxcui=${encodeURIComponent(rxcui)}&relaSource=ATC`,
+        { signal: controller.signal }
+      ),
+      fetch(
+        `${RXNAV_BASE}/drugs.json?name=${encodeURIComponent(suggestedName ?? trimmed)}`,
+        { signal: controller.signal }
+      ),
+    ]);
+
+    let medClass: MedClass = 'other';
+    if (classResp.ok) {
+      const classJson = (await classResp.json()) as {
+        rxclassDrugInfoList?: {
+          rxclassDrugInfo?: Array<{ rxclassMinConceptItem?: { classId?: string } }>;
+        };
+      };
+      const codes = (classJson.rxclassDrugInfoList?.rxclassDrugInfo ?? [])
+        .map((info) => info.rxclassMinConceptItem?.classId)
+        .filter((id): id is string => typeof id === 'string');
+      medClass = classifyByAtcCodes(codes);
+    } else {
       console.warn(
         `[classifyDrugByName] RxClass HTTP ${classResp.status} for "${trimmed}" — defaulting to 'other'`
       );
-      return { medClass: 'other', rxcui, suggestedName };
     }
-    const classJson = (await classResp.json()) as {
-      rxclassDrugInfoList?: {
-        rxclassDrugInfo?: Array<{ rxclassMinConceptItem?: { classId?: string } }>;
-      };
-    };
-    const codes = (classJson.rxclassDrugInfoList?.rxclassDrugInfo ?? [])
-      .map((info) => info.rxclassMinConceptItem?.classId)
-      .filter((id): id is string => typeof id === 'string');
 
-    return { medClass: classifyByAtcCodes(codes), rxcui, suggestedName };
+    let allowedStrengths: AllowedStrengths | undefined;
+    if (drugsResp.ok) {
+      const drugsJson = (await drugsResp.json()) as {
+        drugGroup?: {
+          conceptGroup?: Array<{ conceptProperties?: Array<{ name?: string }> }>;
+        };
+      };
+      const names: string[] = [];
+      for (const g of drugsJson.drugGroup?.conceptGroup ?? []) {
+        for (const cp of g.conceptProperties ?? []) {
+          if (cp.name) names.push(cp.name);
+        }
+      }
+      allowedStrengths = parseAllowedStrengths(names);
+    }
+
+    return { medClass, rxcui, suggestedName, allowedStrengths };
   } catch (err) {
     const reason =
       err instanceof Error

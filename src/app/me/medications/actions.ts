@@ -5,15 +5,51 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
-import { classifyDrugByName } from '@/lib/medications/classify';
+import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
 import { MED_CLASS_VALUES } from '@/lib/medications/classes';
 
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// `<number> <unit>` with the unit drawn from a closed list of forms a
+// caregiver might reasonably enter. Catches "lots", "10x", "small dose"
+// at the format layer; semantic checks (is the unit class right for this
+// drug?) happen against allowed_strengths below.
+const DOSE_FORMAT =
+  /^\s*(\d+(?:\.\d+)?)\s*(mg|mcg|g|kg|ng|ml|l|units?|tablets?|capsules?|caps?|puffs?|drops?|tsp|tbsp|sprays?|patches?|meq)\s*$/i;
+
+function normalizeUnit(u: string): string {
+  return u.toLowerCase().replace(/[.\s]/g, '').replace(/s$/, '');
+}
+
+// Returns null when the user's dose is acceptable, an error string otherwise.
+// Soft-skip when allowedStrengths is null (drug uncategorized — no validation).
+function validateDoseAgainstStrengths(
+  dose: string,
+  drugName: string,
+  allowed: AllowedStrengths | null | undefined
+): string | null {
+  if (!allowed) return null;
+  const m = DOSE_FORMAT.exec(dose);
+  if (!m) return null; // format error already caught by Zod
+  const userUnit = normalizeUnit(m[2]);
+  const allowedUnit = normalizeUnit(allowed.unit);
+  if (userUnit === allowedUnit) return null;
+  const sample = allowed.values.slice(0, 3).map((v) => `${v} ${allowed.unit.toLowerCase()}`).join(', ');
+  return `${drugName} is typically given in ${allowed.unit.toLowerCase()} (e.g. ${sample}), not ${m[2]}. Edit the dose and save again.`;
+}
+
 const MedicationPayloadSchema = z
   .object({
     drugName: z.string().trim().min(1, 'Name is required').max(200),
-    dose: z.string().trim().max(100).optional().or(z.literal('')),
+    dose: z
+      .string()
+      .trim()
+      .max(100)
+      .optional()
+      .or(z.literal(''))
+      .refine((v) => !v || DOSE_FORMAT.test(v), {
+        message: 'Dose must be a number and unit, e.g. "40 mg" or "1 tablet"',
+      }),
     frequency: z.string().trim().max(200).optional().or(z.literal('')),
     // null = PRN (as-needed); otherwise 1-12 doses per day.
     dosesPerDay: z.number().int().min(1).max(12).nullable(),
@@ -67,7 +103,19 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   if (!patient) return { ok: false, error: 'No patient on file.' };
 
   const v = parsed.data;
-  const drugClass = v.drugClass ?? (await classifyDrugByName(v.drugName)).medClass;
+  // Always classify on add — caregiver-supplied drugClass overrides only
+  // the class field, never the strengths (which are RxNorm-sourced fact).
+  const classification = await classifyDrugByName(v.drugName);
+  const drugClass = v.drugClass ?? classification.medClass;
+
+  if (v.dose) {
+    const unitError = validateDoseAgainstStrengths(
+      v.dose,
+      v.drugName,
+      classification.allowedStrengths
+    );
+    if (unitError) return { ok: false, error: unitError };
+  }
 
   const { data: inserted, error: insertError } = await supabase
     .from('medications')
@@ -81,6 +129,9 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
       schedule_times: v.scheduleTimes,
       started_at: v.startedAt || null,
       notes: v.notes || null,
+      allowed_strengths: classification.allowedStrengths
+        ? (classification.allowedStrengths as unknown as never)
+        : null,
     })
     .select('id')
     .single();
@@ -118,6 +169,28 @@ export async function updateMedication(
   const v = parsed.data;
   const scheduleTimes = dosesPerDayChanged ? null : v.scheduleTimes;
 
+  // Validate dose against existing allowed_strengths. If caregiver renamed
+  // the drug, re-classify so strengths reflect the new name.
+  const { data: existing } = await supabase
+    .from('medications')
+    .select('drug_name, allowed_strengths')
+    .eq('id', medicationId)
+    .eq('patient_id', patient.id)
+    .single();
+
+  let allowedStrengths = existing?.allowed_strengths as AllowedStrengths | null | undefined;
+  let classRefresh: { medClass?: never } | null = null;
+  if (existing && existing.drug_name.trim().toLowerCase() !== v.drugName.trim().toLowerCase()) {
+    const reclass = await classifyDrugByName(v.drugName);
+    allowedStrengths = reclass.allowedStrengths ?? null;
+    classRefresh = {};
+  }
+
+  if (v.dose) {
+    const unitError = validateDoseAgainstStrengths(v.dose, v.drugName, allowedStrengths);
+    if (unitError) return { ok: false, error: unitError };
+  }
+
   // Omit drug_class from the update when the caller didn't provide it — never
   // silently downgrade a previously-classified med to 'other'.
   const { error: updateError } = await supabase
@@ -131,6 +204,9 @@ export async function updateMedication(
       schedule_times: scheduleTimes,
       started_at: v.startedAt || null,
       notes: v.notes || null,
+      ...(classRefresh
+        ? { allowed_strengths: allowedStrengths ? (allowedStrengths as unknown as never) : null }
+        : {}),
     })
     .eq('id', medicationId)
     .eq('patient_id', patient.id);

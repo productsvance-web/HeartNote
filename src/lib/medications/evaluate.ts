@@ -12,14 +12,28 @@ import type { Database } from '@/lib/supabase/types';
 type Client = SupabaseClient<Database>;
 type MedClass = Database['public']['Enums']['med_class'];
 
+export type MedEventStatus = 'taken' | 'missed' | 'double_dosed' | 'refused' | 'early' | 'late';
+
+export interface MedAdherenceEvent {
+  id: string;
+  status: MedEventStatus;
+  actual_taken_at: string;
+  notes: string | null;
+}
+
 export interface MedAdherenceRow {
   medicationId: string;
   drugName: string;
   drugClass: MedClass;
   dosesPerDay: number | null;     // null = PRN; isComplete is meaningless
-  scheduleTimes: string[] | null; // when set, length === dosesPerDay
+  scheduleTimes: string[] | null; // when set, length === dosesPerDay (still
+                                  // stored in DB even though the dashboard
+                                  // card no longer renders per-slot status)
   takenToday: number;
   isComplete: boolean;            // false for PRN
+  // Today's events ordered desc by actual_taken_at. Used by the dashboard
+  // expansion's "Today's doses" list with per-event delete.
+  events: MedAdherenceEvent[];
 }
 
 interface AdherenceRpcRow {
@@ -29,6 +43,7 @@ interface AdherenceRpcRow {
   doses_per_day: number | null;
   schedule_times: string[] | null;
   taken_today: number;
+  events: MedAdherenceEvent[];
 }
 
 export async function evaluateMedAdherenceForDay(
@@ -53,5 +68,6 @@ export async function evaluateMedAdherenceForDay(
     takenToday: row.taken_today,
     isComplete:
       row.doses_per_day !== null && row.taken_today >= row.doses_per_day,
+    events: row.events ?? [],
   }));
 }

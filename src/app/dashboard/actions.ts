@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 
+const UuidSchema = z.string().uuid();
+
 // Manual dose confirmation always anchors `actual_taken_at` to "now". A
 // timestamp picker (for backdating a dose given earlier in the day) is
 // deferred — when added, expose it in the confirm sheet and accept the
@@ -50,6 +52,27 @@ export async function confirmDose(
     notes: parsed.data.note || null,
   });
   if (insertError) return { ok: false, error: insertError.message };
+
+  revalidatePath('/dashboard');
+  return { ok: true };
+}
+
+export async function deleteDoseEvent(
+  eventId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!UuidSchema.safeParse(eventId).success) {
+    return { ok: false, error: 'Invalid event id' };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  // RLS on medication_events filters to the caregiver's own patient.
+  const { error } = await supabase.from('medication_events').delete().eq('id', eventId);
+  if (error) return { ok: false, error: error.message };
 
   revalidatePath('/dashboard');
   return { ok: true };

@@ -416,6 +416,7 @@ export type Database = {
       }
       medications: {
         Row: {
+          allowed_strengths: Json | null
           created_at: string
           dose: string | null
           doses_per_day: number | null
@@ -431,6 +432,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          allowed_strengths?: Json | null
           created_at?: string
           dose?: string | null
           doses_per_day?: number | null
@@ -446,6 +448,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          allowed_strengths?: Json | null
           created_at?: string
           dose?: string | null
           doses_per_day?: number | null
@@ -673,6 +676,7 @@ export type Database = {
           doses_per_day: number
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
+          events: Json
           medication_id: string
           schedule_times: string[]
           taken_today: number
