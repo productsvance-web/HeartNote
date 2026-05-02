@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { formatDateInTimezone } from '@/lib/dates/today';
+import { getTodayInTimezone } from '@/lib/dates/today';
 
 const UuidSchema = z.string().uuid();
 
@@ -56,6 +56,14 @@ export async function confirmDose(
   // this gate by design — voice records what was said happened, even when
   // that exceeds the schedule. The dashboard's `isOver` badge surfaces
   // any over-capacity state regardless of source.
+  //
+  // Advisory, not transactional: this is a read-then-insert pair, not a
+  // single statement. Two near-simultaneous taps could both pass and both
+  // insert. Practical risk is low — single caregiver per patient, the
+  // client also mutes the buttons after the first tap — and the over-
+  // capacity case surfaces in the UI via the existing `isOver` badge.
+  // Stronger guarantees would require a unique partial index keyed on
+  // (medication_id, day_in_tz) which we're not adding pre-launch.
   if (med.doses_per_day !== null && parsed.data.status !== 'double_dosed') {
     const { data: profile } = await supabase
       .from('profiles')
@@ -65,7 +73,7 @@ export async function confirmDose(
     if (!profile?.timezone) {
       return { ok: false, error: 'Timezone not configured. Please refresh.' };
     }
-    const today = formatDateInTimezone(new Date(), profile.timezone);
+    const today = getTodayInTimezone(profile.timezone);
 
     // Reuse the dashboard's adherence RPC so the displayed mute and the
     // server gate share one source of truth (the SQL `slots_resolved`

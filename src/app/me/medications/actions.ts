@@ -353,12 +353,15 @@ export async function stopMedications(
 
   const today = await getTodayForCaregiver(supabase, user.id);
 
-  // Pre-existing stopped meds in the selection get re-stamped to `today`.
-  // Caregiver-visible result is identical (the row stays in Past medications).
+  // Filter to currently-active meds so a re-stop doesn't overwrite the
+  // original `stopped_at` date on rows that were already in Past medications.
+  // Caregiver-visible result is identical either way; the predicate keeps
+  // "stopped X days ago" labels and any downstream trend logic accurate.
   const { data, error } = await supabase
     .from('medications')
     .update({ stopped_at: today })
     .in('id', parsed.data)
+    .is('stopped_at', null)
     .select('id');
 
   if (error) return { ok: false, error: error.message };
