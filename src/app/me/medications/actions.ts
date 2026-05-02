@@ -8,6 +8,19 @@ import { getTodayForCaregiver } from '@/lib/dates/today';
 import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
 import { MED_CLASS_VALUES } from '@/lib/medications/classes';
 
+// Form-side strength lookup for inline unit constraints. Returns null when
+// RxNorm has no consistent oral-solid strength (caregiver gets the full
+// unit picker in that case). Skips the network call entirely for short
+// strings so the form doesn't fire on every keystroke.
+export async function lookupDrugStrengths(
+  drugName: string
+): Promise<{ allowedStrengths: AllowedStrengths | null }> {
+  const trimmed = drugName.trim();
+  if (trimmed.length < 3) return { allowedStrengths: null };
+  const result = await classifyDrugByName(trimmed);
+  return { allowedStrengths: result.allowedStrengths ?? null };
+}
+
 const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // `<number> <unit>` with the unit drawn from a closed list of forms a

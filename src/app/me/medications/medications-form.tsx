@@ -1,8 +1,15 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { addMedication, updateMedication, stopMedication, restartMedication } from './actions';
+import { useEffect, useRef, useState, useTransition } from 'react';
+import {
+  addMedication,
+  updateMedication,
+  stopMedication,
+  restartMedication,
+  lookupDrugStrengths,
+} from './actions';
 import type { MedicationPayload } from './actions';
+import type { AllowedStrengths } from '@/lib/medications/classify';
 import { MED_CLASS_ORDER, type MedClass } from '@/lib/medications/classes';
 
 type Mode = 'new' | 'edit';
@@ -10,7 +17,36 @@ type Mode = 'new' | 'edit';
 interface Props {
   mode: Mode;
   medicationId?: string;
-  initial?: Partial<MedicationPayload> & { isStopped?: boolean };
+  initial?: Partial<MedicationPayload> & {
+    isStopped?: boolean;
+    allowedStrengths?: AllowedStrengths | null;
+  };
+}
+
+// Default unit list shown when RxNorm hasn't classified the drug. Matches
+// the regex in actions.ts; keep in sync if either changes.
+const ALL_UNITS = [
+  'mg',
+  'mcg',
+  'g',
+  'mL',
+  'L',
+  'units',
+  'tablet',
+  'capsule',
+  'puff',
+  'drop',
+  'tsp',
+  'tbsp',
+] as const;
+
+const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/;
+
+function parseDose(dose: string | undefined): { value: string; unit: string } {
+  if (!dose) return { value: '', unit: 'mg' };
+  const m = DOSE_PARSE.exec(dose);
+  if (!m) return { value: '', unit: 'mg' };
+  return { value: m[1], unit: m[2] };
 }
 
 const blank: MedicationPayload = {
@@ -25,23 +61,45 @@ const blank: MedicationPayload = {
 
 export function MedicationForm({ mode, medicationId, initial }: Props) {
   const initialDoses = initial?.dosesPerDay ?? blank.dosesPerDay;
-  const [form, setForm] = useState<MedicationPayload>({
-    ...blank,
-    ...initial,
-  });
+  const initialDose = parseDose(initial?.dose);
+  const [form, setForm] = useState<MedicationPayload>({ ...blank, ...initial });
+  const [doseValue, setDoseValue] = useState<string>(initialDose.value);
+  const [doseUnit, setDoseUnit] = useState<string>(initialDose.unit);
+  const [allowedStrengths, setAllowedStrengths] = useState<AllowedStrengths | null>(
+    initial?.allowedStrengths ?? null
+  );
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const lastLookedUpRef = useRef<string | null>(null);
 
   const dosesPerDayChanged = mode === 'edit' && form.dosesPerDay !== initialDoses;
   const willClearSchedule =
     dosesPerDayChanged && (initial?.scheduleTimes?.length ?? 0) > 0;
 
+  // When allowedStrengths changes (drug classified), reconcile doseUnit.
+  // If user's current unit isn't in the allowed list, snap to the allowed one.
+  useEffect(() => {
+    if (allowedStrengths) {
+      const allowed = allowedStrengths.unit.toLowerCase();
+      if (doseUnit.toLowerCase() !== allowed) {
+        setDoseUnit(allowed);
+      }
+    }
+  }, [allowedStrengths, doseUnit]);
+
+  // Lookup drug strengths on drug-name blur. Skips repeat lookups of the
+  // same name (cheap guard against accidental refires).
+  function lookupStrengthsForCurrent() {
+    const name = form.drugName.trim();
+    if (!name || name === lastLookedUpRef.current) return;
+    lastLookedUpRef.current = name;
+    void lookupDrugStrengths(name).then((r) => {
+      setAllowedStrengths(r.allowedStrengths);
+    });
+  }
+
   function setDosesPerDay(n: number | null) {
     setForm((f) => {
-      // Adjust schedule_times length to match the new dose count.
-      // - PRN → null
-      // - smaller count → truncate
-      // - larger count → pad with empty strings (optional)
       let nextSchedule: string[] | null = null;
       if (n !== null && f.scheduleTimes !== null) {
         const truncated = f.scheduleTimes.slice(0, n);
@@ -53,10 +111,6 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
   }
 
   function addScheduleTime() {
-    // Initialize all N slots empty so the inputs render. Submit normalizer
-    // sends null when ANY slot is empty (the schema's all-or-nothing rule),
-    // so the caregiver must fill every slot or use "Remove time schedule" —
-    // half-filled saves silently dropping the schedule was the prior bug.
     setForm((f) => {
       if (f.dosesPerDay === null) return f;
       return { ...f, scheduleTimes: Array(f.dosesPerDay).fill('') };
@@ -79,13 +133,12 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
 
   function submit() {
     setError(null);
-    // Normalize: if any time is empty, send null (caregiver didn't commit
-    // to a clock schedule). Otherwise send the array.
     const cleanedTimes =
       form.scheduleTimes && form.scheduleTimes.every((t) => t.trim().length > 0)
         ? form.scheduleTimes
         : null;
-    const payload: MedicationPayload = { ...form, scheduleTimes: cleanedTimes };
+    const dose = doseValue.trim() ? `${doseValue.trim()} ${doseUnit}` : '';
+    const payload: MedicationPayload = { ...form, dose, scheduleTimes: cleanedTimes };
 
     startTransition(async () => {
       const result =
@@ -93,7 +146,6 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           ? await addMedication(payload)
           : await updateMedication(medicationId!, payload, dosesPerDayChanged);
       if (!result.ok) setError(result.error);
-      // On success, action redirects.
     });
   }
 
@@ -113,6 +165,12 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
     });
   }
 
+  const unitLocked = allowedStrengths !== null;
+  const knownStrengths = allowedStrengths?.values
+    .slice(0, 3)
+    .map((v) => `${v} ${allowedStrengths.unit.toLowerCase()}`)
+    .join(', ');
+
   return (
     <div className="space-y-5">
       <Field label="Drug name">
@@ -121,18 +179,51 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           className={inputClass}
           value={form.drugName}
           onChange={(e) => setForm({ ...form, drugName: e.target.value })}
+          onBlur={lookupStrengthsForCurrent}
           placeholder="Lasix"
         />
       </Field>
 
-      <Field label="Dose" hint="Free-form. Example: 40 mg">
-        <input
-          className={inputClass}
-          value={form.dose ?? ''}
-          onChange={(e) => setForm({ ...form, dose: e.target.value })}
-          placeholder="40 mg"
-        />
-      </Field>
+      <div>
+        <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
+        <div className="flex gap-2">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="any"
+            className={`${inputClass} flex-1`}
+            value={doseValue}
+            onChange={(e) => setDoseValue(e.target.value)}
+            placeholder="40"
+          />
+          {unitLocked ? (
+            <span
+              className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-muted-foreground tabular-nums min-w-[80px] text-center"
+              aria-label={`Unit fixed to ${doseUnit}`}
+            >
+              {doseUnit}
+            </span>
+          ) : (
+            <select
+              className={`${inputClass} w-[110px]`}
+              value={doseUnit}
+              onChange={(e) => setDoseUnit(e.target.value)}
+              aria-label="Dose unit"
+            >
+              {ALL_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        {knownStrengths && (
+          <p className="text-xs text-muted-foreground mt-1.5">
+            Comes in {knownStrengths}
+          </p>
+        )}
+      </div>
 
       <Field label="Frequency" hint="Free-form. Example: every morning">
         <input
@@ -162,13 +253,12 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
 
       {willClearSchedule && (
         <p className="text-xs text-muted-foreground bg-muted/60 rounded-lg px-3 py-2">
-          Heads up: changing doses-per-day will clear the existing time schedule. You can
-          re-enter times below or leave them blank.
+          Heads up: changing doses-per-day will clear the existing time schedule.
         </p>
       )}
 
       {form.dosesPerDay !== null && (
-        <Field label={`Times (optional)`} hint="Leave blank if you don't track exact times.">
+        <Field label="Times (optional)" hint="Leave blank if you don't track exact times.">
           {form.scheduleTimes === null ? (
             <button
               type="button"
@@ -223,9 +313,7 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
           <select
             className={inputClass}
             value={form.drugClass ?? 'other'}
-            onChange={(e) =>
-              setForm({ ...form, drugClass: e.target.value as MedClass })
-            }
+            onChange={(e) => setForm({ ...form, drugClass: e.target.value as MedClass })}
           >
             {MED_CLASS_ORDER.map((opt) => (
               <option key={opt.value} value={opt.value}>
