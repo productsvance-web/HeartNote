@@ -186,26 +186,28 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
 
       <div>
         <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        <div className="flex gap-2">
+        {/* Single pill: large number input fills the field; unit is a small
+            chip on the right (locked span when RxNorm-known, dropdown otherwise). */}
+        <div className="flex items-center rounded-xl border border-border bg-background pl-1 pr-2 focus-within:ring-2 focus-within:ring-ring">
           <input
             type="number"
             inputMode="decimal"
             step="any"
-            className={`${inputClass} flex-1`}
+            className="flex-1 min-w-0 bg-transparent border-0 px-3 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
             value={doseValue}
             onChange={(e) => setDoseValue(e.target.value)}
             placeholder="40"
           />
           {unitLocked ? (
             <span
-              className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-base text-muted-foreground tabular-nums min-w-[80px] text-center"
+              className="text-xs font-medium text-muted-foreground rounded-md bg-muted/60 px-2 py-1 ml-1"
               aria-label={`Unit fixed to ${doseUnit}`}
             >
               {doseUnit}
             </span>
           ) : (
             <select
-              className={`${inputClass} w-[110px]`}
+              className="text-xs font-medium text-foreground rounded-md bg-muted/60 px-2 py-1 ml-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
               value={doseUnit}
               onChange={(e) => setDoseUnit(e.target.value)}
               aria-label="Dose unit"
