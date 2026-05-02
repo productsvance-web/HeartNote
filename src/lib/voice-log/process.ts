@@ -63,7 +63,7 @@ const DayLevelSchema = z.object({
 
 const MedEventSchema = z.object({
   drug_name_stated: z.string().trim().min(1).max(200),
-  status: z.enum(['taken', 'missed', 'double_dosed', 'refused']),
+  status: z.enum(['taken', 'double_dosed', 'refused']),
   note: z.string().max(500).optional(),
 });
 
@@ -173,7 +173,7 @@ export async function processVoiceLog(
       const eventsToInsert: Array<{
         patient_id: string;
         medication_id: string;
-        status: 'taken' | 'missed' | 'double_dosed' | 'refused';
+        status: 'taken' | 'double_dosed' | 'refused';
         actual_taken_at: string;
         notes: string | null;
       }> = [];

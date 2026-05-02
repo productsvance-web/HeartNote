@@ -20,10 +20,9 @@ const UuidSchema = z.string().uuid();
 // decision #6 (the calendar-day anchor reflects when the dose actually
 // happened relative to the caregiver's intent).
 //
-// `'missed'` is intentionally absent from the manual-tap surface: the
-// implicit signal of "no event logged today" is acceptable for trend
-// analysis. Voice-log path can still emit `'missed'` from transcript
-// phrases like "I forgot her meds."
+// `'missed'` is not part of the schema. Absence of a logged event is the
+// implicit signal — neither manual taps nor voice-log emit a 'missed'
+// status. The Postgres enum `med_event_status` does not include the value.
 const ConfirmDoseSchema = z.object({
   medicationId: z.string().uuid(),
   status: z.enum(['taken', 'double_dosed', 'refused']),
@@ -105,7 +104,7 @@ export async function confirmDose(
       if (hasSkipped) {
         return {
           ok: false,
-          error: 'Extra needs at least one taken dose first. Delete a refused or missed entry to log Extra.',
+          error: 'Extra needs at least one taken dose first. Delete a refused entry to log Extra.',
         };
       }
     } else if (target && target.slots_resolved >= med.doses_per_day) {

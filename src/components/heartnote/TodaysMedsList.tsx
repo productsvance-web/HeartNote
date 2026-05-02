@@ -9,8 +9,8 @@
 //   1. "Today's doses" — list of events with per-event delete (the
 //      caregiver-asked undo flow; replaces the absent undo button).
 //   2. "Log a dose" — three status buttons (Taken / Refused / Extra).
-//      Missed is no longer a manual surface; absence of a logged event is
-//      the implicit signal. `'missed'` enum still exists for voice-log.
+//      No 'missed' status exists — absence of a logged event is the
+//      implicit signal everywhere in the app.
 //
 // Slot-mute rule: when slotsResolved >= dosesPerDay (non-PRN only), Taken
 // and Refused are disabled. Extra remains tappable. Trash on any logged
@@ -36,7 +36,6 @@ interface Props {
 
 const STATUS_LABEL: Record<MedEventStatus, string> = {
   taken: 'Taken',
-  missed: 'Missed',
   double_dosed: 'Extra',
   refused: 'Refused',
   early: 'Taken (early)',
@@ -308,9 +307,9 @@ function Expansion({
   events: MedAdherenceEvent[];
   isPending: boolean;
   slotsFull: boolean;
-  // True when at least one refused/missed event exists today. Extra is
+  // True when at least one refused event exists today. Extra is
   // supernumerary on top of regular doses; if regular doses haven't been
-  // given (refused/missed instead), Extra is incoherent — caregiver should
+  // given (refused instead), Extra is incoherent — caregiver should
   // delete the refused entry first to log a Taken.
   extraDisabled: boolean;
   onConfirm: (status: MedEventStatus) => void;
@@ -375,7 +374,7 @@ function Expansion({
         )}
         {!slotsFull && extraDisabled && (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            Extra needs at least one taken dose. Delete a refused or missed entry to log Extra.
+            Extra needs at least one taken dose. Delete a refused entry to log Extra.
           </p>
         )}
       </div>

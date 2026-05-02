@@ -706,13 +706,7 @@ export type Database = {
         | "anticoagulant_doac"
         | "potassium_supplement"
         | "other"
-      med_event_status:
-        | "taken"
-        | "missed"
-        | "double_dosed"
-        | "refused"
-        | "early"
-        | "late"
+      med_event_status: "taken" | "double_dosed" | "refused" | "early" | "late"
       nyha_class: "I" | "II" | "III" | "IV" | "unknown"
       significant_event_type:
         | "fall"
@@ -881,14 +875,7 @@ export const Constants = {
         "potassium_supplement",
         "other",
       ],
-      med_event_status: [
-        "taken",
-        "missed",
-        "double_dosed",
-        "refused",
-        "early",
-        "late",
-      ],
+      med_event_status: ["taken", "double_dosed", "refused", "early", "late"],
       nyha_class: ["I", "II", "III", "IV", "unknown"],
       significant_event_type: [
         "fall",

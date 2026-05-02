@@ -12,7 +12,11 @@ import type { Database } from '@/lib/supabase/types';
 type Client = SupabaseClient<Database>;
 type MedClass = Database['public']['Enums']['med_class'];
 
-export type MedEventStatus = 'taken' | 'missed' | 'double_dosed' | 'refused' | 'early' | 'late';
+// Possible statuses for a medication_event row. `'missed'` is intentionally
+// absent — there is no manual or voice path that emits it; absence of a
+// logged event is the implicit signal. The Postgres enum `med_event_status`
+// drops the value alongside this commit.
+export type MedEventStatus = 'taken' | 'double_dosed' | 'refused' | 'early' | 'late';
 
 // Slot consumers — the statuses that resolve a dose slot for the day.
 // `double_dosed` (Extra) is intentionally excluded: it's a supernumerary
@@ -26,7 +30,6 @@ export type MedEventStatus = 'taken' | 'missed' | 'double_dosed' | 'refused' | '
 // update both the set and the migration filter.
 export const SLOT_CONSUMER_STATUSES: ReadonlySet<MedEventStatus> = new Set([
   'taken',
-  'missed',
   'refused',
   'early',
   'late',
