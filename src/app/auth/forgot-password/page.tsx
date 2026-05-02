@@ -26,7 +26,7 @@ export default async function ForgotPasswordPage({
           </div>
           <h1 className="font-display text-3xl text-foreground">Reset your password</h1>
           <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-            We&apos;ll email you a link to set a new password.
+            We&apos;ll email you a 6-digit code to set a new password.
           </p>
         </div>
 

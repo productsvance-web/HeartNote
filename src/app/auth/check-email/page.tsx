@@ -1,14 +1,18 @@
-import { Heart, Mail } from 'lucide-react';
+import { Heart } from 'lucide-react';
 import Link from 'next/link';
-import { ResendButton } from './check-email-actions';
+import { redirect } from 'next/navigation';
+import { CheckEmailForm } from './check-email-actions';
 
+// OTP-only confirmation: page renders the 6-digit code form. The email param
+// is required — without it we can't call verifyOtp, so bounce to signup.
 export default async function CheckEmailPage({
   searchParams,
 }: {
   searchParams: Promise<{ email?: string }>;
 }) {
   const { email } = await searchParams;
-  const display = email?.trim() || 'your email';
+  const trimmed = email?.trim();
+  if (!trimmed) redirect('/signup');
 
   return (
     <main className="min-h-screen flex items-center justify-center px-6 bg-gradient-to-b from-cream to-background">
@@ -25,26 +29,14 @@ export default async function CheckEmailPage({
             <Heart size={26} className="text-white" fill="currentColor" />
           </div>
           <h1 className="font-display text-3xl text-foreground">Check your email</h1>
+          <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+            We sent a 6-digit code to{' '}
+            <span className="font-medium text-foreground">{trimmed}</span>. Enter it below to finish signing in.
+          </p>
         </div>
 
-        <div className="bg-card rounded-3xl shadow-card p-6 space-y-5 animate-fade-up">
-          <div
-            className="mx-auto h-12 w-12 rounded-full flex items-center justify-center"
-            style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
-            aria-hidden
-          >
-            <Mail size={20} />
-          </div>
-          <p className="text-sm text-muted-foreground text-center leading-relaxed">
-            We sent a confirmation link to{' '}
-            <span className="font-medium text-foreground">{display}</span>.<br />
-            Open it on this device to finish signing in.
-          </p>
-          {email && (
-            <div className="flex justify-center">
-              <ResendButton email={email} />
-            </div>
-          )}
+        <div className="bg-card rounded-3xl shadow-card p-6 animate-fade-up">
+          <CheckEmailForm email={trimmed} />
         </div>
 
         <p className="text-sm text-muted-foreground text-center">

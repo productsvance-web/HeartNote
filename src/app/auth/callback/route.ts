@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { resolveOrigin } from '@/lib/auth/origin';
 
-// OAuth callback (?code=). Email-link flows go to /auth/confirm.
+// OAuth callback (?code=). Email confirmation + password recovery use 6-digit OTP
+// codes verified via server actions — no URL callback for those.
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const origin = resolveOrigin(request.headers);

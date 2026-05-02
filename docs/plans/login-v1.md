@@ -304,21 +304,71 @@ Run this entire list before merging. The Co-work setup checklist (`docs/plans/lo
 - [ ] Authentication → URL Configuration → Site URL = `https://heart-note-five.vercel.app`
 - [ ] Authentication → URL Configuration → Redirect URLs include:
   - `https://heart-note-five.vercel.app/auth/callback`
-  - `https://heart-note-five.vercel.app/auth/confirm`
   - `https://heart-note-*.vercel.app/auth/callback`
-  - `https://heart-note-*.vercel.app/auth/confirm`
   - `http://localhost:3000/auth/callback`
-  - `http://localhost:3000/auth/confirm`
-- [ ] Authentication → Email Templates → Confirm signup → body updated to use `?type=email`
-- [ ] Authentication → Email Templates → Confirm signup + Reset password → copy matches drafts in this plan
+- [ ] Authentication → Email Templates → see Phase 3 below for OTP-only template bodies
 - [ ] Send a test email from the dashboard to a Hotmail address — arrives in inbox (or spam at worst, not undelivered)
 
 **Smoke test (browser, signed into Vercel):**
-- [ ] Sign up on preview with a fresh Hotmail or Gmail address → check-email page → confirmation email arrives → click → onboarding
+- [ ] Sign up on preview with a fresh Hotmail or Gmail address → check-email page (with code input) → 6-digit code arrives in email → enter it → onboarding
 - [ ] Sign in with email + password → onboarding/dashboard
 - [ ] "Continue with Google" → consent → onboarding (production URL only — preview Google OAuth not supported)
-- [ ] Forgot-password → reset email → set new password → log in with new
+- [ ] Forgot-password → enter email → 6-digit code arrives → enter it → set new password → log in with new
 - [ ] Try a known-pwned password (e.g., `password123`) on signup → see "That password has appeared in a known data breach"
 - [ ] After password change, the user receives a "Your password was changed" notification email
 - [ ] Direct navigate to `/auth/update-password` while signed in → bounces to `/login?error=reset_session_expired`
 - [ ] Supabase Users dashboard shows linked identities for accounts that signed in via both email and Google
+
+---
+
+## Phase 3 — OTP code entry replaces URL-link confirmation
+
+### Why
+URL-based email-link confirmation context-switches users out of the app and lands them in the wrong browser (link clicks open the system default browser, not the in-app webview). Every modern auth UX (Google, Stripe, GitHub, Vercel, Notion) has converged on 6-digit code entry: keeps the user in-app, works with iOS/Android `autocomplete="one-time-code"` autofill from the email, and is faster on mobile.
+
+### What changed (code)
+
+**Deleted:**
+- `src/app/auth/confirm/route.ts` — entire route. No URL callback for email-OTP flows.
+- `link_expired`, `confirm_failed`, `missing_token` keys in `friendly-error.ts` — only `/auth/confirm` ever emitted them.
+
+**Added:**
+- `src/components/heartnote/OtpInput.tsx` — single `<input maxLength=6>` with `inputMode="numeric"` + `autoComplete="one-time-code"`. Single input (not 6 boxes) is the Stripe/Vercel/GitHub pattern: iOS/Android autofill chip lands on a single field cleanly.
+- `verifyEmailCode(email, code)` action in `src/app/auth/check-email/actions.ts` — calls `verifyOtp({ email, token, type: 'email' })`, redirects by onboarding state.
+- `verifyRecoveryCode(email, code)` action in `src/app/auth/forgot-password/actions.ts` — calls `verifyOtp({ email, token, type: 'recovery' })`, sets `RECOVERY_COOKIE`, redirects to `/auth/update-password`.
+
+**Modified:**
+- `src/app/auth/check-email/page.tsx` + `check-email-actions.tsx` — was a terminal "we sent it" page; now renders the 6-digit code input inline. Resend button below.
+- `src/app/auth/forgot-password/forgot-password-form.tsx` — was a single-step email entry; now two-step (email → code). On code success, the action redirects to `/auth/update-password`.
+- `src/app/signup/actions.ts` — drops the (now meaningless) `emailRedirectTo` option from `signUp` and `resend`.
+- Stale `/auth/confirm` comments removed from `src/app/page.tsx`, `src/app/auth/callback/route.ts`, `src/app/auth/update-password/page.tsx`, `src/lib/auth/recovery-cookie.ts`.
+
+### Email templates (Supabase dashboard)
+
+Both templates use `{{ .Token }}` — Supabase already generates the 6-digit code; do not roll your own. **No fallback link in either email** (per "no zombie code"; user explicit).
+
+**Confirm signup** (`mailer_templates_confirmation_content`):
+```html
+<p>Welcome to HeartNote.</p>
+<p>Your verification code:</p>
+<p style="font-size:32px;font-weight:bold;letter-spacing:4px;">{{ .Token }}</p>
+<p>Enter it in HeartNote to finish signing in. The code expires in 24 hours.</p>
+<p>If you didn't create a HeartNote account, you can safely ignore this message.</p>
+```
+
+**Reset password** (`mailer_templates_recovery_content`):
+```html
+<p>Someone — hopefully you — asked to reset the password for {{ .Email }}.</p>
+<p>Your reset code:</p>
+<p style="font-size:32px;font-weight:bold;letter-spacing:4px;">{{ .Token }}</p>
+<p>Enter it in HeartNote to set a new password. The code expires in 1 hour.</p>
+<p>If you didn't request a reset, you can ignore this message.</p>
+```
+
+### Redirect allow-list
+
+The `/auth/confirm` redirect entries in Supabase URL Configuration are no longer reachable (route deleted). Leaving them in the allow-list is harmless; removing them is a one-time cleanup.
+
+### Operational note: Supabase Management API
+
+Templates appear to PATCH independently — verified during this migration. SMTP settings, by contrast, are atomic: a partial PATCH wipes the un-sent fields. If you ever need to PATCH SMTP, send all six (`smtp_host`, `smtp_port`, `smtp_user`, `smtp_pass`, `smtp_admin_email`, `smtp_sender_name`) together.

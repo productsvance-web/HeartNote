@@ -119,43 +119,40 @@ Fill in:
 
 Authentication → URL Configuration:
 - **Site URL**: `https://heart-note-five.vercel.app`
-- **Redirect URLs** — add EACH of these as a separate row, exact strings (you'll need 6 rows):
+- **Redirect URLs** — add EACH of these as a separate row, exact strings (3 rows):
   ```
   https://heart-note-five.vercel.app/auth/callback
-  https://heart-note-five.vercel.app/auth/confirm
   https://heart-note-*.vercel.app/auth/callback
-  https://heart-note-*.vercel.app/auth/confirm
   http://localhost:3000/auth/callback
-  http://localhost:3000/auth/confirm
   ```
-- The two `*` (wildcard) entries cover Vercel preview URLs — without them, signup confirmation and password-reset emails sent FROM a preview deployment would silently redirect to production instead.
+- The wildcard entry covers Vercel preview URLs for OAuth — without it, "Continue with Google" from a preview would silently redirect to production. Email confirmation + password reset are OTP code entry (no URL callback) so they don't need redirect entries.
 - Save
 
 ### 3F. Email templates
 
-Authentication → Email Templates. For each below, replace the body. Keep `{{ .SiteURL }}`, `{{ .TokenHash }}`, `{{ .Email }}` as literal text — Supabase substitutes at send time.
+Authentication → Email Templates. For each below, replace the body. Keep `{{ .Token }}` and `{{ .Email }}` as literal text — Supabase substitutes at send time. **No fallback URL link in either template** — HeartNote uses 6-digit code entry only.
 
 **Template: Confirm signup**
 - Subject: `Confirm your email for HeartNote`
 - Body (HTML — switch to "Source" or HTML mode in the editor):
   ```html
   <p>Welcome to HeartNote.</p>
-  <p>Tap the button below to confirm your email and finish signing in. The link works once and expires in 24 hours.</p>
-  <p><a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">Confirm email</a></p>
+  <p>Your verification code:</p>
+  <p style="font-size:32px;font-weight:bold;letter-spacing:4px;">{{ .Token }}</p>
+  <p>Enter it in HeartNote to finish signing in. The code expires in 24 hours.</p>
   <p>If you didn't create a HeartNote account, you can safely ignore this message.</p>
   ```
-  Note: this uses `?type=email` (current canonical for verifyOtp) instead of the default `{{ .ConfirmationURL }}` which uses the deprecated `?type=signup`.
 
 **Template: Reset password**
 - Subject: `Reset your HeartNote password`
 - Body:
   ```html
   <p>Someone — hopefully you — asked to reset the password for {{ .Email }}.</p>
-  <p>Tap the button below to set a new password. The link works once and expires in 1 hour.</p>
-  <p><a href="{{ .ConfirmationURL }}">Set new password</a></p>
-  <p>If you didn't request a reset, you can ignore this message. Your current password still works.</p>
+  <p>Your reset code:</p>
+  <p style="font-size:32px;font-weight:bold;letter-spacing:4px;">{{ .Token }}</p>
+  <p>Enter it in HeartNote to set a new password. The code expires in 1 hour.</p>
+  <p>If you didn't request a reset, you can ignore this message.</p>
   ```
-  (Reset uses default `{{ .ConfirmationURL }}` because `?type=recovery` is the correct, non-deprecated value.)
 
 Leave Magic Link, Invite User, and Email Change templates at default — HeartNote doesn't use those flows in v1.
 
@@ -178,10 +175,10 @@ The preview is gated behind Vercel Deployment Protection — make sure you're si
 
 Run all 7 checks:
 
-1. **Sign-up flow.** `/login` → tap "Sign up" → fresh email + password (≥8 chars) + same in confirm field → submit. Expected: lands on `/auth/check-email`. Open the email, click the link → lands on `/onboarding`.
+1. **Sign-up flow.** `/login` → tap "Sign up" → fresh email + password (≥8 chars) + same in confirm field → submit. Expected: lands on `/auth/check-email` with a 6-digit code input. Open the email, copy the 6-digit code, paste it back in the app → lands on `/onboarding`.
 2. **Sign-in (password).** Sign out via `/me` → on `/login` enter the same credentials → lands on `/onboarding`.
 3. **Sign-in (Google).** Sign out → tap "Continue with Google" → consent screen → lands on `/onboarding` or `/dashboard`. ⚠️ Test this on **production** (`https://heart-note-five.vercel.app`) AFTER merge — Vercel preview URLs are NOT in Google's redirect-URI list (Google doesn't accept wildcards) so Google sign-in on the preview will fail.
-4. **Forgot password.** Sign out → "Forgot password?" → enter email → reset link arrives → set new password (twice) → lands on `/login?notice=password_updated`.
+4. **Forgot password.** Sign out → "Forgot password?" → enter email → 6-digit code arrives → enter it → set new password (twice) → lands on `/login?notice=password_updated`.
 5. **Leaked-password rejection.** On `/signup`, try password `password123` (in HIBP) → expected error: "That password has appeared in a known data breach. Pick a different one."
 6. **Confirm-password mismatch.** On `/signup`, enter different values in password and confirm → expected error: "Passwords don't match."
 7. **Recovery-cookie guard.** While signed in, navigate browser directly to `/auth/update-password` → expected: bounces to `/login?error=reset_session_expired`.

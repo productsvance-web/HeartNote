@@ -1,11 +1,9 @@
 'use server';
 
 import { z } from 'zod';
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth/constants';
-import { resolveOrigin } from '@/lib/auth/origin';
 
 const SignUpSchema = z
   .object({
@@ -35,12 +33,10 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
   }
 
   const supabase = await createClient();
-  const origin = resolveOrigin(await headers());
 
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
-    options: { emailRedirectTo: `${origin}/auth/confirm` },
   });
 
   if (error) {
@@ -61,7 +57,6 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
     const { error: resendErr } = await supabase.auth.resend({
       type: 'signup',
       email: parsed.data.email,
-      options: { emailRedirectTo: `${origin}/auth/confirm` },
     });
     if (resendErr) return { ok: false, error: 'email_exists' };
     redirect(`/auth/check-email?email=${encodeURIComponent(parsed.data.email)}`);

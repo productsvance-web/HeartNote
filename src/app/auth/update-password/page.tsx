@@ -5,9 +5,10 @@ import { createClient } from '@/lib/supabase/server';
 import { RECOVERY_COOKIE } from '@/lib/auth/recovery-cookie';
 import { UpdatePasswordForm } from './update-password-form';
 
-// Two gates: a recovery-only flag cookie set by /auth/confirm when type=recovery,
-// AND a live Supabase session. A normally-signed-in user without the cookie gets
-// bounced — they should change their password from /me, not here.
+// Two gates: a recovery-only flag cookie set by verifyRecoveryCode after a
+// successful OTP verification, AND a live Supabase session. A normally-signed-in
+// user without the cookie gets bounced — they should change their password from
+// /me, not here.
 export default async function UpdatePasswordPage() {
   const cookieStore = await cookies();
   if (!cookieStore.get(RECOVERY_COOKIE)) {

@@ -19,15 +19,10 @@ export function friendlyError(key: string): string {
       return 'We couldn’t reach Google. Try again in a moment.';
 
     case 'reset_session_expired':
-      return 'That reset link expired or was already used. Request a new one — they’re valid for 1 hour.';
-    case 'link_expired':
-      return 'That link expired or was already used. Request a new one.';
+      return 'That reset session expired or was already used. Request a new code — they’re valid for 1 hour.';
 
     case 'missing_code':
-    case 'missing_token':
       return 'That sign-in link looks incomplete. Try again from the login page.';
-    case 'confirm_failed':
-      return 'We couldn’t verify that link. Try requesting a new one.';
     case 'session_failed':
       return 'We couldn’t finish signing you in. Try again.';
 
