@@ -1,11 +1,19 @@
 import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
 import { Heart } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
+import { RECOVERY_COOKIE } from '@/lib/auth/recovery-cookie';
 import { UpdatePasswordForm } from './update-password-form';
 
-// Page-side guard: a recovery session exists only if /auth/confirm just succeeded
-// with type=recovery. Direct navigation here without one bounces back to login.
+// Two gates: a recovery-only flag cookie set by /auth/confirm when type=recovery,
+// AND a live Supabase session. A normally-signed-in user without the cookie gets
+// bounced — they should change their password from /me, not here.
 export default async function UpdatePasswordPage() {
+  const cookieStore = await cookies();
+  if (!cookieStore.get(RECOVERY_COOKIE)) {
+    redirect('/login?error=reset_session_expired');
+  }
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {

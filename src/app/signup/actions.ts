@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth/constants';
+import { resolveOrigin } from '@/lib/auth/origin';
 
 const SignUpSchema = z.object({
   email: z.string().email('Enter a valid email address.'),
@@ -12,13 +13,6 @@ const SignUpSchema = z.object({
 });
 
 type ActionResult = { ok: false; error: string };
-
-async function resolveOrigin(): Promise<string> {
-  const h = await headers();
-  const proto = h.get('x-forwarded-proto') ?? 'http';
-  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
-  return `${proto}://${host}`;
-}
 
 // TODO(post-resend): when transactional email (Resend or equivalent) is wired for
 // family-share alerts, flip this action to enumeration-safe: always return the
@@ -34,7 +28,7 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
   }
 
   const supabase = await createClient();
-  const origin = await resolveOrigin();
+  const origin = resolveOrigin(await headers());
 
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
@@ -48,39 +42,18 @@ export async function signUpWithPassword(formData: FormData): Promise<ActionResu
     return { ok: false, error: 'signup_failed' };
   }
 
-  // Supabase signals "email already in use" by returning a user object with an empty
-  // identities array (documented obfuscation pattern). We unpack that here.
+  // Supabase signals "email already in use" by returning a user with empty identities[].
   if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-    // Existing account. Try resend — succeeds for unconfirmed users (good UX),
-    // errors for confirmed ones (route to honest "email exists" message).
+    // Existing account. Resend succeeds for unconfirmed users (good UX), errors for
+    // confirmed ones (route to honest "email exists" message per decision #13).
     const { error: resendErr } = await supabase.auth.resend({
       type: 'signup',
       email: parsed.data.email,
       options: { emailRedirectTo: `${origin}/auth/confirm` },
     });
-    if (resendErr) {
-      // Confirmed user — show honest error per decision #13.
-      return { ok: false, error: 'email_exists' };
-    }
-    // Unconfirmed user — fresh confirmation email is on the way.
+    if (resendErr) return { ok: false, error: 'email_exists' };
     redirect(`/auth/check-email?email=${encodeURIComponent(parsed.data.email)}`);
   }
 
   redirect(`/auth/check-email?email=${encodeURIComponent(parsed.data.email)}`);
-}
-
-// Same OAuth start as /login — re-exported so /signup imports from one place
-// and the action stays close to its form.
-export async function signUpWithGoogle(): Promise<void> {
-  const supabase = await createClient();
-  const origin = await resolveOrigin();
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: `${origin}/auth/callback` },
-  });
-
-  if (error || !data?.url) {
-    redirect(`/login?error=${encodeURIComponent('oauth_start_failed')}`);
-  }
-  redirect(data.url);
 }

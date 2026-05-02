@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
-import { signInWithPassword, signInWithGoogle } from './actions';
+import { signInWithPassword } from './actions';
+import { signInWithGoogle } from '@/lib/auth/oauth';
 import { friendlyError } from '@/lib/auth/friendly-error';
 
 export function LoginForm() {
@@ -35,7 +36,7 @@ export function LoginForm() {
 
   return (
     <div className="space-y-4">
-      <form action={signInWithGoogle}>
+      <form action={signInWithGoogle.bind(null, '/login')}>
         <button
           type="submit"
           className="w-full rounded-full border border-border bg-card px-6 py-3.5 font-semibold text-base text-foreground shadow-soft active:scale-[0.98] transition flex items-center justify-center gap-3"

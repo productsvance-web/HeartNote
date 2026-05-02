@@ -140,7 +140,7 @@ Drafted against the grelief register (no chirp, no funeral). Copy lives in the S
 - [ ] Submitting an email calls `supabase.auth.resetPasswordForEmail(email, { redirectTo: '${origin}/auth/confirm' })` and **always** shows "If you have a HeartNote account, a reset link is on the way to that email" — never confirms account existence (enumeration policy).
 - [ ] The email link points to `/auth/confirm?token_hash=...&type=recovery`. The route calls `verifyOtp({ type: 'recovery', token_hash })`, which returns a session, then redirects to `/auth/update-password`.
 - [ ] On `/auth/update-password`, entering a new password (≥8 chars) twice and submitting calls `supabase.auth.updateUser({ password })`, then signs the user out (force re-login with new password — protects against stolen-link reuse), then redirects to `/login?notice=password_updated`.
-- [ ] Direct navigation to `/auth/update-password` without a recovery session redirects to `/login?error=reset_session_expired`.
+- [ ] Direct navigation to `/auth/update-password` without a recovery session redirects to `/login?error=reset_session_expired`. **Implementation: a short-lived (5-min) httpOnly cookie `hn_recovery=1` is set by `/auth/confirm` only when `type === 'recovery'` succeeds. Both `/auth/update-password` page and the `updatePassword` action gate on the cookie's presence, so a normally-signed-in user can't trigger a password change by navigating to the URL.** Cookie is cleared after a successful password update.
 
 **Sign out:**
 - [ ] Tapping Sign out at `/me` calls existing `signOut` action → `supabase.auth.signOut()`. After the action returns, navigating to `/dashboard` redirects to `/login`. Verifies the session cookie is cleared.
@@ -172,7 +172,7 @@ Asymmetric on purpose:
 - [ ] Network error during sign-in → "Couldn't reach our servers. Try again in a moment."
 - [ ] Supabase rate-limit (429) → "Too many attempts. Wait a minute and try again."
 - [ ] Unknown OAuth error returned in `error_description` → friendly mapping in `friendly-error.ts` for known cases (`oauth_cancelled`, `oauth_account_not_linked`, `email_taken`); unknown errors render a generic message: "Something went wrong on our end. Try again, or use a different sign-in method." Raw Supabase error strings are never shown to users.
-- [ ] Verification email never delivered → "Resend" button on `/auth/check-email` is rate-limited client-side (1 send per 30s); after 3 sends in 5 minutes the button shows "Still no email? Check your spam folder, or contact support@heartnote.app" (support email is a placeholder until launch).
+- [ ] Verification email never delivered → "Resend" button on `/auth/check-email` is rate-limited client-side (1 send per 30s). The escalated "still no email?" support copy was struck during implementation — too speculative for v1, no support email exists yet.
 
 ### Performance
 

@@ -1,59 +1,59 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { type EmailOtpType } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { resolveOrigin } from '@/lib/auth/origin';
+import { RECOVERY_COOKIE, RECOVERY_COOKIE_MAX_AGE_SECONDS } from '@/lib/auth/recovery-cookie';
 
-// Handles email-link callbacks (signup confirmation, password recovery, magic link).
-// Per Supabase canonical Next.js pattern: ?token_hash=...&type=... + verifyOtp.
-// (OAuth uses ?code= + exchangeCodeForSession on /auth/callback — that route still exists.)
-function resolveOrigin(request: NextRequest): string {
-  const url = new URL(request.url);
-  const host =
-    request.headers.get('x-forwarded-host') ??
-    request.headers.get('host') ??
-    url.host;
-  const proto =
-    request.headers.get('x-forwarded-proto') ??
-    (url.protocol === 'https:' ? 'https' : 'http');
-  return `${proto}://${host}`;
-}
+// Email-link callbacks (signup confirmation, password recovery). Per Supabase
+// canonical Next.js pattern: ?token_hash=...&type=... + verifyOtp.
+// (OAuth uses ?code= + exchangeCodeForSession on /auth/callback.)
+
+const ALLOWED_TYPES = new Set<EmailOtpType>(['signup', 'recovery', 'email_change', 'invite']);
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const origin = resolveOrigin(request);
+  const origin = resolveOrigin(request.headers);
   const token_hash = searchParams.get('token_hash');
-  const type = searchParams.get('type') as EmailOtpType | null;
+  const rawType = searchParams.get('type');
   const errorParam = searchParams.get('error_description');
 
   if (errorParam) {
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(errorParam)}`
-    );
+    return NextResponse.redirect(`${origin}/login?error=confirm_failed`);
   }
-  if (!token_hash || !type) {
+  if (!token_hash || !rawType) {
     return NextResponse.redirect(`${origin}/login?error=missing_token`);
   }
+
+  // Validate type before passing to Supabase. Defense-in-depth.
+  if (!ALLOWED_TYPES.has(rawType as EmailOtpType)) {
+    return NextResponse.redirect(`${origin}/login?error=missing_token`);
+  }
+  const type = rawType as EmailOtpType;
 
   const supabase = await createClient();
   const { error } = await supabase.auth.verifyOtp({ type, token_hash });
   if (error) {
-    // For recovery links, route to forgot-password with a clear "expired" message
-    // so the user can request a fresh link in one click.
     if (type === 'recovery') {
-      return NextResponse.redirect(
-        `${origin}/auth/forgot-password?error=link_expired`
-      );
+      return NextResponse.redirect(`${origin}/auth/forgot-password?error=link_expired`);
     }
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(error.message)}`
-    );
+    return NextResponse.redirect(`${origin}/login?error=confirm_failed`);
   }
 
-  // Recovery: send to update-password (session is set; form requires it).
+  // Recovery: set a short-lived cookie that /auth/update-password gates on,
+  // then route to the password-set form.
   if (type === 'recovery') {
-    return NextResponse.redirect(`${origin}/auth/update-password`);
+    const response = NextResponse.redirect(`${origin}/auth/update-password`);
+    response.cookies.set(RECOVERY_COOKIE, '1', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: RECOVERY_COOKIE_MAX_AGE_SECONDS,
+      path: '/auth/update-password',
+    });
+    return response;
   }
 
-  // Signup / email change / magic link: route by onboarding state, same as /auth/callback.
+  // Signup / invite / email-change: route by onboarding state.
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(`${origin}/login?error=session_failed`);
