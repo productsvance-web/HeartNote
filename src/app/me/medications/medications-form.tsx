@@ -186,28 +186,29 @@ export function MedicationForm({ mode, medicationId, initial }: Props) {
 
       <div>
         <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        {/* Single pill: large number input fills the field; unit is a small
-            chip on the right (locked span when RxNorm-known, dropdown otherwise). */}
-        <div className="flex items-center rounded-xl border border-border bg-background pl-1 pr-2 focus-within:ring-2 focus-within:ring-ring">
+        {/* Single pill: number input fills the left; unit chip flush-right,
+            full-height, white, square on the left (abuts input), rounded
+            on the right to match the container's pill shape. */}
+        <div className="flex items-stretch rounded-xl border border-border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring">
           <input
             type="number"
             inputMode="decimal"
             step="any"
-            className="flex-1 min-w-0 bg-transparent border-0 px-3 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
+            className="flex-1 min-w-0 bg-transparent border-0 px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none"
             value={doseValue}
             onChange={(e) => setDoseValue(e.target.value)}
             placeholder="40"
           />
           {unitLocked ? (
             <span
-              className="text-xs font-medium text-muted-foreground rounded-md bg-muted/60 px-2 py-1 ml-1"
+              className="flex items-center justify-center px-5 bg-white border-l border-border text-base font-bold text-foreground min-w-[72px]"
               aria-label={`Unit fixed to ${doseUnit}`}
             >
               {doseUnit}
             </span>
           ) : (
             <select
-              className="text-xs font-medium text-foreground rounded-md bg-muted/60 px-2 py-1 ml-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
+              className="px-5 bg-white border-l border-border text-base font-bold text-foreground cursor-pointer focus:outline-none min-w-[88px]"
               value={doseUnit}
               onChange={(e) => setDoseUnit(e.target.value)}
               aria-label="Dose unit"
