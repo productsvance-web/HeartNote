@@ -14,6 +14,8 @@
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { extractWithClaude } from '@/lib/voice-log/extract';
+import { matchMedByDrugName } from '@/lib/medications/match';
+import type { UnmatchedChip } from '@/lib/voice-log/chip';
 
 const ReadingSchema = z.object({
   field: z.enum(['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp']),
@@ -59,11 +61,17 @@ const DayLevelSchema = z.object({
   activity_tolerance_change: z.string().min(1).max(500).optional(),
 });
 
+const MedEventSchema = z.object({
+  drug_name_stated: z.string().trim().min(1).max(200),
+  status: z.enum(['taken', 'missed', 'double_dosed', 'refused']),
+  note: z.string().max(500).optional(),
+});
+
 export async function processVoiceLog(
   logId: string,
   callerUserId: string,
   transcript: string
-): Promise<void> {
+): Promise<{ unmatched_chips: UnmatchedChip[] }> {
   // Outer try/catch ensures any uncaught throw lands the row in `failed`
   // with a populated processing_error.
   try {
@@ -74,7 +82,7 @@ export async function processVoiceLog(
     const { data: log, error: loadError } = await supabase
       .from('daily_logs')
       .select(
-        'id, patient_id, processing_status, log_date, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
+        'id, patient_id, processing_status, log_date, created_at, patients(caregiver_id, display_name, relationship, dry_weight_lb, nyha_class, normal_pillow_count)'
       )
       .eq('id', logId)
       .single();
@@ -147,6 +155,73 @@ export async function processVoiceLog(
       });
       if (rpcError) throw new Error(rpcError.message);
 
+      // 4b. Medication-event dispatch. Strict drug-name match per plan
+      //     decision #3: matched active → insert event; matched stopped →
+      //     restart_med chip; no match → add_med chip. Failures are
+      //     non-atomic with the readings/symptoms RPC — a single bad event
+      //     should not unwind a successful vitals extraction.
+      const validMedEvents = extraction.medicationEvents.flatMap((e) => {
+        const parsed = MedEventSchema.safeParse(e);
+        if (!parsed.success) {
+          validationWarnings.push(`med_event rejected: ${JSON.stringify(e)}`);
+          return [];
+        }
+        return [parsed.data];
+      });
+
+      const unmatchedChips: UnmatchedChip[] = [];
+      const eventsToInsert: Array<{
+        patient_id: string;
+        medication_id: string;
+        status: 'taken' | 'missed' | 'double_dosed' | 'refused';
+        actual_taken_at: string;
+        notes: string | null;
+      }> = [];
+
+      for (const medEvent of validMedEvents) {
+        const matched = await matchMedByDrugName(
+          supabase,
+          log.patient_id,
+          medEvent.drug_name_stated
+        );
+        if (!matched) {
+          unmatchedChips.push({ type: 'add_med', phrase: medEvent.drug_name_stated });
+        } else if (matched.isStopped) {
+          unmatchedChips.push({
+            type: 'restart_med',
+            phrase: medEvent.drug_name_stated,
+            medication_id: matched.medicationId,
+          });
+        } else {
+          eventsToInsert.push({
+            patient_id: log.patient_id,
+            medication_id: matched.medicationId,
+            status: medEvent.status,
+            // log.created_at is the recording moment — anchors the event to
+            // the calendar day the caregiver actually meant, not the
+            // (potentially-rolled-over) processing moment.
+            actual_taken_at: log.created_at,
+            notes: medEvent.note ?? null,
+          });
+        }
+      }
+
+      if (eventsToInsert.length > 0) {
+        const { error: medInsertError } = await supabase
+          .from('medication_events')
+          .insert(eventsToInsert);
+        if (medInsertError) {
+          validationWarnings.push(`med_events insert failed: ${medInsertError.message}`);
+        }
+      }
+
+      // Class-only / nickname mentions surface as pick_med chips. Empty
+      // strings are dropped silently.
+      for (const phrase of extraction.medMatchFailures) {
+        const trimmed = phrase.trim();
+        if (trimmed) unmatchedChips.push({ type: 'pick_med', phrase: trimmed });
+      }
+
       await supabase
         .from('daily_logs')
         .update({
@@ -162,6 +237,8 @@ export async function processVoiceLog(
           ai_processed_at: new Date().toISOString(),
         })
         .eq('id', logId);
+
+      return { unmatched_chips: unmatchedChips };
     } catch (err) {
       // Transcript is preserved on the row; only the AI extraction or RPC
       // failed. Mark complete with an error note so the caregiver still sees
@@ -175,6 +252,7 @@ export async function processVoiceLog(
           structured_observations: { ai_extraction_error: message },
         })
         .eq('id', logId);
+      return { unmatched_chips: [] };
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'voice-log processing failed';

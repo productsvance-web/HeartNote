@@ -24,6 +24,8 @@ import { openDeepgramClient, type DeepgramClient } from '@/lib/voice-log/deepgra
 import { extractNumericTiles, type NumericTiles } from '@/lib/voice-log/numeric-extractors';
 import { findMatchedKeyterms, segmentEndsWithStopPhrase } from '@/lib/voice-log/match-keyterms';
 import type { TileKey } from '@/lib/voice-log/keyword-map';
+import type { UnmatchedChip } from '@/lib/voice-log/chip';
+import Link from 'next/link';
 
 type Status =
   | 'idle'
@@ -419,6 +421,11 @@ export function VoiceLogClient({
   );
   const [observations, setObservations] = useState<AISummary | null>(existingObservations);
   const [claudeTiles, setClaudeTiles] = useState<ClaudeTiles | null>(null);
+  // Render-once unmatched-medication chips returned by the /process route.
+  // NOT persisted (architectural decision #8 in docs/plans/medication-flow-v1.md):
+  // a caregiver who closes this screen without acting on a chip loses the
+  // structured prompt — the transcript still has the original phrase.
+  const [unmatchedChips, setUnmatchedChips] = useState<UnmatchedChip[]>([]);
   // Optional message shown above "Reading what you said…" telling the
   // caregiver WHY the recording stopped (mic revoked, time up, network drop).
   // Empty for a normal manual/voice stop.
@@ -804,10 +811,16 @@ export function VoiceLogClient({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ transcript }),
       });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        unmatched_chips?: UnmatchedChip[];
+      };
       if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `processing failed (${res.status})`);
+        throw new Error(json.error ?? `processing failed (${res.status})`);
       }
+      // Capture unmatched-medication chips for render-once display in the
+      // review section (NOT persisted — see state declaration).
+      setUnmatchedChips(json.unmatched_chips ?? []);
       // Status is already 'analyzing' (set in stopRecording); the polling
       // effect picks up the result.
     } catch (err) {
@@ -830,6 +843,7 @@ export function VoiceLogClient({
     setInterim('');
     setFinals([]);
     setObservations(null);
+    setUnmatchedChips([]);
     setSeconds(0);
   }
 
@@ -1285,6 +1299,63 @@ export function VoiceLogClient({
                   </div>
                 </div>
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Unmatched-medication chips. Render-once per architectural decision
+          #8 in docs/plans/medication-flow-v1.md — a caregiver who navigates
+          away without acting loses these from the structured surface. The
+          transcript still records the original phrase. */}
+      {status === 'complete' && unmatchedChips.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">
+            Medications mentioned — quick check
+          </p>
+          {unmatchedChips.map((chip, i) => {
+            if (chip.type === 'pick_med') {
+              return (
+                <Link
+                  key={i}
+                  href="/me/medications"
+                  className="rounded-2xl bg-card border border-border p-3 flex items-start gap-3 active:bg-muted/40 transition"
+                >
+                  <span className="text-sm flex-1">
+                    Couldn&rsquo;t pin down{' '}
+                    <span className="font-semibold">&ldquo;{chip.phrase}&rdquo;</span> — tap to
+                    clarify which med you meant.
+                  </span>
+                </Link>
+              );
+            }
+            if (chip.type === 'restart_med' && chip.medication_id) {
+              return (
+                <Link
+                  key={i}
+                  href={`/me/medications/${chip.medication_id}`}
+                  className="rounded-2xl bg-card border border-border p-3 flex items-start gap-3 active:bg-muted/40 transition"
+                >
+                  <span className="text-sm flex-1">
+                    <span className="font-semibold">&ldquo;{chip.phrase}&rdquo;</span> is on the
+                    stopped list — restart it?
+                  </span>
+                </Link>
+              );
+            }
+            // add_med
+            return (
+              <Link
+                key={i}
+                href="/me/medications/new"
+                className="rounded-2xl bg-card border border-border p-3 flex items-start gap-3 active:bg-muted/40 transition"
+              >
+                <span className="text-sm flex-1">
+                  Couldn&rsquo;t find{' '}
+                  <span className="font-semibold">&ldquo;{chip.phrase}&rdquo;</span> on the meds
+                  list — add it?
+                </span>
+              </Link>
             );
           })}
         </div>

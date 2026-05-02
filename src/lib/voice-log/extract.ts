@@ -118,6 +118,35 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
           required: ['symptom', 'present'],
         },
       },
+      medication_events: {
+        type: 'array',
+        description:
+          'Medication events the caregiver explicitly mentioned WITH the drug name stated. If the drug name is NOT stated (e.g., "her water pill"), do not produce an entry — instead add an item to med_match_failures. One entry per dose-status mention.',
+        items: {
+          type: 'object',
+          properties: {
+            drug_name_stated: {
+              type: 'string',
+              description: 'The exact drug name the caregiver said.',
+            },
+            status: {
+              type: 'string',
+              enum: ['taken', 'missed', 'double_dosed', 'refused'],
+            },
+            note: {
+              type: 'string',
+              description: 'Caregiver context, optional (e.g., "second dose", "felt nauseous after").',
+            },
+          },
+          required: ['drug_name_stated', 'status'],
+        },
+      },
+      med_match_failures: {
+        type: 'array',
+        description:
+          'When the caregiver referenced a med without naming it (e.g., "she missed her water pill"), record the phrase here so the post-record UI can prompt for clarification. Do NOT guess which medication.',
+        items: { type: 'string' },
+      },
       day_level: {
         type: 'object',
         description:
@@ -159,7 +188,15 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
           'OPTIONAL. ONE completeness question if something obvious is missing (e.g., "You mentioned weight but not how she\'s breathing — anything to note?"). Empty string if nothing important is missing. NEVER ask more than one. NEVER ask leading or alarming questions.',
       },
     },
-    required: ['readings', 'symptom_events', 'day_level', 'caregiver_summary', 'ai_reasoning'],
+    required: [
+      'readings',
+      'symptom_events',
+      'medication_events',
+      'med_match_failures',
+      'day_level',
+      'caregiver_summary',
+      'ai_reasoning',
+    ],
   },
 };
 
@@ -198,6 +235,12 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - "she's been confused all morning" → { symptom: "cognition_change", present: true, severity: 2 }
 - Symptoms with severity scales: dyspnea, swelling, fatigue, cognition_change. Other symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety) are boolean — fill present, omit severity.
 - Caregiver said nothing about a symptom → DO NOT include it. Empty array is correct when nothing was said.
+
+## medication_events[] / med_match_failures[]
+- If the caregiver mentions a medication BY NAME with a status (took, missed, skipped, double-dosed, refused), produce one medication_events[] entry with the exact drug name they said and the matching status. Examples: "Mom took her Lasix this morning" → { drug_name_stated: "Lasix", status: "taken" }. "She missed her evening Bumex" → { drug_name_stated: "Bumex", status: "missed" }. "I gave her an extra Lasix" → { drug_name_stated: "Lasix", status: "double_dosed" }. "She refused her metoprolol" → { drug_name_stated: "metoprolol", status: "refused" }.
+- If the caregiver references a drug ONLY by class or nickname ("her water pill," "the heart pill," "the blood thinner") with NO drug name, do NOT produce a medication_events[] entry. Add the phrase to med_match_failures[] instead. Examples: "she missed her water pill last night" → med_match_failures: ["water pill"]. "took her heart pill" → med_match_failures: ["heart pill"].
+- This rule has NO exceptions. Do not guess which medication the caregiver meant — the app shows the match failures to the caregiver for clarification.
+- Caregiver mentioned no medications → both arrays are empty. That is correct.
 
 ## day_level
 - pillow_count: see the field rule below.
@@ -282,9 +325,17 @@ export type DayLevelExtraction = {
   activity_tolerance_change?: string;
 };
 
+export type MedicationEventExtraction = {
+  drug_name_stated: string;
+  status: 'taken' | 'missed' | 'double_dosed' | 'refused';
+  note?: string;
+};
+
 export type ExtractionResult = {
   readings: ReadingExtraction[];
   symptomEvents: SymptomEventExtraction[];
+  medicationEvents: MedicationEventExtraction[];
+  medMatchFailures: string[];
   dayLevel: DayLevelExtraction;
   caregiverSummary: string;
   aiReasoning: string;
@@ -339,6 +390,8 @@ REMINDER: only include readings, symptom_events, and day_level fields the caregi
   const input = toolUseBlock.input as {
     readings?: ReadingExtraction[];
     symptom_events?: SymptomEventExtraction[];
+    medication_events?: MedicationEventExtraction[];
+    med_match_failures?: string[];
     day_level?: DayLevelExtraction;
     caregiver_summary: string;
     ai_reasoning: string;
@@ -348,6 +401,8 @@ REMINDER: only include readings, symptom_events, and day_level fields the caregi
   return {
     readings: input.readings ?? [],
     symptomEvents: input.symptom_events ?? [],
+    medicationEvents: input.medication_events ?? [],
+    medMatchFailures: input.med_match_failures ?? [],
     dayLevel: input.day_level ?? {},
     caregiverSummary: input.caregiver_summary,
     aiReasoning: input.ai_reasoning,
