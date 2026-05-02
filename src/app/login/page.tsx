@@ -11,9 +11,11 @@ export default async function LoginPage({
   const { error, notice } = await searchParams;
 
   return (
-    <main className="relative min-h-dvh overflow-hidden bg-background">
+    <main className="relative isolate min-h-dvh overflow-hidden bg-background">
       {/* Full-bleed hero photo. object-cover with center positioning keeps the
-          subjects' faces in frame across phone and desktop aspect ratios. */}
+          subjects' faces in frame across phone and desktop aspect ratios.
+          `isolate` on the parent ensures the negative z-index stays within
+          <main>'s stacking context (otherwise it falls behind the bg fill). */}
       <Image
         src="/login-hero.png"
         alt="A caregiver embracing her mother."
