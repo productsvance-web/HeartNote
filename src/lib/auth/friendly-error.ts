@@ -34,6 +34,9 @@ export function friendlyError(key: string): string {
     case 'rate_limited':
       return 'Too many attempts. Wait a minute and try again.';
 
+    case 'delete_failed':
+      return 'Could not delete your account. Try again, or contact support.';
+
     default:
       return 'Something went wrong on our end. Try again, or use a different sign-in method.';
   }

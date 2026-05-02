@@ -1,10 +1,17 @@
 import { redirect } from 'next/navigation';
-import { User, LogOut } from 'lucide-react';
+import { User, LogOut, AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
+import { friendlyError } from '@/lib/auth/friendly-error';
 import { signOut } from './actions';
+import { DeleteAccountButton } from './delete-account-button';
 
-export default async function MePage() {
+export default async function MePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -30,6 +37,19 @@ export default async function MePage() {
         <p className="text-sm text-muted-foreground">Settings</p>
         <h1 className="font-display text-3xl text-foreground mt-1">Me</h1>
       </header>
+
+      {error && (
+        <div
+          className="mt-4 mx-4 rounded-2xl p-4 flex gap-3 items-start"
+          style={{
+            background: 'var(--status-alert-soft)',
+            color: 'var(--status-alert-foreground)',
+          }}
+        >
+          <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+          <p className="text-sm leading-relaxed">{friendlyError(error)}</p>
+        </div>
+      )}
 
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
         <div className="flex items-center gap-4">
@@ -86,6 +106,10 @@ export default async function MePage() {
             Sign out
           </button>
         </form>
+      </section>
+
+      <section className="mt-3 mx-4 pb-8">
+        <DeleteAccountButton />
       </section>
     </PhoneShell>
   );

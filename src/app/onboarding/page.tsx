@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { OnboardingWizard } from './wizard';
+import { DeleteAccountLink } from '../me/delete-account-button';
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -25,6 +26,9 @@ export default async function OnboardingPage() {
             initialDisplayName={profile?.display_name ?? ''}
             initialTimezone={profile?.timezone ?? 'America/New_York'}
           />
+        </div>
+        <div className="mt-4 text-center">
+          <DeleteAccountLink />
         </div>
       </div>
     </main>
