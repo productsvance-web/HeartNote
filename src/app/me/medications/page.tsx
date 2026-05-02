@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRight, Plus, Pill } from 'lucide-react';
+import { ChevronRight, Plus, Pill, Camera } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { MED_CLASS_LABEL } from '@/lib/medications/classes';
@@ -95,13 +95,20 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
         )}
       </section>
 
-      <section className="mx-4 mt-4">
+      <section className="mx-4 mt-4 space-y-2">
         <Link
           href="/me/medications/new"
           className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold border border-border bg-card"
         >
           <Plus size={16} />
           Add medication
+        </Link>
+        <Link
+          href="/me/medications/scan"
+          className="w-full flex items-center justify-center gap-2 rounded-full px-6 py-3 text-xs font-medium text-muted-foreground"
+        >
+          <Camera size={14} />
+          Scan a label
         </Link>
       </section>
 

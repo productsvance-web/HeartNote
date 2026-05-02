@@ -103,24 +103,21 @@ async function resolvePatient(
   return data;
 }
 
-export async function addMedication(payload: MedicationPayload): Promise<ActionResult> {
+// Insert one medication for a resolved patient. Validate, classify,
+// dose-unit-check, insert. NO redirect, NO revalidatePath. The caller
+// owns those side effects so this can be reused from batch contexts
+// (scan flow) without hijacking the response.
+async function insertOneMedication(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  payload: MedicationPayload
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const parsed = MedicationPayloadSchema.safeParse(payload);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
-
-  const patient = await resolvePatient(supabase, user.id);
-  if (!patient) return { ok: false, error: 'No patient on file.' };
-
   const v = parsed.data;
-  // RxNorm classification is the only source of drug_class — caregiver no
-  // longer overrides at the form layer.
+  // RxNorm classification is the only source of drug_class.
   const classification = await classifyDrugByName(v.drugName);
 
   if (v.dose) {
@@ -135,7 +132,7 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   const { data: inserted, error: insertError } = await supabase
     .from('medications')
     .insert({
-      patient_id: patient.id,
+      patient_id: patientId,
       drug_name: v.drugName,
       drug_class: classification.medClass,
       dose: v.dose || null,
@@ -153,10 +150,74 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   if (insertError || !inserted) {
     return { ok: false, error: insertError?.message ?? 'Insert failed' };
   }
+  return { ok: true, id: inserted.id };
+}
+
+export async function addMedication(payload: MedicationPayload): Promise<ActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
+
+  const patient = await resolvePatient(supabase, user.id);
+  if (!patient) return { ok: false, error: 'No patient on file.' };
+
+  const result = await insertOneMedication(supabase, patient.id, payload);
+  if (!result.ok) return result;
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications?added=${inserted.id}`);
+  redirect(`/me/medications?added=${result.id}`);
+}
+
+// Batch insert path used by the scan flow — both single-card "Add to my
+// list" (array of one) and "Add all" (array of many). No redirect: the
+// caller stays on /me/medications/scan and updates client state per row.
+// Returns indexes into the input array so the UI can keep failed rows
+// on screen with inline error messages.
+export async function addExtractedMedications(
+  payloads: MedicationPayload[]
+): Promise<{ added: number; failedIndexes: number[]; errors: string[] }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return {
+      added: 0,
+      failedIndexes: payloads.map((_, i) => i),
+      errors: payloads.map(() => 'Session expired. Please sign in again.'),
+    };
+  }
+  const patient = await resolvePatient(supabase, user.id);
+  if (!patient) {
+    return {
+      added: 0,
+      failedIndexes: payloads.map((_, i) => i),
+      errors: payloads.map(() => 'No patient on file.'),
+    };
+  }
+
+  const failedIndexes: number[] = [];
+  const errors: string[] = payloads.map(() => '');
+  let added = 0;
+  for (let i = 0; i < payloads.length; i++) {
+    const result = await insertOneMedication(supabase, patient.id, payloads[i]);
+    if (result.ok) {
+      added++;
+    } else {
+      failedIndexes.push(i);
+      errors[i] = result.error;
+    }
+  }
+
+  if (added > 0) {
+    revalidatePath('/me/medications');
+    revalidatePath('/dashboard');
+  }
+
+  return { added, failedIndexes, errors };
 }
 
 export async function updateMedication(
