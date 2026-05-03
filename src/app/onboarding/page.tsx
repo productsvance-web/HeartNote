@@ -28,7 +28,7 @@ export default async function OnboardingPage() {
           />
         </div>
         <div className="mt-4 text-center">
-          <DeleteAccountLink />
+          <DeleteAccountLink email={user.email ?? ''} />
         </div>
       </div>
     </main>
