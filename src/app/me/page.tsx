@@ -109,7 +109,7 @@ export default async function MePage({
       </section>
 
       <section className="mt-3 mx-4 pb-8">
-        <DeleteAccountButton />
+        <DeleteAccountButton email={user.email ?? ''} />
       </section>
     </PhoneShell>
   );

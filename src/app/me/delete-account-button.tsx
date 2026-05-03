@@ -4,8 +4,9 @@ import { useFormStatus } from 'react-dom';
 import { Trash2 } from 'lucide-react';
 import { deleteAccount } from './actions';
 
-const CONFIRM_MSG =
-  'This will permanently delete your account and all data. Continue?';
+function buildConfirmMessage(email: string) {
+  return `This will permanently delete ${email} and all data. Continue?`;
+}
 
 function ButtonInner() {
   const { pending } = useFormStatus();
@@ -34,12 +35,12 @@ function LinkInner() {
   );
 }
 
-function FormShell({ children }: { children: React.ReactNode }) {
+function FormShell({ email, children }: { email: string; children: React.ReactNode }) {
   return (
     <form
       action={deleteAccount}
       onSubmit={(e) => {
-        if (!window.confirm(CONFIRM_MSG)) e.preventDefault();
+        if (!window.confirm(buildConfirmMessage(email))) e.preventDefault();
       }}
     >
       {children}
@@ -47,17 +48,17 @@ function FormShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function DeleteAccountButton() {
+export function DeleteAccountButton({ email }: { email: string }) {
   return (
-    <FormShell>
+    <FormShell email={email}>
       <ButtonInner />
     </FormShell>
   );
 }
 
-export function DeleteAccountLink() {
+export function DeleteAccountLink({ email }: { email: string }) {
   return (
-    <FormShell>
+    <FormShell email={email}>
       <LinkInner />
     </FormShell>
   );
