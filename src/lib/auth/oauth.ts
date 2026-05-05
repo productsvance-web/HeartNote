@@ -14,6 +14,21 @@ import { resolveOrigin } from './origin';
 // wouldn't have an email to attach the identity to.
 export async function signInWithGoogle(failureRedirect: string): Promise<void> {
   const supabase = await createClient();
+
+  // Clear any prior local session before initiating a new OAuth round-trip.
+  // Closes the cookie-bleed where account A's cookies persist when the user
+  // picks account B on Google's chooser. `scope: 'local'` only deletes
+  // cookies — no network round-trip to revoke the refresh token, since the
+  // new OAuth will overwrite cookies anyway. If signOut throws (e.g. no
+  // existing session, or transient cookie-store failure), log and continue:
+  // the failure is benign because the OAuth round-trip overwrites cookies on
+  // success, and blocking sign-in on signOut failure would lock users out.
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch (err) {
+    console.error('[signInWithGoogle] pre-OAuth signOut failed:', err);
+  }
+
   const origin = resolveOrigin(await headers());
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
