@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { OnboardingWizard } from './wizard';
 import { DeleteAccountLink } from '../me/delete-account-button';
+import { signOut } from '../me/actions';
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -27,8 +28,21 @@ export default async function OnboardingPage() {
             initialTimezone={profile?.timezone ?? 'America/New_York'}
           />
         </div>
+        {/* Sign out is the primary escape (low-stakes, reversible). Delete is
+            secondary, visually de-emphasized, and lives below. Two visually
+            equivalent links here was the bug class this PR is closing. */}
         <div className="mt-4 text-center">
-          <DeleteAccountLink email={user.email ?? ''} />
+          <form action={signOut}>
+            <button
+              type="submit"
+              className="text-sm font-medium text-foreground underline"
+            >
+              Not you? Sign out
+            </button>
+          </form>
+          <div className="mt-3">
+            <DeleteAccountLink email={user.email ?? ''} />
+          </div>
         </div>
       </div>
     </main>
