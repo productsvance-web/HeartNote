@@ -209,7 +209,24 @@ export function MedicationWizard({ fromScan }: Props) {
             form={state.form}
             pillsPerDose={state.pillsPerDose}
             dosesPerDay={state.dosesPerDay}
-            onChange={(patch) => setState((s) => ({ ...s, ...patch }))}
+            onChange={(patch) =>
+              setState((s) => {
+                // Changing dosesPerDay invalidates the existing time
+                // schedule: PRN means no times, and a different count
+                // means the array length is wrong. Clearing here avoids
+                // a save-time CHECK constraint failure and a
+                // .trim()-on-undefined crash if the user ever returns
+                // to step 5 with a stale array.
+                const dosesChanged =
+                  patch.dosesPerDay !== undefined &&
+                  patch.dosesPerDay !== s.dosesPerDay;
+                return {
+                  ...s,
+                  ...patch,
+                  scheduleTimes: dosesChanged ? null : s.scheduleTimes,
+                };
+              })
+            }
             onContinue={goNext}
           />
         )}

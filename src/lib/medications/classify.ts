@@ -101,7 +101,12 @@ export async function classifyDrugByName(drugName: string): Promise<ClassifyResu
       return { medClass: 'other' };
     }
 
-    const inner = await classifyByRxcuiInner(rxcui, suggestedName ?? trimmed, controller.signal);
+    const inner = await classifyByRxcuiInner(
+      rxcui,
+      suggestedName ?? trimmed,
+      controller.signal,
+      `[classifyDrugByName] for "${trimmed}"`
+    );
     return { ...inner, rxcui, suggestedName };
   } catch (err) {
     const reason =
@@ -126,7 +131,12 @@ export async function classifyByRxcui(rxcui: string): Promise<MedClass> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const inner = await classifyByRxcuiInner(rxcui, '', controller.signal);
+    const inner = await classifyByRxcuiInner(
+      rxcui,
+      '',
+      controller.signal,
+      `[classifyByRxcui] for ${rxcui}`
+    );
     return inner.medClass;
   } catch (err) {
     const reason =
@@ -145,10 +155,13 @@ export async function classifyByRxcui(rxcui: string): Promise<MedClass> {
 // Shared inner: ATC class + (optional) drugs lookup for strengths.
 // `nameForStrengths` empty skips the drugs-by-name call; the wizard path
 // uses this shortcut because strengths come from getDrugDetails instead.
+// `logTag` keeps ops grep patterns stable per caller (so existing
+// "[classifyDrugByName]" log searches still match).
 async function classifyByRxcuiInner(
   rxcui: string,
   nameForStrengths: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  logTag: string
 ): Promise<{ medClass: MedClass; allowedStrengths?: AllowedStrengths }> {
   const [classResp, drugsResp] = await Promise.all([
     fetch(
@@ -176,7 +189,7 @@ async function classifyByRxcuiInner(
     medClass = classifyByAtcCodes(codes);
   } else {
     console.warn(
-      `[classify] RxClass HTTP ${classResp.status} for ${rxcui} — defaulting to 'other'`
+      `${logTag}: RxClass HTTP ${classResp.status} — defaulting to 'other'`
     );
   }
 

@@ -41,7 +41,7 @@ export function StepTimes({
             key={i}
             type="time"
             className="w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            value={times[i]}
+            value={times[i] ?? ''}
             onChange={(e) => setTimeAt(i, e.target.value)}
           />
         ))}
@@ -64,7 +64,9 @@ export function StepTimes({
           onClick={() => {
             // Empty/partial values are treated as "no times" so the row
             // doesn't fail the schedule_times-length CHECK constraint.
-            const filled = times.every((t) => t.trim().length > 0);
+            const filled = times.every(
+              (t) => typeof t === 'string' && t.trim().length > 0
+            );
             onChange(filled ? times : null);
             onContinue();
           }}
