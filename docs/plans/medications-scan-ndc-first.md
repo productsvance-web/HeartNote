@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** When a prescription label carries an NDC, use that NDC as the canonical key for `drug_name`, `rxcui`, `ingredient`, `form`, and `strength` instead of trusting OCR'd text. Sig-derived fields (`doses_per_day`, `is_dose_change`) still come from OCR. Manual-entry wizard path is untouched.
+**Goal:** When a prescription label carries an NDC, use that NDC as the canonical key for `drug_name`, `rxcui`, `ingredient`, `form`, and `strength` instead of trusting OCR'd text. Sig-derived fields (`doses_per_day`, `is_dose_change`) still come from OCR. Manual-entry wizard already writes `rxcui/ingredient/form` through its own action (`addMedicationFromWizard`); we don't touch that path.
 
-**Architecture:** The vision model gains one optional output (`ndc`). When present, the scan API resolves it through RxNav's NDC endpoints (`/ndcstatus` + `/related`) and merges canonical product fields back into the response *before* returning to the client. The scan-review card renders canonical names when resolved, OCR'd names otherwise. NDC is also persisted on the medications row so re-scans of the same bottle are recognizable. Fan-out is concurrency-bounded and 1500ms-deadlined, matching the existing typed-wizard resolver.
+**Architecture:** The vision model gains one optional output (`ndc`). When present and format-valid, the scan API resolves it through RxNav's NDC endpoints and merges canonical product fields back into the response *before* returning to the client. The scan-review card renders canonical names when resolved, OCR'd names otherwise. NDC is also persisted on the medications row so re-scans of the same bottle are recognizable. Fan-out reuses the existing `mapWithConcurrency` helper from `rxnorm.ts` for an 8-parallel cap and 1500ms deadline. The scan flow's action (`addExtractedMedications` → `insertOneMedication` in `actions.ts`) does NOT currently write `rxcui/ingredient/form`; this PR fixes that gap as part of Task 8.
 
 **Tech Stack:** Next.js 16 App Router · TypeScript · Vertex AI / Gemini 2.5 Flash · NLM RxNav REST (no key) · Supabase (Postgres + RLS) · Vitest
 
@@ -44,7 +44,7 @@ If you've never touched this app before, read these first (in order):
 - `src/lib/medications/scan/schema.ts` — add `ndc: z.string().nullable()` to `ExtractedMedSchema`. Add `ndc` to `extractedMedsResponseSchema` (Vertex `responseSchema` shape).
 - `src/lib/medications/scan/extract.ts` — after Vertex returns and Zod validation passes, fan out `resolveByNdc` for every med with a non-null `ndc`. Bounded concurrency, 1500ms shared deadline. Merge canonical fields into a new return shape: `ResolvedMed` (renamed wider type). Return `{ medications: ResolvedMed[], truncated }`.
 - `src/app/api/medications/scan/route.ts` — no logic changes; the route already returns whatever `extractMedicationsFromImage` produces. Verify the response JSON shape matches what the client expects.
-- `src/app/me/medications/scan/scan-review-card.tsx` — when `med.canonicalName` is set, render it as the drug-name input value (caregiver can still edit). Show a small "From RxNorm" / "From label" badge so caregiver knows which source was used.
+- `src/app/me/medications/scan/scan-review-card.tsx` — when `med.canonicalName` is set, render it as the drug-name input value (caregiver can still edit). Show a small "Verified" / "Read from label" badge above the input so the caregiver knows which source was used.
 - `src/app/me/medications/scan/extracted-to-payload.ts` — pass through `ndc`, `rxcui`, `ingredient`, `form` from the resolved med into `MedicationPayload`. Prefer canonical name over OCR'd name when canonical exists.
 - `src/app/me/medications/actions.ts` — `MedicationPayloadSchema` accepts the four new optional fields. `addExtractedMedications` and `addMedication` persist them.
 
@@ -56,12 +56,13 @@ If you've never touched this app before, read these first (in order):
 
 ### Out of scope (explicit non-goals)
 
-- Manual-entry wizard's name-based search (`searchDrug`) — not touched.
+- Manual-entry wizard's drug-search algorithm (`searchDrug`) and its action (`addMedicationFromWizard`) — not touched. The wizard already writes `rxcui/ingredient/form` correctly.
 - Sig parsing (pills_per_dose, schedule_times). Still future work, separate plan.
 - NDC-based duplicate detection ("you already added this prescription") — separate feature.
 - Backfilling NDC for medications added before this PR. Pre-launch, no backfill (per CLAUDE.md no-backwards-compat rule).
 - Non-US labels / international codes (PZN, GTIN). Out of scope.
 - Cross-checking OCR'd drug name against NDC's canonical name and surfacing a discrepancy banner. Add to "Future improvements" — useful, but the canonical-name-replaces-OCR behavior already mitigates the wrong-bottle-wrong-photo failure mode.
+- Switching to RxNav's `/ndcproperties.json` single-call endpoint as a latency optimization. The two-call approach (`/ndcstatus` + `/related?tty=IN+SCDF`) is simpler to test and bounded by the same 1500ms deadline; the marginal latency win isn't worth the response-shape uncertainty in v1. Documented in §Risks for revisit.
 
 ---
 
@@ -77,10 +78,11 @@ If you've never touched this app before, read these first (in order):
 
 ### Functional — happy path
 
-- [ ] Photo of a US prescription label that contains a visible NDC: scan response includes `ndc` (string, format `\d{4,5}-\d{3,4}-\d{1,2}`), `rxcui` (RxNorm SCD or higher), `ingredient` (lowercase generic name string), `form` (RxNorm display name e.g. `"Oral Tablet"`), `strength` (e.g. `"2.5 MG"`), `canonicalName` (e.g. `"Midodrine HCl 2.5 MG Oral Tablet"`).
+- [ ] Photo of a US prescription label that contains a visible NDC: scan response includes `ndc` (string, format matches one of `5-4-2`, `5-3-2`, `4-4-2` hyphenated, OR 10/11 unhyphenated digits), `rxcui` (RxNorm SCD or higher), `ingredient` (lowercase generic name string), `form` (RxNorm display name e.g. `"Oral Tablet"`), `strength` (e.g. `"2.5 MG"`), `canonicalName` (e.g. `"Midodrine HCl 2.5 MG Oral Tablet"`).
 - [ ] Scan-review card for an NDC-resolved med shows `canonicalName` in the Drug Name input by default, not the OCR'd `drug_name`.
-- [ ] Scan-review card displays a small "From RxNorm" badge on the drug-name cell when `canonicalName` is present, and "From label" otherwise.
+- [ ] Scan-review card displays a small "Verified" badge on the drug-name cell when `canonicalName` is present, and "Read from label" otherwise.
 - [ ] On save, the medications row inserts with `ndc`, `rxcui`, `ingredient`, `form` columns populated.
+- [ ] When `is_dose_change=true` on a scan-extracted med, `resolveByNdc` is NOT called for that med (verifiable: no `/ndcstatus` request in the network panel for that entry); canonical fields stay null. The non-interactive notice card renders as today; build convention #6 unchanged.
 
 ### Edge cases
 
@@ -88,7 +90,7 @@ If you've never touched this app before, read these first (in order):
 - [ ] Photo with NDC, but RxNav returns "not found" (obscure or obsolete NDC): med entry has `ndc` populated, all RxNorm fields `null`, `canonicalName: null`. Caregiver still sees OCR'd drug_name and can save manually.
 - [ ] Model returns an NDC-shaped string that fails format validation (e.g., `"561-292-4511"` — phone-number-shaped, or `"6307050"` — Rx-number-shaped, or partial like `"72888-0112"`): no RxNav call is made; med entry has `ndc` populated verbatim (transparency — caregiver sees what the model thought it saw), all RxNorm fields `null`. Verifiable: in dev tools network panel, `/ndcstatus.json` is NOT requested for that med.
 - [ ] Photo with multiple meds, mix of NDC-bearing and not (e.g., one bottle photo + one printout in the same scan). Each med resolved independently.
-- [ ] NDC printed in 10-digit format (`72888-112-01`) versus 11-digit (`72888-0112-01`): both formats round-trip through RxNav successfully. We pass the string verbatim; RxNav handles segment-padding.
+- [ ] NDC printed in 10-digit hyphenated (`72888-112-01`), 11-digit hyphenated (`72888-0112-01`), or unhyphenated 10/11-digit (`72888011201`): all four formats round-trip through RxNav successfully. We pass the string verbatim after format-validation; RxNav handles segment-padding internally.
 - [ ] First-time user, empty medications table: scan inserts the first row(s) with NDC populated.
 
 ### Error states
@@ -107,7 +109,7 @@ If you've never touched this app before, read these first (in order):
 ### Persistence
 
 - [ ] `medications.ndc` column added (text, nullable). Pre-existing rows: NULL.
-- [ ] On scan-confirm save, the inserted row has `ndc`, `rxcui`, `ingredient`, `form` populated when extraction supplied them. Manual-entry wizard rows still populate `rxcui/ingredient/form` (unchanged from current behavior) and write `ndc: NULL`.
+- [ ] On scan-confirm save, the inserted row has `ndc`, `rxcui`, `ingredient`, `form` populated when extraction supplied them. Wizard path remains unchanged (already writes `rxcui/ingredient/form` via `addMedicationFromWizard`).
 - [ ] No client-side caching of resolved NDCs in this PR. (Separate future PR can add edge-cache or runtime-cache for popular NDCs.)
 
 ### Permissions / RLS
@@ -128,7 +130,7 @@ If you've never touched this app before, read these first (in order):
    from this conversation (or any US Rx label with a visible NDC).
 3. Wait ≤ 5 seconds. The review card should display:
      - Drug name = "Midodrine HCl 2.5 MG Oral Tablet" (canonical), with
-       a "From RxNorm" badge.
+       a "Verified" badge above the input.
      - Dose = "2.5 mg" (from the canonical strength).
      - Doses per day = 3 (from the OCR'd sig).
 4. Confirm all three cells, tap "Add to my list," tap save in the form.
@@ -141,8 +143,8 @@ If you've never touched this app before, read these first (in order):
      ingredient = "midodrine"
      form = "Oral Tablet"
 6. Repeat with a screenshot of a printed med list (no NDC). Card shows
-   OCR'd name, "From label" badge. Save still works; row has ndc=null,
-   rxcui=null.
+   OCR'd name, "Read from label" badge. Save still works; row has
+   ndc=null, rxcui=null.
 ```
 
 Reproducible in under 2 minutes per CLAUDE.md AC template.
@@ -205,12 +207,25 @@ git commit -m "feat(medications): add ndc column for scan-flow product identific
 
 **Files:**
 - Create: `src/lib/medications/rxnorm-ndc.test.ts`
+- Modify: `package.json` (add a test script for the new file)
 
-- [ ] **Step 1: Write the failing test file**
+> **Test framework note:** this repo uses Node's built-in `node:test` runner (not Vitest, not Jest). Pattern reference: `src/lib/medications/rxnorm.test.ts`. Live HTTP is replaced by stubbing `globalThis.fetch`.
+
+- [ ] **Step 1: Write the failing test file using `node:test`**
 
 ```ts
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { resolveByNdc } from './rxnorm-ndc';
+// Unit tests for src/lib/medications/rxnorm-ndc.ts. Stubs globalThis.fetch
+// rather than hitting live RxNav so the suite is hermetic. Pattern mirrors
+// the structure of rxnorm.test.ts (node:test + node:assert/strict).
+//
+// Run from repo root:
+//   npm run test:rxnorm-ndc
+// Or directly:
+//   node --test --experimental-strip-types src/lib/medications/rxnorm-ndc.test.ts
+
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { resolveByNdc } from './rxnorm-ndc.ts';
 
 const NDCSTATUS_OK = {
   ndcStatus: {
@@ -224,101 +239,123 @@ const NDCSTATUS_OK = {
 const RELATED_OK = {
   relatedGroup: {
     conceptGroup: [
-      {
-        tty: 'IN',
-        conceptProperties: [{ rxcui: '7092', name: 'midodrine' }],
-      },
-      {
-        tty: 'SCDF',
-        conceptProperties: [
-          { rxcui: '371742', name: 'midodrine Oral Tablet' },
-        ],
-      },
+      { tty: 'IN', conceptProperties: [{ rxcui: '7092', name: 'midodrine' }] },
+      { tty: 'SCDF', conceptProperties: [{ rxcui: '371742', name: 'midodrine Oral Tablet' }] },
     ],
   },
 };
 
+let originalFetch: typeof globalThis.fetch;
+
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+function stubFetch(handler: (url: string) => Promise<Response> | Response): void {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    return handler(url);
+  }) as typeof globalThis.fetch;
+}
+
 describe('resolveByNdc', () => {
-  let originalFetch: typeof globalThis.fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.useRealTimers();
-  });
-
   it('resolves a known NDC to ingredient + form + strength', async () => {
-    const mockFetch = vi.fn(async (url: string) => {
-      if (url.includes('ndcstatus')) {
-        return new Response(JSON.stringify(NDCSTATUS_OK), { status: 200 });
-      }
-      if (url.includes('related')) {
-        return new Response(JSON.stringify(RELATED_OK), { status: 200 });
-      }
+    stubFetch(async (url) => {
+      if (url.includes('ndcstatus')) return new Response(JSON.stringify(NDCSTATUS_OK), { status: 200 });
+      if (url.includes('related')) return new Response(JSON.stringify(RELATED_OK), { status: 200 });
       throw new Error('unexpected url: ' + url);
     });
-    globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
 
     const result = await resolveByNdc('72888-0112-01');
-    expect(result).not.toBeNull();
-    expect(result!.rxcui).toBe('866428');
-    expect(result!.ingredient).toBe('midodrine');
-    expect(result!.form).toBe('Oral Tablet');
-    expect(result!.strength).toBe('2.5 MG');
-    expect(result!.canonicalName).toBe('Midodrine Hydrochloride 2.5 MG Oral Tablet');
+    assert.ok(result, 'expected non-null result');
+    assert.equal(result!.rxcui, '866428');
+    assert.equal(result!.ingredient, 'midodrine');
+    assert.equal(result!.form, 'Oral Tablet');
+    assert.equal(result!.strength, '2.5 MG');
+    assert.equal(result!.canonicalName, 'Midodrine Hydrochloride 2.5 MG Oral Tablet');
   });
 
-  it('returns null when NDC is not found', async () => {
-    globalThis.fetch = vi.fn(async () =>
+  it('returns null when NDC status is not ACTIVE', async () => {
+    stubFetch(async () =>
       new Response(JSON.stringify({ ndcStatus: { status: 'UNKNOWN' } }), { status: 200 }),
-    ) as unknown as typeof globalThis.fetch;
-
-    expect(await resolveByNdc('00000-0000-00')).toBeNull();
+    );
+    assert.equal(await resolveByNdc('00000-0000-00'), null);
   });
 
   it('returns null on HTTP 500', async () => {
-    globalThis.fetch = vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof globalThis.fetch;
-    expect(await resolveByNdc('72888-0112-01')).toBeNull();
+    stubFetch(async () => new Response('', { status: 500 }));
+    assert.equal(await resolveByNdc('72888-0112-01'), null);
   });
 
-  it('returns null on timeout', async () => {
-    globalThis.fetch = vi.fn(
-      () => new Promise((_resolve, reject) => setTimeout(() => reject(new Error('AbortError')), 2000)),
-    ) as unknown as typeof globalThis.fetch;
-    expect(await resolveByNdc('72888-0112-01')).toBeNull();
+  it('returns null when /related has no IN or SCDF group', async () => {
+    stubFetch(async (url) => {
+      if (url.includes('ndcstatus')) return new Response(JSON.stringify(NDCSTATUS_OK), { status: 200 });
+      return new Response(JSON.stringify({ relatedGroup: { conceptGroup: [] } }), { status: 200 });
+    });
+    assert.equal(await resolveByNdc('72888-0112-01'), null);
   });
 
-  it('accepts both 10-digit (5-3-2) and 11-digit (5-4-2) formats verbatim', async () => {
+  it('passes both hyphenated and unhyphenated NDC strings verbatim to RxNav', async () => {
     const seen: string[] = [];
-    globalThis.fetch = vi.fn(async (url: string) => {
+    stubFetch(async (url) => {
       seen.push(url);
-      if (url.includes('ndcstatus')) {
-        return new Response(JSON.stringify(NDCSTATUS_OK), { status: 200 });
-      }
+      if (url.includes('ndcstatus')) return new Response(JSON.stringify(NDCSTATUS_OK), { status: 200 });
       return new Response(JSON.stringify(RELATED_OK), { status: 200 });
-    }) as unknown as typeof globalThis.fetch;
+    });
 
     await resolveByNdc('72888-112-01');
-    expect(seen[0]).toContain('ndc=72888-112-01');
+    assert.ok(seen[0]?.includes('ndc=72888-112-01'));
+
+    seen.length = 0;
+    await resolveByNdc('72888011201');
+    assert.ok(seen[0]?.includes('ndc=72888011201'));
+  });
+
+  it('bails on combination-product conceptName (slash-separator)', async () => {
+    // RxNorm names combination products with " / " between ingredients.
+    // Our parser cannot disambiguate which strength belongs to which
+    // ingredient, so we return null and let the caller fall back to OCR.
+    stubFetch(async (url) => {
+      if (url.includes('ndcstatus')) {
+        return new Response(JSON.stringify({
+          ndcStatus: {
+            status: 'ACTIVE',
+            rxcui: '999',
+            conceptName: 'Losartan 50 MG / Hydrochlorothiazide 12.5 MG Oral Tablet',
+          },
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify(RELATED_OK), { status: 200 });
+    });
+    assert.equal(await resolveByNdc('00000-0000-01'), null);
   });
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Add a test script in `package.json`**
 
-```bash
-npm test -- src/lib/medications/rxnorm-ndc.test.ts
+Find the existing `"test:rxnorm"` script and add an adjacent line. Use Edit, not Write — the file has many other scripts:
+
+```
+    "test:rxnorm-ndc": "node --test --experimental-strip-types src/lib/medications/rxnorm-ndc.test.ts",
 ```
 
-Expected: FAIL — `Cannot find module './rxnorm-ndc'`.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Run the test to verify it fails**
 
 ```bash
-git add src/lib/medications/rxnorm-ndc.test.ts
+npm run test:rxnorm-ndc
+```
+
+Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `./rxnorm-ndc.ts`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/lib/medications/rxnorm-ndc.test.ts package.json
 git commit -m "test(medications): add failing tests for NDC-based RxNorm resolver"
 ```
 
@@ -462,11 +499,19 @@ function stripLeadingIngredient(name: string, ingredient: string): string | null
 // The ingredient prefix may be the salted form ("Midodrine Hydrochloride")
 // while the IN-tty ingredient is the unsalted base ("midodrine").
 // Strategy: find the first numeric token, capture from there to (form-suffix).
+//
+// Combination products use " / " as separator — e.g.,
+//   "Losartan 50 MG / Hydrochlorothiazide 12.5 MG Oral Tablet"
+// Our naive "first digit to form" extraction would yield
+// "50 MG / Hydrochlorothiazide 12.5 MG", which is wrong and persists as
+// a corrupted strength. Many CHF-relevant meds are combos
+// (HCTZ-containing ARBs, fixed-dose β-blocker pairs), so bail explicitly
+// and let the caller fall back to OCR.
 function parseStrength(conceptName: string, _ingredient: string, form: string): string | null {
+  if (conceptName.includes(' / ')) return null;
   const suffix = ' ' + form;
   if (!conceptName.endsWith(suffix)) return null;
   const head = conceptName.slice(0, -suffix.length);
-  // First digit position
   const m = /\d/.exec(head);
   if (!m) return null;
   return head.slice(m.index).trim();
@@ -484,10 +529,10 @@ function errorReason(err: unknown): string {
 - [ ] **Step 2: Run the test to verify it passes**
 
 ```bash
-npm test -- src/lib/medications/rxnorm-ndc.test.ts
+npm run test:rxnorm-ndc
 ```
 
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 3: Lint**
 
@@ -605,23 +650,15 @@ Replace with:
 - Rx number, refill counts, refill dates.
 ```
 
-- [ ] **Step 2: Add NDC extraction guidance with strong null bias**
+- [ ] **Step 2: Add NDC extraction guidance**
 
 In the `# Output rules` section, after the bullet for `is_dose_change`, append:
 
 ```
-- ndc: the National Drug Code as printed on the label, verbatim (e.g., "72888-0112-01" or "72888-112-01"). Hyphen-separated, 10 or 11 digits total.
-
-  **When in doubt, return null.** Returning null is the correct, safe answer — the caregiver still sees the OCR'd drug name and can save the medication manually. A hallucinated NDC routes them to the wrong drug, which is worse than missing the NDC entirely. False negatives are recoverable; false positives are not.
-
-  Set null when ANY of the following is true:
-  - No NDC is printed on the source (handwritten lists, EHR screenshots, OTC packaging without an NDC visible, hospital discharge papers).
-  - You see digits-with-hyphens that might be an NDC but might also be a phone number, Rx number, store number, or barcode caption — if you cannot tell with certainty, return null.
-  - The NDC is partially obscured, blurry, or any character is illegible.
-  - The NDC fails the FDA-mandated digit pattern (5-3-2, 5-4-2, or 4-4-2 segments). Do not "correct" or "complete" a partial NDC.
-
-  Only return a value when you can read every digit unambiguously and the format matches one of the FDA segments above.
+- ndc: the National Drug Code as printed on the label, verbatim. US NDCs are 10 or 11 digits, with or without hyphens (e.g., "72888-0112-01", "72888-112-01", or "72888011201"). Return null when uncertain — false positives route to the wrong drug, false negatives are recoverable. Never invent or "fix" partial reads.
 ```
+
+The format-validation regex in the API layer (extract.ts) is the actual safety net for hallucinated NDCs; this prompt addition exists to bias the model toward null on ambiguous reads.
 
 - [ ] **Step 3: Update the comment block at the top**
 
@@ -661,203 +698,236 @@ git commit -m "feat(medications): instruct extractor to read NDC from labels"
 ### Task 6: Wire NDC resolution into extract.ts
 
 **Files:**
+- Modify: `src/lib/medications/rxnorm.ts` (export `mapWithConcurrency` so we can reuse it; do NOT duplicate)
 - Modify: `src/lib/medications/scan/extract.ts`
 - Create: `src/lib/medications/scan/extract.test.ts`
+- Modify: `package.json` (add a test script for the new file)
 
-- [ ] **Step 1: Write failing tests for the new merged shape**
+> **Test framework note:** same as Task 2 — `node:test`, not Vitest. We don't have a module-mocking facility in `node:test`, so the test design pattern is: inject the resolver via a parameter rather than mocking the import. extract.ts already takes no parameters; we'll thread an optional resolver through for testability.
+
+- [ ] **Step 1: Export `mapWithConcurrency` from `rxnorm.ts`**
+
+In `src/lib/medications/rxnorm.ts`, the helper is currently a private function near the bottom. Change `async function mapWithConcurrency` to `export async function mapWithConcurrency`. No other change.
+
+Also update the comment block at the top of rxnorm.ts to note that `mapWithConcurrency` is now shared (one-line addition):
+
+```ts
+// `mapWithConcurrency` is exported and reused by scan/extract.ts for
+// NDC fan-out — keeps the 8-parallel cap consistent across all RxNav-
+// touching paths.
+```
+
+- [ ] **Step 2: Write failing tests for the new merged shape**
 
 Create `src/lib/medications/scan/extract.test.ts`:
 
 ```ts
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Unit tests for the post-Vertex enrichment logic in extract.ts. We do
+// not exercise the live Vertex call — instead, we test the smaller
+// `enrichMedications` function (added in Task 6 step 4) which takes the
+// already-validated `ExtractedMed[]` and merges in NDC-resolved fields.
+//
+// This split keeps the enrichment logic testable without an HTTP stub
+// for Vertex (which has no test fixture in this repo) and without
+// process.env Vertex credentials.
+//
+// Run from repo root:
+//   npm run test:scan-extract
 
-// Mock both Vertex AI and the RxNorm-NDC resolver so we can exercise the
-// merge logic in extract.ts in isolation. Vitest auto-mocks aren't quite
-// right for this — manual mocks below.
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import type { ExtractedMed } from './schema.ts';
+import type { NdcResolution } from '../rxnorm-ndc.ts';
+import { enrichMedications } from './extract.ts';
 
-vi.mock('@google-cloud/vertexai', async () => {
-  const actual = await vi.importActual<typeof import('@google-cloud/vertexai')>(
-    '@google-cloud/vertexai',
-  );
+const RESOLVED: NdcResolution = {
+  rxcui: '866428',
+  ingredient: 'midodrine',
+  form: 'Oral Tablet',
+  strength: '2.5 MG',
+  canonicalName: 'Midodrine Hydrochloride 2.5 MG Oral Tablet',
+};
+
+function ocrMed(overrides: Partial<ExtractedMed> = {}): ExtractedMed {
   return {
-    ...actual,
-    VertexAI: vi.fn().mockImplementation(() => ({
-      getGenerativeModel: () => ({
-        generateContent: vi.fn(),
-      }),
-    })),
+    drug_name: 'MIDODRINE HCL 2.5MG TABS',
+    dose_value: 2.5,
+    dose_unit: 'mg',
+    doses_per_day: 3,
+    ndc: '72888-0112-01',
+    is_dose_change: false,
+    ...overrides,
   };
-});
-
-vi.mock('@/lib/medications/rxnorm-ndc', () => ({
-  resolveByNdc: vi.fn(),
-}));
-
-import { extractMedicationsFromImage } from './extract';
-import { resolveByNdc } from '@/lib/medications/rxnorm-ndc';
-import { VertexAI, FinishReason } from '@google-cloud/vertexai';
-
-const FAKE_BYTES = new Uint8Array([0xff, 0xd8, 0xff]);
-
-function mockGenerateContent(responseJson: unknown) {
-  const generateContent = vi.fn(async () => ({
-    response: {
-      candidates: [
-        {
-          finishReason: FinishReason.STOP,
-          content: { parts: [{ text: JSON.stringify(responseJson) }] },
-        },
-      ],
-    },
-  }));
-  (VertexAI as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-    getGenerativeModel: () => ({ generateContent }),
-  }));
-  return generateContent;
 }
 
-describe('extractMedicationsFromImage with NDC enrichment', () => {
-  beforeEach(() => {
-    process.env.GOOGLE_VERTEX_AI_PROJECT_ID = 'test';
-    process.env.GOOGLE_VERTEX_AI_LOCATION = 'us-east1';
-    process.env.GOOGLE_VERTEX_AI_CREDENTIALS_JSON = Buffer.from('{}').toString('base64');
-  });
-  afterEach(() => {
-    vi.resetAllMocks();
+describe('enrichMedications', () => {
+  it('merges resolver result when NDC is present and format-valid', async () => {
+    const calls: string[] = [];
+    const out = await enrichMedications([ocrMed()], async (ndc) => {
+      calls.push(ndc);
+      return RESOLVED;
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].rxcui, '866428');
+    assert.equal(out[0].ingredient, 'midodrine');
+    assert.equal(out[0].form, 'Oral Tablet');
+    assert.equal(out[0].canonicalName, 'Midodrine Hydrochloride 2.5 MG Oral Tablet');
+    assert.deepEqual(calls, ['72888-0112-01']);
   });
 
-  it('merges resolveByNdc result into the extracted med', async () => {
-    mockGenerateContent({
-      medications: [
-        {
-          drug_name: 'MIDODRINE HCL 2.5MG TABS',
-          dose_value: 2.5,
-          dose_unit: 'mg',
-          doses_per_day: 3,
-          ndc: '72888-0112-01',
-          is_dose_change: false,
-        },
+  it('leaves canonical fields null when NDC is null and never calls resolver', async () => {
+    let called = false;
+    const out = await enrichMedications([ocrMed({ ndc: null })], async () => {
+      called = true;
+      return RESOLVED;
+    });
+    assert.equal(called, false);
+    assert.equal(out[0].rxcui, null);
+    assert.equal(out[0].canonicalName, null);
+  });
+
+  it('skips resolver when NDC fails format validation (phone-number-shaped)', async () => {
+    let called = false;
+    const out = await enrichMedications([ocrMed({ ndc: '561-292-4511' })], async () => {
+      called = true;
+      return RESOLVED;
+    });
+    assert.equal(called, false);
+    assert.equal(out[0].ndc, '561-292-4511'); // preserved verbatim
+    assert.equal(out[0].rxcui, null);
+  });
+
+  it('skips resolver when is_dose_change=true (build convention #6)', async () => {
+    // Critical: even if the dose-change label has an NDC printed, we must
+    // not enrich it. The notice card never inserts to the medications
+    // table, but if a future code path exposed canonical fields against
+    // a dose-change row it would silently auto-ingest a dose change.
+    let called = false;
+    const out = await enrichMedications(
+      [ocrMed({ is_dose_change: true, ndc: '72888-0112-01' })],
+      async () => {
+        called = true;
+        return RESOLVED;
+      },
+    );
+    assert.equal(called, false);
+    assert.equal(out[0].rxcui, null);
+    assert.equal(out[0].canonicalName, null);
+  });
+
+  it('accepts hyphenated 5-4-2, 5-3-2, 4-4-2 and unhyphenated 10/11-digit', async () => {
+    const accepted: string[] = [];
+    const formats = ['72888-0112-01', '00378-112-01', '0777-3105-02', '72888011201', '0037811201'];
+    await enrichMedications(
+      formats.map((n) => ocrMed({ ndc: n })),
+      async (ndc) => {
+        accepted.push(ndc);
+        return RESOLVED;
+      },
+    );
+    assert.deepEqual(accepted.sort(), formats.slice().sort());
+  });
+
+  it('rejects malformed digit counts (9 digits, 12 digits, letters)', async () => {
+    const calls: string[] = [];
+    const out = await enrichMedications(
+      [
+        ocrMed({ ndc: '123456789' }),       // 9 digits
+        ocrMed({ ndc: '123456789012' }),    // 12 digits
+        ocrMed({ ndc: 'abc-def-gh' }),       // letters
+        ocrMed({ ndc: '7288-8011-2-01' }),   // wrong segmenting
       ],
-    });
-    (resolveByNdc as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      rxcui: '866428',
-      ingredient: 'midodrine',
-      form: 'Oral Tablet',
-      strength: '2.5 MG',
-      canonicalName: 'Midodrine Hydrochloride 2.5 MG Oral Tablet',
-    });
-
-    const out = await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
-    expect(out.medications).toHaveLength(1);
-    const m = out.medications[0];
-    expect(m.ndc).toBe('72888-0112-01');
-    expect(m.rxcui).toBe('866428');
-    expect(m.ingredient).toBe('midodrine');
-    expect(m.form).toBe('Oral Tablet');
-    expect(m.canonicalName).toBe('Midodrine Hydrochloride 2.5 MG Oral Tablet');
+      async (ndc) => {
+        calls.push(ndc);
+        return RESOLVED;
+      },
+    );
+    assert.deepEqual(calls, []);
+    for (const m of out) assert.equal(m.rxcui, null);
   });
 
-  it('leaves canonical fields null when NDC is null', async () => {
-    mockGenerateContent({
-      medications: [
-        {
-          drug_name: 'Furosemide 40 mg',
-          dose_value: 40,
-          dose_unit: 'mg',
-          doses_per_day: 1,
-          ndc: null,
-          is_dose_change: false,
-        },
-      ],
-    });
-    (resolveByNdc as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
-    const out = await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
-    expect(out.medications[0].rxcui).toBeNull();
-    expect(out.medications[0].canonicalName).toBeNull();
-    // Verify resolveByNdc was not called at all when ndc is null
-    expect(resolveByNdc).not.toHaveBeenCalled();
-  });
-
-  it('leaves canonical fields null when resolveByNdc returns null', async () => {
-    mockGenerateContent({
-      medications: [
-        {
-          drug_name: 'Mystery drug',
-          dose_value: null,
-          dose_unit: null,
-          doses_per_day: null,
-          ndc: '99999-9999-99',
-          is_dose_change: false,
-        },
-      ],
-    });
-    (resolveByNdc as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-
-    const out = await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
-    expect(out.medications[0].ndc).toBe('99999-9999-99');
-    expect(out.medications[0].rxcui).toBeNull();
-  });
-
-  it('skips the RxNav call entirely when NDC fails format validation', async () => {
-    mockGenerateContent({
-      medications: [
-        {
-          drug_name: 'Suspicious',
-          dose_value: 10,
-          dose_unit: 'mg',
-          doses_per_day: 1,
-          // Phone-number-shaped string that the model might hallucinate as
-          // an NDC. We must not waste a RxNav round-trip on this.
-          ndc: '561-292-4511',
-          is_dose_change: false,
-        },
-      ],
-    });
-
-    const out = await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
-    expect(resolveByNdc).not.toHaveBeenCalled();
-    expect(out.medications[0].ndc).toBe('561-292-4511');
-    expect(out.medications[0].rxcui).toBeNull();
-    expect(out.medications[0].canonicalName).toBeNull();
-  });
-
-  it('accepts the three FDA-valid NDC formats (5-4-2, 5-3-2, 4-4-2)', async () => {
-    const formats = ['72888-0112-01', '00378-112-01', '0777-3105-02'];
-    for (const ndc of formats) {
-      mockGenerateContent({
-        medications: [
-          {
-            drug_name: 'Test',
-            dose_value: 1,
-            dose_unit: 'mg',
-            doses_per_day: 1,
-            ndc,
-            is_dose_change: false,
-          },
-        ],
-      });
-      (resolveByNdc as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-        rxcui: '1', ingredient: 'x', form: 'Oral Tablet', strength: '1 MG', canonicalName: 'Test',
-      });
-      await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
-      expect(resolveByNdc).toHaveBeenLastCalledWith(ndc);
-    }
+  it('leaves canonical fields null when resolver returns null', async () => {
+    const out = await enrichMedications([ocrMed({ ndc: '99999-9999-99' })], async () => null);
+    // Note: 99999-9999-99 actually IS a valid 5-4-2 format, so resolver
+    // is called. It returns null, we fall back. Verifies the second
+    // null-return code path.
+    assert.equal(out[0].ndc, '99999-9999-99');
+    assert.equal(out[0].rxcui, null);
   });
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails (the merge code doesn't exist yet)**
+- [ ] **Step 3: Add a test script in `package.json`**
 
-```bash
-npm test -- src/lib/medications/scan/extract.test.ts
+```
+    "test:scan-extract": "node --test --experimental-strip-types src/lib/medications/scan/extract.test.ts",
 ```
 
-Expected: FAIL — properties `rxcui`, `ingredient`, `form`, `canonicalName` don't exist on returned items.
+- [ ] **Step 4: Run the test to verify it fails (`enrichMedications` not exported yet)**
 
-- [ ] **Step 3: Implement merge in `extract.ts`**
+```bash
+npm run test:scan-extract
+```
 
-In `src/lib/medications/scan/extract.ts`, replace the bottom of `extractMedicationsFromImage` (from the `validation.success` check onward) with:
+Expected: FAIL — `enrichMedications` not exported from `./extract.ts`.
+
+- [ ] **Step 5: Implement `enrichMedications` and wire it into `extractMedicationsFromImage`**
+
+In `src/lib/medications/scan/extract.ts`, update the imports at the top:
+
+```ts
+import {
+  ExtractionResponseSchema,
+  extractedMedsResponseSchema,
+  type ExtractedMed,
+  type ResolvedMed,
+} from './schema';
+import { EXTRACTION_SYSTEM_PROMPT } from './prompt';
+import { resolveByNdc, type NdcResolution } from '@/lib/medications/rxnorm-ndc';
+import { mapWithConcurrency } from '@/lib/medications/rxnorm';
+```
+
+Add a new exported helper near the bottom of the file (above the existing closing brace, after `extractMedicationsFromImage`). The function takes an injected resolver to keep it unit-testable without HTTP stubs:
+
+```ts
+const NDC_FAN_OUT_LIMIT = 8;
+
+// FDA-valid NDC segment patterns: 5-4-2, 5-3-2, 4-4-2 (hyphenated, 10
+// digits) plus unhyphenated 10/11-digit forms (manufacturer stock /
+// HIPAA-canonical). Validation is the primary safety net for hallucinated
+// NDCs that the structured-output schema can't prevent — e.g., the model
+// might emit a phone number, Rx number, or lot code into the `ndc` field
+// when uncertain. Reject these before they cost a NLM round-trip.
+function isValidNdcFormat(ndc: string): boolean {
+  return /^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2}|\d{10,11})$/.test(ndc);
+}
+
+// Exported for unit test in extract.test.ts. The resolver is injected
+// rather than imported because node:test doesn't have module-mocking;
+// callers in production use `resolveByNdc` directly (see
+// extractMedicationsFromImage below).
+export async function enrichMedications(
+  meds: readonly ExtractedMed[],
+  resolver: (ndc: string) => Promise<NdcResolution | null>,
+): Promise<ResolvedMed[]> {
+  return mapWithConcurrency(meds, NDC_FAN_OUT_LIMIT, async (med): Promise<ResolvedMed> => {
+    // Three guards stack here:
+    //   1. is_dose_change=true → never enrich. Build convention #6.
+    //   2. ndc is null or empty → no enrichment possible.
+    //   3. ndc fails format validation → don't waste a RxNav call.
+    if (med.is_dose_change || !med.ndc || !isValidNdcFormat(med.ndc)) {
+      return { ...med, rxcui: null, ingredient: null, form: null, strength: null, canonicalName: null };
+    }
+    const r = await resolver(med.ndc);
+    if (!r) {
+      return { ...med, rxcui: null, ingredient: null, form: null, strength: null, canonicalName: null };
+    }
+    return { ...med, ...r };
+  });
+}
+```
+
+Then replace the bottom of `extractMedicationsFromImage` (from the `validation.success` check onward):
 
 ```ts
   const validation = ExtractionResponseSchema.safeParse(parsed);
@@ -869,53 +939,13 @@ In `src/lib/medications/scan/extract.ts`, replace the bottom of `extractMedicati
   const all = validation.data.medications;
   const truncated = all.length > MAX_MEDS;
   const trimmed = all.slice(0, MAX_MEDS);
-
-  const enriched = await Promise.all(
-    trimmed.map(async (med): Promise<ResolvedMed> => {
-      // Skip RxNav round-trip for null NDC (no label printed) or for
-      // any string that doesn't match the three FDA-valid NDC segment
-      // patterns (5-4-2, 5-3-2, 4-4-2). The structured-output schema
-      // can't prevent the model from hallucinating an NDC-shaped string
-      // when uncertain (e.g., a phone number, Rx number, lot code), and
-      // at scale a wasted call per scan compounds. Validation is also
-      // a hint to NLM that we're a polite RxNav consumer.
-      if (!med.ndc || !isValidNdcFormat(med.ndc)) {
-        return { ...med, rxcui: null, ingredient: null, form: null, strength: null, canonicalName: null };
-      }
-      const r = await resolveByNdc(med.ndc);
-      if (!r) {
-        return { ...med, rxcui: null, ingredient: null, form: null, strength: null, canonicalName: null };
-      }
-      return { ...med, ...r };
-    }),
-  );
+  const enriched = await enrichMedications(trimmed, resolveByNdc);
 
   return { medications: enriched, truncated };
 }
-
-// FDA NDC segments are 5-4-2, 5-3-2, or 4-4-2 digits, hyphen-separated.
-// Total digits = 10. Anything else is either a non-NDC value the model
-// fabricated, or a corrupted read.
-function isValidNdcFormat(ndc: string): boolean {
-  return /^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2})$/.test(ndc);
-}
 ```
 
-Update the imports at the top to include `ResolvedMed`:
-
-```ts
-import {
-  ExtractionResponseSchema,
-  extractedMedsResponseSchema,
-  type ResolvedMed,
-} from './schema';
-import { EXTRACTION_SYSTEM_PROMPT } from './prompt';
-import { resolveByNdc } from '@/lib/medications/rxnorm-ndc';
-```
-
-Remove the now-unused `ExtractedMed` import since the function returns `ResolvedMed`.
-
-Update the function signature:
+Update the function signature to return the wider type:
 
 ```ts
 export async function extractMedicationsFromImage(
@@ -924,28 +954,28 @@ export async function extractMedicationsFromImage(
 ): Promise<{ medications: ResolvedMed[]; truncated: boolean }>
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 6: Run the test to verify it passes**
 
 ```bash
-npm test -- src/lib/medications/scan/extract.test.ts
+npm run test:scan-extract
 ```
 
-Expected: PASS, 3 tests.
+Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Type-check + lint**
+- [ ] **Step 7: Type-check + lint**
 
 ```bash
 npx tsc --noEmit && npm run lint
 ```
 
-Expected: 0 errors. (You'll catch downstream consumers — `extracted-to-payload.ts`, `scan-review-card.tsx`, `route.ts` — Tasks 7-9 fix them.)
+Expected: 0 errors. (You'll catch downstream consumers — `extracted-to-payload.ts`, `scan-review-card.tsx`, `actions.ts` — Tasks 7-9 fix them.)
 
-If type-check has errors only in those three files: that's expected; commit and proceed.
+If type-check has errors only in those files: that's expected; commit and proceed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/medications/scan/extract.ts src/lib/medications/scan/extract.test.ts
+git add src/lib/medications/rxnorm.ts src/lib/medications/scan/extract.ts src/lib/medications/scan/extract.test.ts package.json
 git commit -m "feat(medications): enrich scan output with NDC-resolved RxNorm fields"
 ```
 
@@ -954,62 +984,90 @@ git commit -m "feat(medications): enrich scan output with NDC-resolved RxNorm fi
 ### Task 7: Update payload adapter to forward canonical fields
 
 **Files:**
-- Modify: `src/app/me/medications/scan/extracted-to-payload.ts`
+- Modify: `src/app/me/medications/scan/extracted-to-payload.ts` (surgical edits — preserve the existing comment)
 
-- [ ] **Step 1: Update the import + signature**
+- [ ] **Step 1: Update the type import**
 
-Replace the file body with:
+Find:
 
 ```ts
-// Adapter at the boundary between the API output schema (Gemini's shape:
-// dose_value + dose_unit as separate fields, doses_per_day nullable for
-// PRN, plus optional NDC-resolved canonical fields) and the form payload
-// schema (a single `dose: string` matching DOSE_FORMAT). Architectural
-// decision #17 in the plan.
-//
-// When `canonicalName` is present, we prefer the RxNorm canonical name
-// over the OCR'd `drug_name` — RxNorm is the source of truth for product
-// identity. When `strength` is present, we prefer it over the OCR'd
-// dose_value/dose_unit pair (same reasoning).
+import type { ExtractedMed } from '@/lib/medications/scan/schema';
+```
 
+Replace with:
+
+```ts
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
-import type { MedicationPayload } from '../actions';
+```
 
+- [ ] **Step 2: Update the function signature**
+
+Find:
+
+```ts
+export function extractedMedToPayload(med: ExtractedMed): MedicationPayload {
+```
+
+Replace with:
+
+```ts
 export function extractedMedToPayload(med: ResolvedMed): MedicationPayload {
-  const drugName = med.canonicalName?.trim() || med.drug_name.trim();
+```
 
-  // Strength from RxNorm wins over OCR'd dose if present. RxNorm strings
-  // are already lowercase-friendly after .toLowerCase().
-  let dose: string;
-  if (med.strength) {
-    dose = med.strength.toLowerCase().trim();
-  } else if (
-    med.dose_value !== null &&
-    med.dose_unit !== null &&
-    med.dose_unit.trim().length > 0
-  ) {
-    dose = `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`;
-  } else {
-    dose = '';
-  }
+- [ ] **Step 3: Replace the dose-string composition to prefer RxNorm strength**
 
+Find:
+
+```ts
+  const dose =
+    med.dose_value !== null && med.dose_unit !== null && med.dose_unit.trim().length > 0
+      ? `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`
+      : '';
+```
+
+Replace with:
+
+```ts
+  // Prefer RxNorm canonical strength when the NDC resolved. Falls back
+  // to OCR'd dose_value + dose_unit otherwise. Empty string when
+  // neither source has a usable value.
+  const dose = med.strength
+    ? med.strength.toLowerCase().trim()
+    : med.dose_value !== null && med.dose_unit !== null && med.dose_unit.trim().length > 0
+      ? `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`
+      : '';
+```
+
+- [ ] **Step 4: Add the four new fields to the returned payload**
+
+Find:
+
+```ts
   return {
-    drugName,
+    drugName: med.drug_name.trim(),
     dose,
-    pillsPerDose: 1,
-    dosesPerDay: med.doses_per_day,
-    scheduleTimes: null,
-    startedAt: '',
+```
+
+Replace with:
+
+```ts
+  return {
+    drugName: (med.canonicalName ?? med.drug_name).trim(),
+    dose,
+```
+
+Then find the existing `notes: '',` line and append four lines after it (inside the same return object):
+
+```ts
     notes: '',
     ndc: med.ndc,
     rxcui: med.rxcui,
     ingredient: med.ingredient,
     form: med.form,
   };
-}
 ```
 
-- [ ] **Step 2: Type-check**
+- [ ] **Step 5: Type-check**
 
 ```bash
 npx tsc --noEmit
@@ -1017,7 +1075,7 @@ npx tsc --noEmit
 
 Expected: errors in `actions.ts` (`MedicationPayload` doesn't have `ndc/rxcui/ingredient/form` yet) and `scan-review-card.tsx` (consumes `ExtractedMed`, now expects `ResolvedMed`). These are fixed in Tasks 8 and 9.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/app/me/medications/scan/extracted-to-payload.ts
@@ -1031,37 +1089,33 @@ git commit -m "feat(medications): scan-payload adapter prefers RxNorm canonical 
 **Files:**
 - Modify: `src/app/me/medications/actions.ts`
 
-> **Read the existing file first** (`Read src/app/me/medications/actions.ts`). It defines `MedicationPayloadSchema`, `MedicationPayload`, `addMedication`, `addExtractedMedications`. The schema is Zod; you'll add four optional fields. The insert mappers in `addMedication` and `addExtractedMedications` need to write the four columns.
+> **Read the existing file first** (`Read src/app/me/medications/actions.ts`). It defines `MedicationPayloadSchema`, `MedicationPayload`, the shared `insertOneMedication` helper (line ~118), `addMedication` (line ~175), and `addExtractedMedications` (line ~215). Both action paths route writes through `insertOneMedication`, so we only need to modify the schema and that one helper.
 
 - [ ] **Step 1: Add fields to `MedicationPayloadSchema`**
 
-In the schema (search for `MedicationPayloadSchema = z.object({`), add these fields alongside the existing ones:
+In the schema (search for `MedicationPayloadSchema = z.object({`), add these fields alongside the existing ones (preserve order — group them at the bottom of the object):
 
 ```ts
-ndc: z.string().nullable().optional(),
-rxcui: z.string().nullable().optional(),
-ingredient: z.string().nullable().optional(),
-form: z.string().nullable().optional(),
+    ndc: z.string().nullable().optional(),
+    rxcui: z.string().nullable().optional(),
+    ingredient: z.string().nullable().optional(),
+    form: z.string().nullable().optional(),
 ```
 
-- [ ] **Step 2: Add fields to the insert mapping in `addMedication`**
+- [ ] **Step 2: Add the fields to the insert mapping in `insertOneMedication`**
 
-In the function that inserts into `medications` (search for `.from('medications')` and `.insert(`), add these to the insert object:
+The function builds an object passed to `supabase.from('medications').insert({...})`. Add these four lines alongside the existing keys (group at the bottom of the insert object):
 
 ```ts
-ndc: payload.ndc ?? null,
-rxcui: payload.rxcui ?? null,
-ingredient: payload.ingredient ?? null,
-form: payload.form ?? null,
+      ndc: payload.ndc ?? null,
+      rxcui: payload.rxcui ?? null,
+      ingredient: payload.ingredient ?? null,
+      form: payload.form ?? null,
 ```
 
-> Note: the migration in Task 1 added `ndc` only. `rxcui`, `ingredient`, `form` already exist (per `supabase/migrations/20260505002059_medications_rxnorm_columns.sql`).
+> Note: the Task 1 migration added `ndc` only. `rxcui`, `ingredient`, `form` already exist as columns (per `supabase/migrations/20260505002059_medications_rxnorm_columns.sql`) but no code currently writes them. This step is what populates them for the first time. Both `addMedication` and `addExtractedMedications` now write the new fields automatically because they share `insertOneMedication`.
 
-- [ ] **Step 3: Same for `addExtractedMedications`**
-
-Find the equivalent insert in `addExtractedMedications` and add the same four fields.
-
-- [ ] **Step 4: Type-check**
+- [ ] **Step 3: Type-check**
 
 ```bash
 npx tsc --noEmit
@@ -1069,11 +1123,11 @@ npx tsc --noEmit
 
 Expected: actions.ts errors gone. Only remaining error should be `scan-review-card.tsx` (Task 9).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/app/me/medications/actions.ts
-git commit -m "feat(medications): persist ndc + rxnorm fields from scan flow"
+git commit -m "feat(medications): persist ndc/rxcui/ingredient/form via insertOneMedication"
 ```
 
 ---
@@ -1163,65 +1217,54 @@ function splitStrength(s: string): { value: string; unit: string } | null {
 }
 ```
 
-- [ ] **Step 4: Add a "From RxNorm" / "From label" badge to the drug-name cell**
+- [ ] **Step 4: Add a "Verified" / "Read from label" badge inline above the drug-name input**
 
-In the JSX where `<Cell label="Drug name" ...>` is rendered, replace it with a Cell that includes a badge:
+The `Cell` component is shared by all three confirm rows (Drug name, Dose, Doses per day). Adding a `badge` prop would change the shared component for one consumer's needs — that's adjacent-code creep. Instead, inline the badge as a sibling element above the input field, inside the existing `<Cell label="Drug name" ...>`'s children.
+
+Find the `<Cell label="Drug name" ...>` block:
 
 ```tsx
 <Cell
   label="Drug name"
-  badge={med.canonicalName ? 'From RxNorm' : 'From label'}
   confirmed={drugNameOK}
   onConfirm={() => setDrugNameOK((v) => !v)}
 >
+  <input
+    className={inputClass}
+    value={drugName}
+    onChange={(e) => {
+      setDrugName(e.target.value);
+      setDrugNameOK(false);
+    }}
+    placeholder="Lasix"
+  />
+</Cell>
 ```
 
-Then update the `Cell` component signature:
+Replace with:
 
 ```tsx
-function Cell({
-  label,
-  badge,
-  confirmed,
-  onConfirm,
-  children,
-}: {
-  label: string;
-  badge?: string;
-  confirmed: boolean;
-  onConfirm: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-medium text-muted-foreground">
-          {label}
-          {badge && (
-            <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-              {badge}
-            </span>
-          )}
-        </span>
-        <button
-          type="button"
-          onClick={onConfirm}
-          aria-label={confirmed ? 'Mark not confirmed' : 'Confirm'}
-          className={
-            confirmed
-              ? 'flex items-center gap-1 rounded-full bg-foreground text-background px-2.5 py-1 text-xs font-semibold'
-              : 'flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground'
-          }
-        >
-          <Check size={12} />
-          {confirmed ? 'Confirmed' : 'Confirm'}
-        </button>
-      </div>
-      {children}
-    </div>
-  );
-}
+<Cell
+  label="Drug name"
+  confirmed={drugNameOK}
+  onConfirm={() => setDrugNameOK((v) => !v)}
+>
+  <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+    {med.canonicalName ? 'Verified' : 'Read from label'}
+  </p>
+  <input
+    className={inputClass}
+    value={drugName}
+    onChange={(e) => {
+      setDrugName(e.target.value);
+      setDrugNameOK(false);
+    }}
+    placeholder="Lasix"
+  />
+</Cell>
 ```
+
+The `Cell` component itself is left untouched.
 
 - [ ] **Step 5: Pass canonical fields through when calling `extractedMedToPayload`**
 
@@ -1289,14 +1332,14 @@ Expected: all five columns populated with non-null values. `drug_name` = canonic
 - [ ] **Step 5: Negative test — NDC-less photo**
 
 Take a photo of a printed med list (or a screenshot of any non-Rx-bottle source) and confirm:
-- The card shows "From label" badge
+- The card shows "Read from label" badge
 - The OCR'd drug name is preserved
 - Save still works
 - The DB row has `ndc=null, rxcui=null, ingredient=null, form=null`
 
 - [ ] **Step 6: Negative test — NDC for an obsolete/unknown product**
 
-If you can find one (or simulate by editing the DOM to inject a bogus NDC into the response), confirm the card falls back to OCR fields.
+Print or hand-mock a label showing `NDC: 00000-0000-00` (a structurally-valid but non-existent NDC that RxNav's `/ndcstatus` will return as `UNKNOWN`). Confirm the card renders OCR'd drug name with the "Read from label" badge and saves successfully with `rxcui=null/ingredient=null/form=null`.
 
 ---
 
@@ -1318,13 +1361,13 @@ npx tsc --noEmit
 
 Expected: 0 errors.
 
-- [ ] **Step 3: Full test suite**
+- [ ] **Step 3: Run all `node:test` scripts**
 
 ```bash
-npm test
+npm run test:rxnorm && npm run test:rxnorm-ndc && npm run test:scan-extract
 ```
 
-Expected: all tests pass.
+Expected: every test passes. (`test:rxnorm` hits live NLM; the other two are hermetic and pass offline.)
 
 - [ ] **Step 4: Production build (timeout 300s, never background per CLAUDE.md)**
 
@@ -1342,7 +1385,7 @@ gh pr create --title "feat(medications): NDC-first product resolution for photo 
 ## Summary
 - Vision model now extracts NDC alongside drug name, dose, and frequency.
 - Server resolves NDC → canonical RxNorm fields (rxcui, ingredient, form, strength, canonicalName) via RxNav before returning to the client.
-- Scan-review card shows canonical name with a "From RxNorm" badge; OCR-only meds keep "From label" behavior.
+- Scan-review card shows canonical name with a "Verified" badge; OCR-only meds show "Read from label".
 - New `medications.ndc` column persists the bottle's NDC for future re-scan + refill features.
 - Manual-entry wizard untouched.
 
@@ -1378,11 +1421,13 @@ git pull --ff-only origin main
 ## Risks and decisions worth flagging in plan-review
 
 1. **Resolution latency on the scan response.** Each NDC adds up to 1500ms to the scan response. With 5 meds and serial-worst-case, that's 7.5s on top of Vertex's ~3-5s. The `Promise.all` here is concurrent across meds, so practically the wall-clock cost is bounded by the slowest single resolution. Verify under realistic conditions; if it's too slow, move resolution to the confirm-click path.
-2. **NDC format validation is in scope.** Reversed an earlier decision after thinking through 70k-account scale: at ~3.5M extractions/year and a plausible 1-3% hallucination rate, even free RxNav calls become an NLM-relationship liability without validation. Plan now validates with `^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2})$` (the three FDA-valid segment patterns) before calling RxNav. Combined with strengthened null-bias guidance in the prompt (Task 5), false positives should be rare.
-3. **"From RxNorm" badge UX.** Caregivers may not know what "RxNorm" is. Alternative: "Verified" / "Unverified" or icon-only. Settled on "From RxNorm / From label" because pre-launch with no caregivers, transparency > polish; revisit when we have user feedback.
+2. **NDC format validation is in scope.** At 70k-account scale (~3.5M extractions/year, plausible 1-3% hallucination rate), free RxNav calls still become an NLM-relationship liability without validation. The regex `^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2}|\d{10,11})$` accepts the three FDA-valid hyphenated segment patterns AND unhyphenated 10/11-digit forms (manufacturer stock and HIPAA-canonical). RxNav handles segment-padding internally; we just validate shape and pass through. The prompt's terse null guidance (Task 5) handles ambiguous reads at the model layer.
+3. **Badge UX wording.** Settled on "Verified" / "Read from label" — caregiver-friendly, no jargon, still transparent about the source. Could iterate to icon-only when we have user feedback. The badge is rendered inline as a sibling of the drug-name input rather than passed as a prop to the shared `Cell` component, to avoid mutating shared UI for one consumer.
 4. **Splitting strength into value+unit.** `splitStrength` only handles the simple `\d+ UNIT` form. RxNorm uses compound forms like `"10 MG/ML"`, `"5 MG/2.5 MG"`, `"5 %"`. Compound forms fall through to OCR — fine for v1 since most ambulatory CHF meds are single-strength solids. Document in code comment.
 5. **No cross-check between OCR'd drug_name and canonical name.** A photo of bottle A with bottle B's NDC partially obscured wouldn't be flagged. The user's manual confirm step is the safety net. Add an explicit mismatch banner if reviewers feel the safety net is too thin.
-6. **`is_dose_change=true` interaction with NDC.** A taper label might still carry an NDC (the prescription was for a real drug; the *instructions* are the dose-change). Today, dose-change rows render a non-interactive notice and don't insert. We should NOT enrich with NDC fields and persist them when `is_dose_change=true`. The current scan-review-card path already early-returns on `is_dose_change=true` — verify in code review that the `addExtractedMedications` path doesn't somehow let dose-change rows through.
+6. **`is_dose_change=true` interaction with NDC — now enforced as a test.** A taper label might still carry an NDC (the prescription was for a real drug; the *instructions* are the dose-change). Today, dose-change rows render a non-interactive notice and don't insert. We must NOT enrich with NDC fields when `is_dose_change=true`, even at the data layer — defense in depth in case a future code change exposes that branch. `enrichMedications` in extract.ts checks `is_dose_change` first and returns the unenriched record with all canonical fields null. Test in extract.test.ts asserts the resolver is never called for `is_dose_change=true` rows. Build convention #6 (CLAUDE.md) territory — load-bearing, not optional.
+
+7. **Two-call resolver (`/ndcstatus` + `/related?tty=IN+SCDF`) vs. one-call (`/ndcproperties.json`).** RxNav exposes a `/ndcproperties.json?id=<ndc>` endpoint that returns ingredient + form + strength + rxcui in a single response. The plan uses the two-call approach because (a) it shares the parsing pattern with the existing typed-wizard resolver, (b) the response shape is fully spec'd in code we already read, and (c) both calls are bounded by the same 1500ms shared deadline so the latency win is bounded. Worth revisiting after we have live latency telemetry — if p95 of the second call is meaningful, switch.
 
 ---
 
