@@ -7,7 +7,6 @@ import { resolveOrigin } from './origin';
 
 // Shared OAuth start. Forms bind the failure-redirect path:
 //   <form action={signInWithGoogle.bind(null, '/login')}>
-// so an OAuth-start failure on /signup bounces back to /signup, not /login.
 //
 // Explicit `scopes` defends against Google Workspace tenants that don't include
 // the email scope by default — without it, those users would sign in but Supabase

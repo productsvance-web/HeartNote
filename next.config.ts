@@ -32,7 +32,6 @@ const nextConfig: NextConfig = {
     // `/me` (bare) is covered by `/me/:path*`. No need for both.
     return [
       { source: '/login', headers: NO_STORE_HEADERS },
-      { source: '/signup', headers: NO_STORE_HEADERS },
       { source: '/onboarding', headers: NO_STORE_HEADERS },
       { source: '/me/:path*', headers: NO_STORE_HEADERS },
       { source: '/auth/:path*', headers: NO_STORE_HEADERS },

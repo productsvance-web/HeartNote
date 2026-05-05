@@ -1,9 +1,9 @@
 # Spec: email/password → email-OTP migration
 
-**Status**: approved, awaiting implementation in a fresh session
-**Author**: Jason + Claude (this session)
-**Date**: 2026-05-04
-**Depends on**: auth-hardening PR (separate, ships first or in parallel — covers `signOut()` before OAuth, Cache-Control on auth pages, lazy admin client, sign-out on `/onboarding`, two new `.claude/rules/*.md` files). This spec assumes those landed; implementer should verify before starting.
+**Status**: approved, in implementation
+**Author**: Jason + Claude
+**Date**: 2026-05-04 (revised post-plan-review)
+**Auth-hardening prerequisite**: landed in commit `ffbda3c` (#29). `signOut({ scope: 'local' })` in `oauth.ts`, `Cache-Control` headers in `next.config.ts`, `auth-sessions.md` + `destructive-actions.md` rule files all in place.
 
 ## Goal
 
@@ -18,11 +18,13 @@ Replace email + password sign-in with email + 6-digit OTP code (Notion-style). G
 
 ## Out of scope
 
-- The auth-hardening PR (signOut-before-OAuth, Cache-Control headers, sign-out affordance on `/onboarding`, lazy `createAdminClient()`, `.claude/rules/destructive-actions.md`, `.claude/rules/auth-sessions.md`). Ships separately.
+- The auth-hardening PR — already landed in #29.
+- **Capacitor Universal Links + AASA + iOS app entitlements.** Carved to a follow-up PR. Reason: no `ios/` build exists yet; AASA + Apple provisioning is a fragile, multi-day yak that would block the OTP web flow. In this PR, magic links open in Safari → web verifies → user signed in there. When the iOS app build lands, a follow-up PR adds Universal Links so the link opens the installed app instead.
 - Removing or migrating Google OAuth — **stays unchanged**.
 - Existing accounts' password hashes — per CLAUDE.md "no backwards compatibility": leave the `encrypted_password` column inert. No UI ever asks for it again. Don't wipe; that's busywork.
 - SMS-based OTP. Email only.
 - Account recovery for users who lose access to their email. (Standard answer: support ticket → admin-set new email via Supabase admin API. Not in scope here.)
+- Cross-device same-tab UX (start sign-in on desktop, tap link on phone, desktop redirects). Requires server-side polling token. Not worth the infra pre-launch.
 
 ## High-level flow
 
@@ -52,10 +54,14 @@ Existing user vs new user: same flow. `signInWithOtp` with `shouldCreateUser: tr
 
 - `src/app/login/login-form.tsx` — current password+OAuth form (rewrite at the same path)
 - `src/app/login/actions.ts` — `signInWithPassword` action (rewrite as OTP-send action)
-- `src/app/signup/page.tsx` and any `signup-form.tsx` / `actions.ts` in that dir — replaced by single `/login` entry
+- `src/app/signup/` — entire directory (`page.tsx`, `signup-form.tsx`, `actions.ts`)
 - `src/app/auth/forgot-password/` — entire directory
 - `src/app/auth/update-password/` — entire directory
 - `src/app/auth/check-email/` — entire directory (verify flow takes its place)
+- `src/components/heartnote/PasswordInput.tsx` — orphan after deletes (only consumers were login/signup/update-password)
+- `src/lib/auth/constants.ts` — `PASSWORD_MIN_LENGTH` only; orphan after deletes
+- `src/lib/auth/recovery-cookie.ts` — `RECOVERY_COOKIE` was the gate for the `/auth/update-password` page that's being removed
+- Remove `/signup` from `next.config.ts` `headers()` no-store list (the route ceases to exist)
 - Password-related keys in `src/lib/auth/friendly-error.ts`: `invalid_credentials`, `weak_password`, `email_not_confirmed`, `reset_session_expired`
 
 ## Files to add
@@ -69,11 +75,11 @@ Existing user vs new user: same flow. `signInWithOtp` with `shouldCreateUser: tr
 
 ## Files to modify
 
-- `src/app/auth/callback/route.ts` — extend to handle both `?code=` (Google OAuth) AND `?token=&type=magiclink` (Supabase magic link). Single endpoint, branches on params.
-- `src/lib/auth/friendly-error.ts` — add new keys: `otp_send_failed`, `invalid_code`, `code_expired`, `link_expired`, `network_failure`, `rate_limited` (already exists, may need new copy). Remove the password-specific keys listed above.
-- `capacitor.config.ts` — configure Universal Links / custom URL scheme for `heartnote.app/auth/callback` so magic links open the app on iOS instead of the browser. Specifics: `appUrlOpen` plugin + `iOS.scheme` + `appLinks` (Android equivalent later).
+- `src/app/auth/callback/route.ts` — branch on params. Magic link arrives as `?token_hash=<hash>&type=magiclink` → `verifyOtp({ token_hash, type })`. Google OAuth still arrives as `?code=<pkce>` → `exchangeCodeForSession`. Confirmed against `@supabase/auth-js` types: `VerifyTokenHashParams { token_hash, type: EmailOtpType }`.
+- `src/lib/auth/friendly-error.ts` — add only `otp_send_failed`, `link_expired`, `network_failure`. Existing keys `invalid_code`, `code_expired`, `rate_limited` are reused. Remove `invalid_credentials`, `weak_password`, `email_not_confirmed`, `reset_session_expired`.
+- `next.config.ts` — drop `/signup` no-store entry (route gone).
 - `src/middleware.ts` — no changes expected; `getClaims()` keeps working.
-- Any Next.js redirects from removed pages: handle in `next.config.ts` `redirects()` — `/signup` → `/login`, `/auth/forgot-password` → `/login`, etc. Or just let them 404; pre-launch, no inbound traffic to those URLs. **Recommend: 404, simpler.**
+- Removed pages 404 — no `next.config.ts` redirects. Pre-launch, no inbound traffic.
 
 ## Configuration changes (Supabase dashboard, not code)
 
@@ -112,21 +118,22 @@ The code input MUST have `autocomplete="one-time-code"` and `inputMode="numeric"
 />
 ```
 
-## Magic link in Capacitor
+## Magic link in Capacitor (DEFERRED)
 
-When the user taps the magic link in iOS Mail:
+Carved to a follow-up PR. In this PR, taps in Mail open Safari → web verify → user signed in there. Acceptable interim because the iOS app build doesn't exist yet. When the iOS app ships, the follow-up PR adds:
 
-- **Without Universal Links configured**: link opens Safari → callback runs in browser → user is signed in *in the browser*, not in the app. Bad UX.
-- **With Universal Links configured**: tap opens the app directly → callback runs inside the app's web view → session set in the app. Correct UX.
-
-Setup steps:
-
-1. `capacitor.config.ts`: add `appUrlOpen` config + iOS bundle ID + URL scheme.
-2. Apple App Site Association file at `https://heartnote.app/.well-known/apple-app-site-association` (served as static JSON, no extension).
-3. iOS app entitlement: `com.apple.developer.associated-domains` includes `applinks:heartnote.app`.
-4. Test on a real device — simulator behavior differs.
+- `capacitor.config.ts` `appUrlOpen` plugin
+- AASA at `https://heartnote.app/.well-known/apple-app-site-association`
+- `applinks:heartnote.app` associated-domains entitlement
+- Real-device test pass
 
 Reference: https://capacitorjs.com/docs/guides/deep-links
+
+## Same-tab sign-in (onAuthStateChange)
+
+When the user submits email on `/login` then opens the email and taps the magic link in the same browser, the verify tab they were on auto-redirects to `/dashboard` (or `/onboarding`) without further input. Implementation: `/auth/verify` mounts a `supabase.auth.onAuthStateChange()` listener (browser client). When the link tab hits `/auth/callback` and sets the session cookie, the listener fires `SIGNED_IN` in the original tab via Supabase's BroadcastChannel + cookie storage events. Client-side `router.replace()` to the destination.
+
+Cross-device flow (typed email on desktop, tapped link on phone) is out of scope — different cookie jars, no signal across.
 
 ## Acceptance criteria (full template per `.claude/rules/acceptance-criteria.md`)
 
@@ -142,10 +149,12 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 ### Functional happy path
 
 - `/login` shows: single email input + "Continue with email" submit + "Continue with Google" button. No password input anywhere on the page.
-- Submit a new or existing email → action calls `signInWithOtp({ email, options: { shouldCreateUser: true } })` → redirects to `/auth/verify?email=<email>` within 1s
+- Submit a new or existing email → server action lower-cases + trims, calls `signInWithOtp({ email, options: { shouldCreateUser: true } })` → redirects to `/auth/verify?email=<lowercased-email>` within 500ms
+- During submit pending, the "Continue with email" button is disabled and labels "Sending…" via `useFormStatus`
 - Within 60s, an email arrives at the address containing a 6-digit code AND a magic link
-- Path A (code): user types 6 digits on `/auth/verify`, submits → signed in → `/onboarding` (new) or `/dashboard` (returning) within 2s
-- Path B (link): user taps link in Mail → opens app (Capacitor on iOS) or browser (web) → signed in → same destinations
+- Path A (code): on the 6th digit typed, the form auto-submits (no extra Submit click). Server action lower-cases + trims, calls `verifyOtp({ email, token, type: 'email' })` → redirects to `/onboarding` (new) or `/dashboard` (returning) within 1s
+- Path B (link, same browser): user taps link in Mail → callback tab signs them in → original `/auth/verify` tab's `onAuthStateChange` listener fires `SIGNED_IN` → original tab `router.replace`s to `/dashboard` or `/onboarding`
+- Path B (link, different browser/incognito): callback tab signs them in directly → `/dashboard` or `/onboarding`. Original tab does not auto-redirect.
 - iOS 17+ keyboard surfaces the code from the recent email when the user focuses the code input
 
 ### Edge cases
@@ -154,13 +163,17 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 - New user enters email → email sent → after auth, lands on `/onboarding`
 - User submits empty email → HTML `required` blocks
 - User submits malformed email → `signInWithOtp` returns error → `friendlyError('otp_send_failed')` shown on `/login`
-- User reaches `/auth/verify` and clicks Resend within 60s of the prior send → 429 from Supabase → `friendlyError('rate_limited')` shown
-- User reaches `/auth/verify` and clicks Resend after 60s → new email arrives, prior code invalidated
-- User pastes code with leading/trailing whitespace → trimmed before `verifyOtp` call
+- User submits `Foo@Example.com` (mixed case + whitespace) → both action boundaries (`signInWithOtp` send and `verifyOtp` verify) lower-case + trim. The verify URL also carries the lower-cased version.
+- Authenticated user (already signed in) visits `/login` directly → server-side check redirects to `/dashboard` or `/onboarding` based on `profiles.onboarding_completed_at`. No flash of the login form.
+- Double-click "Continue with email" → second click is a no-op: `useFormStatus` disables the button while the action is pending. Server action is idempotent on input (same email → same OTP request → Supabase 429 if too fast, surfaces as friendly "we just sent one" copy via `rate_limited`).
+- User reaches `/auth/verify` and clicks Resend within 60s → button is disabled + shows live countdown (`Resend in Ns`). If somehow bypassed, Supabase 429 → `friendlyError('rate_limited')`.
+- User reaches `/auth/verify` and clicks Resend after 60s → new email arrives, prior code invalidated. Countdown resets.
+- User pastes code with leading/trailing whitespace → trimmed before `verifyOtp` call. Pasted 6-digit code triggers auto-submit immediately.
 - User types 5 wrong codes in a row → `friendlyError('invalid_code')` shows, account locked for the rest of the code's window (Supabase default behavior)
 - User clicks magic link more than once → first click signs them in; second click → `link_expired` (already-used links are dead)
 - User clicks magic link after 10 minutes → `link_expired`
-- User has Google session active and submits an email for OTP → flow proceeds normally; the Google session gets overwritten by the new OTP session on verify
+- User has Google session active and submits an email for OTP → on `verifyOtp` success, Supabase overwrites `sb-*` session cookies with the OTP-user session. Verify in DevTools: cookies for the prior Google user are gone, new cookies present.
+- User refreshes `/auth/verify` mid-flow → page reloads with email param intact; session listener re-mounts; resend countdown resets (in-memory state).
 
 ### Error states
 
@@ -176,14 +189,13 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 
 - `/login` email submit → redirect to `/auth/verify`: <500ms
 - `verifyOtp` call: <1s
-- Magic link click → app open + signed in: <2s on a warm app
-- Email delivery: <30s typical (Supabase SLA), <60s p99
+- Email delivery: typically arrives within 30s during manual verification (Supabase SLA, no in-app instrumentation)
 
 ### Persistence
 
 - Session cookie set via Supabase SSR cookie store after successful `verifyOtp` or callback exchange
 - Same access token (1h) + refresh token (7d) lifetime as current
-- BFCache disabled on `/login`, `/auth/verify`, `/auth/callback` (covered by auth-hardening PR's `Cache-Control: no-store`)
+- BFCache disabled on `/login`, `/auth/verify`, `/auth/callback`. Verify response headers on each include `Cache-Control: no-store, must-revalidate` via DevTools → Network. (Covered by `next.config.ts` headers; `/auth/:path*` matcher already includes `/auth/verify` and `/auth/callback`.)
 
 ### Permissions / RLS
 
@@ -194,6 +206,8 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 - Removed pages (`/signup`, `/auth/forgot-password`, `/auth/update-password`, `/auth/check-email`) return 404 (no redirects). Pre-launch, no inbound traffic.
 - Existing `auth.users` rows with `encrypted_password` set: column becomes inert. Never read. ~32 bytes per row of dead data. Acceptable per no-backwards-compat rule.
 - `friendly-error.ts` shrinks (password keys removed) and grows (OTP keys added). Net: similar size.
+- Orphaned helpers (`PasswordInput.tsx`, `auth/constants.ts`, `auth/recovery-cookie.ts`) deleted in same PR; no zombie code left.
+- OAuth-start helper `oauth.ts` already calls `signOut({ scope: 'local' })` before redirect (auth-hardening). Verify in DevTools: clicking "Continue with Google" emits a response with `Set-Cookie` clearing `sb-*` before the provider redirect.
 
 ### Manual verification (3 min, must run on real iOS device for Capacitor steps)
 
@@ -212,13 +226,17 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 
 - **Code length**: 6 digits, numeric
 - **Code expiry**: 10 minutes (Supabase default)
-- **Resend cooldown**: 60 seconds
+- **Resend cooldown**: 60 seconds, enforced client-side via disabled button + visible countdown; Supabase 429 is the backstop
 - **Max attempts per code**: 5
 - **Existing accounts**: stored passwords go inert; no migration step; no UI ever asks again
 - **Single entry page**: `/login` handles new + existing emails; `/signup` removed
 - **Email contains both**: code + magic link in the same email; user picks
+- **Email normalization**: lower-case + trim at both action boundaries (`signInWithOtp` send and `verifyOtp` verify) and in the URL param. Same string everywhere.
 - **iOS autofill**: `autocomplete="one-time-code"` on the code input; no extra plumbing needed
-- **Magic link in Capacitor**: Universal Links configured to open the app on tap
+- **Auto-submit on 6th digit**: yes. Eliminates the extra Submit tap. Pasted codes also auto-submit.
+- **Same-tab sign-in**: `onAuthStateChange` listener on `/auth/verify` redirects when a different tab in the same browser completes the callback. Cross-device same-tab is out of scope.
+- **Magic link in Capacitor**: deferred to a follow-up PR (see Out of scope).
+- **Authenticated user visiting `/login`**: redirect to `/dashboard` (or `/onboarding`) server-side. No flash.
 - **Display name capture**: keep current behavior — auto-derived from email by `handle_new_user` trigger; user can edit via onboarding wizard or `/me`. No extra "What's your name?" step on first sign-in.
 - **Redirects from removed pages**: 404 (no `next.config.ts` redirects). Pre-launch.
 
@@ -248,10 +266,9 @@ Reference: https://capacitorjs.com/docs/guides/deep-links
 - Capacitor Universal Links: https://capacitorjs.com/docs/guides/deep-links
 - Notion's auth UX (reference): https://www.notion.so/login
 
-## Open questions for the implementer
+## Open questions resolved (post-plan-review, 2026-05-04)
 
-If anything below isn't obvious from the spec, surface to Jason before coding:
-
-1. Is `heartnote.app` the production domain for Universal Links, or is there a different one? The capacitor config + AASA file need the exact domain.
-2. Do you want the `/auth/verify` page to auto-submit on the 6th digit (smoother UX) or wait for the user to click Submit? Recommend auto-submit; flag if you disagree.
-3. Should `/login` show an "or" divider between the email form and the Google button? Current `/login` has it ("or"). Keep.
+1. ~~Universal Links domain~~ — Universal Links carved to follow-up. N/A in this PR.
+2. ~~Auto-submit on 6th digit~~ — **yes, auto-submit**. Locked.
+3. ~~"Or" divider on `/login`~~ — keep (Lyft-style chrome already in place from #25).
+4. **Magic-link callback param shape** — confirmed `?token_hash=&type=magiclink` → `verifyOtp({ token_hash, type })`. Per `@supabase/auth-js` `VerifyTokenHashParams`.

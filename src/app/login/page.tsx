@@ -1,7 +1,9 @@
 import Image from 'next/image';
+import { redirect } from 'next/navigation';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { LoginForm } from './login-form';
 import { friendlyError } from '@/lib/auth/friendly-error';
+import { createClient } from '@/lib/supabase/server';
 
 export default async function LoginPage({
   searchParams,
@@ -9,6 +11,19 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const { error, notice } = await searchParams;
+
+  // Authenticated user should not see the login form. Route them through to
+  // their post-auth destination so back-nav after sign-in can't dead-end here.
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('onboarding_completed_at')
+      .eq('id', user.id)
+      .single();
+    redirect(profile?.onboarding_completed_at ? '/dashboard' : '/onboarding');
+  }
 
   return (
     <main className="relative isolate min-h-dvh overflow-hidden bg-background">
@@ -43,21 +58,6 @@ export default async function LoginPage({
               A quieter way to keep watch over a parent with heart failure.
             </p>
           </div>
-
-          {notice === 'password_updated' && (
-            <div
-              className="rounded-2xl p-4 flex gap-3 items-start"
-              style={{
-                background: 'var(--status-good-soft)',
-                color: 'var(--status-good-foreground)',
-              }}
-            >
-              <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" />
-              <p className="text-sm leading-relaxed">
-                Password updated. Sign in with your new password.
-              </p>
-            </div>
-          )}
 
           {notice === 'account_deleted' && (
             <div
