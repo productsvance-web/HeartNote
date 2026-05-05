@@ -422,10 +422,13 @@ export type Database = {
           doses_per_day: number | null
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
+          form: string | null
           id: string
+          ingredient: string | null
           notes: string | null
           patient_id: string
           pills_per_dose: number
+          rxcui: string | null
           schedule_times: string[] | null
           started_at: string | null
           stopped_at: string | null
@@ -438,10 +441,13 @@ export type Database = {
           doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name: string
+          form?: string | null
           id?: string
+          ingredient?: string | null
           notes?: string | null
           patient_id: string
           pills_per_dose?: number
+          rxcui?: string | null
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
@@ -454,10 +460,13 @@ export type Database = {
           doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name?: string
+          form?: string | null
           id?: string
+          ingredient?: string | null
           notes?: string | null
           patient_id?: string
           pills_per_dose?: number
+          rxcui?: string | null
           schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
