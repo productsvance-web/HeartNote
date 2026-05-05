@@ -24,8 +24,6 @@ export function friendlyError(key: string): string {
       return 'That code expired. Tap “Resend code” for a fresh one.';
     case 'link_expired':
       return 'That sign-in link expired or was already used. Request a new one.';
-    case 'network_failure':
-      return 'We couldn’t reach the server. Check your connection and try again.';
 
     case 'rate_limited':
       return 'Too many attempts. Wait a minute and try again.';

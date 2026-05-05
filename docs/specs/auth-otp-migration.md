@@ -76,7 +76,7 @@ Existing user vs new user: same flow. `signInWithOtp` with `shouldCreateUser: tr
 ## Files to modify
 
 - `src/app/auth/callback/route.ts` — branch on params. Magic link arrives as `?token_hash=<hash>&type=magiclink` → `verifyOtp({ token_hash, type })`. Google OAuth still arrives as `?code=<pkce>` → `exchangeCodeForSession`. Confirmed against `@supabase/auth-js` types: `VerifyTokenHashParams { token_hash, type: EmailOtpType }`.
-- `src/lib/auth/friendly-error.ts` — add only `otp_send_failed`, `link_expired`, `network_failure`. Existing keys `invalid_code`, `code_expired`, `rate_limited` are reused. Remove `invalid_credentials`, `weak_password`, `email_not_confirmed`, `reset_session_expired`.
+- `src/lib/auth/friendly-error.ts` — add only `otp_send_failed`, `link_expired`. Existing keys `invalid_code`, `code_expired`, `rate_limited` are reused. Remove `invalid_credentials`, `weak_password`, `email_not_confirmed`, `reset_session_expired`.
 - `next.config.ts` — drop `/signup` no-store entry (route gone).
 - `src/middleware.ts` — no changes expected; `getClaims()` keeps working.
 - Removed pages 404 — no `next.config.ts` redirects. Pre-launch, no inbound traffic.
@@ -179,7 +179,7 @@ Cross-device flow (typed email on desktop, tapped link on phone) is out of scope
 
 - Supabase email transport fails → `friendlyError('otp_send_failed')` on `/login`
 - Network failure during send → same key
-- Network failure during verify → `friendlyError('network_failure')` on `/auth/verify`, retry available
+- Network failure during verify → server action throws (Next.js framework boundary); user reloads to retry
 - Code wrong → `invalid_code`
 - Code expired → `code_expired`
 - Magic link expired/used → `link_expired`, redirect to `/login` with that key
