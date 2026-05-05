@@ -2,41 +2,41 @@
 
 import { z } from 'zod';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
+import { resolveOrigin } from '@/lib/auth/origin';
 
-const SignInSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1, 'Enter your password.'),
-});
+const EmailSchema = z.string().email();
 
-type ActionResult = { ok: false; error: string };
-
-export async function signInWithPassword(formData: FormData): Promise<ActionResult | void> {
-  const parsed = SignInSchema.safeParse({
-    email: (formData.get('email') as string | null)?.trim() ?? '',
-    password: (formData.get('password') as string | null) ?? '',
-  });
+// Sends a 6-digit code + magic link to the user's email. Idempotent on the
+// caller side — submitting the same email twice rapidly is safe; Supabase rate-
+// limits and we surface the 429 as a friendly "we just sent one" via rate_limited.
+// Existing and new users share this path: shouldCreateUser:true creates on demand.
+export async function sendOtp(formData: FormData): Promise<void> {
+  const raw = ((formData.get('email') as string | null) ?? '').trim().toLowerCase();
+  const parsed = EmailSchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, error: 'Enter a valid email and password.' };
+    redirect('/login?error=otp_send_failed');
   }
+  const email = parsed.data;
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
-    email: parsed.data.email,
-    password: parsed.data.password,
+  const origin = resolveOrigin(await headers());
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: `${origin}/auth/callback`,
+    },
   });
 
   if (error) {
     const msg = error.message.toLowerCase();
-    if (msg.includes('email not confirmed')) return { ok: false, error: 'email_not_confirmed' };
-    if (msg.includes('rate') || msg.includes('too many')) return { ok: false, error: 'rate_limited' };
-    return { ok: false, error: 'invalid_credentials' };
+    if (msg.includes('rate') || msg.includes('too many')) {
+      redirect('/login?error=rate_limited');
+    }
+    redirect('/login?error=otp_send_failed');
   }
 
-  // Route by onboarding state. redirect() throws NEXT_REDIRECT — must be outside try/catch.
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: profile } = user
-    ? await supabase.from('profiles').select('onboarding_completed_at').eq('id', user.id).single()
-    : { data: null };
-  redirect(profile?.onboarding_completed_at ? '/dashboard' : '/onboarding');
+  redirect(`/auth/verify?email=${encodeURIComponent(email)}`);
 }

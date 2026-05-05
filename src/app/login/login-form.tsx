@@ -1,50 +1,45 @@
 'use client';
 
-import Link from 'next/link';
-import { useState, useTransition } from 'react';
-import { signInWithPassword } from './actions';
+import { useFormStatus } from 'react-dom';
+import { sendOtp } from './actions';
 import { signInWithGoogle } from '@/lib/auth/oauth';
-import { friendlyError } from '@/lib/auth/friendly-error';
-import { PasswordInput } from '@/components/heartnote/PasswordInput';
+
+function GoogleSubmit() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="w-full rounded-full border border-border bg-card px-6 py-3.5 font-semibold text-base text-foreground shadow-soft active:scale-[0.98] transition flex items-center justify-center gap-3 disabled:opacity-60"
+    >
+      <GoogleIcon />
+      {pending ? 'Opening Google…' : 'Continue with Google'}
+    </button>
+  );
+}
+
+function EmailSubmit() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="w-full rounded-full px-6 py-4 font-semibold text-base text-primary-foreground shadow-soft active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
+      style={{
+        background:
+          'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
+      }}
+    >
+      {pending ? 'Sending…' : 'Continue with email'}
+    </button>
+  );
+}
 
 export function LoginForm() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [errorKey, setErrorKey] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [isPending, startTransition] = useTransition();
-
-  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    // Read straight from the form so iOS Password Autofill values get submitted
-    // even if React onChange didn't fire (Safari keyboard-shortcut autofills).
-    const formData = new FormData(e.currentTarget);
-    const submittedEmail = ((formData.get('email') as string | null) ?? '').trim();
-    setEmail(submittedEmail);
-    setPassword((formData.get('password') as string | null) ?? '');
-    setErrorKey(null);
-    setErrorMessage('');
-
-    startTransition(async () => {
-      const result = await signInWithPassword(formData);
-      // result is undefined on success (action redirects). Only reach here on failure.
-      if (result && !result.ok) {
-        setErrorKey(result.error);
-        setErrorMessage(friendlyError(result.error));
-      }
-    });
-  }
-
   return (
     <div className="space-y-4">
       <form action={signInWithGoogle.bind(null, '/login')}>
-        <button
-          type="submit"
-          className="w-full rounded-full border border-border bg-card px-6 py-3.5 font-semibold text-base text-foreground shadow-soft active:scale-[0.98] transition flex items-center justify-center gap-3"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </button>
+        <GoogleSubmit />
       </form>
 
       <div className="flex items-center gap-3">
@@ -53,7 +48,7 @@ export function LoginForm() {
         <div className="flex-1 h-px bg-border" />
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form action={sendOtp} className="space-y-3">
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">Email</span>
           <input
@@ -63,64 +58,11 @@ export function LoginForm() {
             autoComplete="email"
             autoFocus
             placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             className="input"
           />
         </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-medium flex items-center justify-between">
-            <span>Password</span>
-            <Link
-              href="/auth/forgot-password"
-              className="text-xs font-normal text-muted-foreground hover:text-foreground"
-            >
-              Forgot password?
-            </Link>
-          </span>
-          <PasswordInput
-            name="password"
-            value={password}
-            onChange={setPassword}
-            required
-            autoComplete="current-password"
-            placeholder="Your password"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full rounded-full px-6 py-4 font-semibold text-base text-primary-foreground shadow-soft active:scale-[0.98] transition disabled:opacity-60 disabled:cursor-not-allowed"
-          style={{
-            background:
-              'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
-          }}
-        >
-          {isPending ? 'Signing in…' : 'Sign in'}
-        </button>
-        {errorMessage && (
-          <div className="text-sm text-destructive text-center space-y-1">
-            <p>{errorMessage}</p>
-            {errorKey === 'email_not_confirmed' && (
-              <p>
-                <Link
-                  href={`/auth/check-email?email=${encodeURIComponent(email)}`}
-                  className="underline"
-                >
-                  Resend confirmation email
-                </Link>
-              </p>
-            )}
-          </div>
-        )}
+        <EmailSubmit />
       </form>
-
-      <p className="text-sm text-muted-foreground text-center">
-        Don&apos;t have an account?{' '}
-        <Link href="/signup" className="font-medium text-foreground hover:underline">
-          Sign up
-        </Link>
-      </p>
     </div>
   );
 }
