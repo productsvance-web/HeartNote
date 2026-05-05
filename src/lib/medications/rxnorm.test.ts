@@ -1,8 +1,10 @@
 // Integration tests for src/lib/medications/rxnorm.ts.
 //
 // Hits the live NLM RxNav API. Run from repo root:
+//   npm run test:rxnorm
+// Or directly:
 //   node --test --experimental-strip-types \
-//     .claude/worktrees/medications-wizard/src/lib/medications/rxnorm.test.ts
+//     src/lib/medications/rxnorm.test.ts
 //
 // Skipped automatically if RXNORM_TEST_OFFLINE=1 is set (e.g., flaky CI).
 //
@@ -11,6 +13,8 @@
 //    Coreg→Carvedilol, Lopressor→Metoprolol).
 //  • Generic search returns IN type with no ingredient sub-line.
 //  • Short query (<3 chars) returns no results without a network call.
+//  • Pre-TTY heuristic filter accepts digit-bearing brand names that
+//    don't carry strength notation ("Tylenol 8 HR", "Vitamin D3", "B-12").
 //  • getDrugDetails returns a form list with sensible counts for furosemide,
 //    hydrocortisone, nitroglycerin.
 //  • Brand input pre-selects the correct form (Lasix → Oral Tablet).
@@ -23,6 +27,7 @@ import {
   searchDrug,
   getDrugDetails,
   FORM_COUNT_NOUN,
+  looksLikeIngredientOrBrand,
   type DrugSearchResult,
 } from './rxnorm.ts';
 
@@ -185,6 +190,42 @@ describe('getDrugDetails', () => {
     const formNames = details.forms.map((f) => f.name);
     const unique = new Set(formNames);
     assert.equal(formNames.length, unique.size, `duplicates in ${formNames.join(', ')}`);
+  });
+});
+
+describe('looksLikeIngredientOrBrand', () => {
+  it('accepts plain ingredient and brand names', () => {
+    assert.equal(looksLikeIngredientOrBrand('furosemide'), true);
+    assert.equal(looksLikeIngredientOrBrand('Lasix'), true);
+    assert.equal(looksLikeIngredientOrBrand('Carvedilol'), true);
+    assert.equal(looksLikeIngredientOrBrand('Coreg'), true);
+  });
+
+  it('accepts digit-bearing brand names without strength units', () => {
+    // These are the regression cases from the post-PR-1 review:
+    // approximateTerm matches them, the wizard should keep them as
+    // brand candidates, the TTY check then confirms BN.
+    assert.equal(looksLikeIngredientOrBrand('Tylenol 8 HR'), true);
+    assert.equal(looksLikeIngredientOrBrand('Vitamin D3'), true);
+    assert.equal(looksLikeIngredientOrBrand('B-12'), true);
+    assert.equal(looksLikeIngredientOrBrand('5-FU'), true);
+  });
+
+  it('rejects clinical drug names with strength notation', () => {
+    assert.equal(looksLikeIngredientOrBrand('furosemide 40 MG Oral Tablet'), false);
+    assert.equal(looksLikeIngredientOrBrand('hydrocortisone 1 % Cream'), false);
+    assert.equal(looksLikeIngredientOrBrand('10 ML furosemide 10 MG/ML Injection'), false);
+  });
+
+  it('rejects branded products with bracket notation', () => {
+    assert.equal(looksLikeIngredientOrBrand('furosemide Cartridge [Lasix]'), false);
+    assert.equal(looksLikeIngredientOrBrand('furosemide Oral Tablet [Lasix]'), false);
+  });
+
+  it('rejects names with form-suffix words', () => {
+    assert.equal(looksLikeIngredientOrBrand('Lasix Pill'), false);
+    assert.equal(looksLikeIngredientOrBrand('Lasix Oral Product'), false);
+    assert.equal(looksLikeIngredientOrBrand('Lasix Injectable Product'), false);
   });
 });
 
