@@ -125,7 +125,7 @@ export function StepStrength({
 
 // Manual number + unit field. Splits the formatted dose string on the
 // space between value and unit so the controls re-hydrate when a user
-// goes back to step 3.
+// goes back to step 3 or toggles in from a chip.
 function ManualStrength({
   strength,
   onChange,
@@ -133,10 +133,15 @@ function ManualStrength({
 }: {
   strength: string;
   onChange: (next: string) => void;
+  // True when the form has no chip data (cream, ointment, custom path,
+  // unknown drug). Picks the unit default: topicals are usually `%`
+  // strength, pills are `mg`.
   fallback: boolean;
 }) {
   const initialValue = strength.trim().split(/\s+/)[0] ?? '';
-  const initialUnit = strength.trim().split(/\s+/).slice(1).join(' ').toLowerCase() || (fallback ? 'mg' : '%');
+  const initialUnit =
+    strength.trim().split(/\s+/).slice(1).join(' ').toLowerCase() ||
+    (fallback ? '%' : 'mg');
   const [value, setValue] = useState(initialValue);
   const [unit, setUnit] = useState(initialUnit);
 
@@ -145,6 +150,13 @@ function ManualStrength({
     setUnit(nextUnit);
     onChange(nextValue.trim() ? `${nextValue.trim()} ${nextUnit}` : '');
   }
+
+  // If the inherited unit (from a chip's compound unit, e.g. "mg/ml")
+  // isn't in the standard list, surface it as an extra option so the
+  // controlled <select> doesn't render with no matching value.
+  const knownUnits = UNIT_OPTIONS.map((u) => u.toLowerCase()) as string[];
+  const extraUnit =
+    unit && unit !== '%' && !knownUnits.includes(unit) ? unit : null;
 
   return (
     <div className="flex gap-2">
@@ -162,6 +174,7 @@ function ManualStrength({
         value={unit}
         onChange={(e) => emit(value, e.target.value)}
       >
+        {extraUnit && <option value={extraUnit}>{extraUnit}</option>}
         {UNIT_OPTIONS.map((u) => (
           <option key={u} value={u.toLowerCase()}>
             {unitLabel(u)}

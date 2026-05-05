@@ -47,18 +47,26 @@ export function MedicationWizard({ fromScan }: Props) {
       lastFetchedRxcuiRef.current = null;
       return;
     }
-    if (sel.rxcui === lastFetchedRxcuiRef.current) return;
+    if (sel.rxcui === lastFetchedRxcuiRef.current) {
+      // Same drug already fetched. The onSelect handler optimistically
+      // primed drugDetailsLoading=true; flip it back so the cached
+      // drugDetails (or fallback) renders instead of a permanent
+      // spinner.
+      setState((s) => ({ ...s, drugDetailsLoading: false }));
+      return;
+    }
     lastFetchedRxcuiRef.current = sel.rxcui;
-    let cancelled = false;
+    const controller = new AbortController();
     getDrugDetails({
       rxcui: sel.rxcui,
       type: sel.type,
       drugName: sel.name,
       ingredientName: sel.ingredient ?? undefined,
       ingredientRxcui: sel.ingredientRxcui ?? undefined,
+      signal: controller.signal,
     })
       .then((details) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setState((s) => ({
           ...s,
           drugDetails: details,
@@ -68,7 +76,7 @@ export function MedicationWizard({ fromScan }: Props) {
         }));
       })
       .catch(() => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setState((s) => ({
           ...s,
           drugDetails: null,
@@ -77,7 +85,10 @@ export function MedicationWizard({ fromScan }: Props) {
         }));
       });
     return () => {
-      cancelled = true;
+      // User picked a different drug or unmounted — abort the in-
+      // flight RxNav request so we don't keep an open socket past the
+      // point its result is useful.
+      controller.abort();
     };
   }, [state.selection]);
 
@@ -167,18 +178,32 @@ export function MedicationWizard({ fromScan }: Props) {
           <StepSearch
             selection={state.selection}
             onSelect={(selection) => {
-              // Re-picking invalidates downstream choices and primes the
-              // loading state for the upcoming getDrugDetails fetch.
-              const willFetch = selection.kind === 'rxnorm';
-              setState((s) => ({
-                ...s,
-                selection,
-                form: null,
-                strength: '',
-                drugDetails: null,
-                drugDetailsLoading: willFetch,
-                drugDetailsError: false,
-              }));
+              // Re-picking the SAME drug preserves the cached
+              // drugDetails (and form/strength) so the user doesn't
+              // re-wait for the fetch they already paid for. Switching
+              // to a DIFFERENT drug clears downstream selections AND
+              // resets dose/frequency/times — keeping Lasix's "1 tablet
+              // × 2/day with 8am/2pm" prefilled for Carvedilol would
+              // silently save the wrong row.
+              setState((s) => {
+                const switched = !isSameSelection(s.selection, selection);
+                if (!switched) {
+                  return { ...s, selection };
+                }
+                const willFetch = selection.kind === 'rxnorm';
+                return {
+                  ...s,
+                  selection,
+                  form: null,
+                  strength: '',
+                  drugDetails: null,
+                  drugDetailsLoading: willFetch,
+                  drugDetailsError: false,
+                  pillsPerDose: 1,
+                  dosesPerDay: 1,
+                  scheduleTimes: null,
+                };
+              });
             }}
             onContinue={goNext}
           />
@@ -265,4 +290,23 @@ function visibleStepTotal(dosesPerDay: number | null): number {
 function visibleStepNumber(step: StepIndex, dosesPerDay: number | null): number {
   if (dosesPerDay === null && step === 6) return 5;
   return step;
+}
+
+// Returns true when the new selection is the same conceptual drug as
+// the prior — used to decide whether to wipe the dose / frequency /
+// times accumulated for the previous selection. Re-confirming the same
+// drug (RxCUI match for rxnorm, name match for custom) preserves them;
+// switching wipes.
+function isSameSelection(
+  prev: WizardState['selection'],
+  next: WizardState['selection']
+): boolean {
+  if (!prev || !next) return false;
+  if (prev.kind === 'rxnorm' && next.kind === 'rxnorm') {
+    return prev.rxcui === next.rxcui;
+  }
+  if (prev.kind === 'custom' && next.kind === 'custom') {
+    return prev.name.trim().toLowerCase() === next.name.trim().toLowerCase();
+  }
+  return false;
 }

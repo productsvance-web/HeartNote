@@ -184,6 +184,10 @@ export async function getDrugDetails(input: {
   drugName: string;
   ingredientName?: string;
   ingredientRxcui?: string;
+  // Caller-supplied cancellation. The 1500ms internal deadline still
+  // applies; this just lets the wizard abort an in-flight fetch when
+  // the user picks a different drug before the response returns.
+  signal?: AbortSignal;
 }): Promise<DrugDetails> {
   // For brands, all forms+strengths are sourced from the underlying
   // ingredient (Lasix's available forms = furosemide's available forms).
@@ -196,6 +200,13 @@ export async function getDrugDetails(input: {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  if (input.signal) {
+    if (input.signal.aborted) controller.abort();
+    else
+      input.signal.addEventListener('abort', () => controller.abort(), {
+        once: true,
+      });
+  }
 
   try {
     // Batched: SCDF (forms) + SCD (drugs with strengths) come back from a

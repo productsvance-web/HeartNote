@@ -34,8 +34,13 @@ const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
 // caregiver might reasonably enter. Catches "lots", "10x", "small dose"
 // at the format layer; semantic checks (is the unit class right for this
 // drug?) happen against allowed_strengths below.
+// Compound units (mg/ml, g/ml, mcg/ml, meq/ml) and `%` are produced by
+// the wizard's RxNorm chips for oral solutions and topicals — they must
+// match here or wizard-saved rows lock the legacy edit form. Longer
+// alternatives appear first so the regex doesn't truncate "mg/ml" to
+// "mg" before reaching the slash.
 const DOSE_FORMAT =
-  /^\s*(\d+(?:\.\d+)?)\s*(mg|mcg|g|kg|ng|ml|l|units?|tablets?|capsules?|caps?|puffs?|drops?|tsp|tbsp|sprays?|patches?|meq)\s*$/i;
+  /^\s*(\d+(?:\.\d+)?)\s*(mcg\/ml|mg\/ml|meq\/ml|g\/ml|%|mg|mcg|g|kg|ng|ml|l|units?|tablets?|capsules?|caps?|puffs?|drops?|tsp|tbsp|sprays?|patches?|meq)\s*$/i;
 
 function normalizeUnit(u: string): string {
   return u.toLowerCase().replace(/[.\s]/g, '').replace(/s$/, '');
