@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { searchDrug, type DrugSearchResult } from '@/lib/medications/rxnorm';
+import { MIN_QUERY_LEN, type DrugSearchResult } from '@/lib/medications/rxnorm';
+import { searchMedications } from './search-action';
 import type { DrugSelection } from './wizard-types';
 
 const DEBOUNCE_MS = 300;
-const MIN_QUERY_LEN = 3;
 
 interface Props {
   selection: DrugSelection | null;
@@ -48,12 +48,17 @@ export function StepSearch({ selection, onSelect, onContinue }: Props) {
     if (trimmed.length < MIN_QUERY_LEN) return;
     let cancelled = false;
     const handle = setTimeout(() => {
-      searchDrug(trimmed)
+      searchMedications(trimmed)
         .then((r) => {
+          // The cancelled-flag closure handles both unmount and a newer
+          // keystroke arriving while this request is in flight. When the
+          // query changes, this effect's cleanup sets cancelled=true on
+          // the closure captured by .then(), so a slow earlier server-
+          // action call that resolves after a faster later one bails
+          // here instead of overwriting the newer results.
           if (cancelled) return;
           setResults(r);
-          // Wrapper returns [] on both empty match and failure — same
-          // UX intentional. Caregiver can fall through to custom path.
+          // Empty results → custom-path UI fires, same UX as a failure.
           setErrored(r.length === 0);
           setLoading(false);
         })

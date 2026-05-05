@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3001 --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
+    "prebuild": "node --experimental-strip-types scripts/validate-rxnorm-index.ts",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3001",
     "lint": "eslint",
-    "test:rxnorm": "node --test --experimental-strip-types src/lib/medications/rxnorm.test.ts",
+    "test:rxnorm": "node --test --experimental-strip-types src/lib/medications/rxnorm.test.ts src/lib/medications/rxnorm-search.test.ts",
+    "rxnorm:refresh": "node --experimental-strip-types scripts/refresh-rxnorm-index.ts",
     "db:types": "supabase gen types typescript --linked 2>/dev/null | grep -v '^A new version\\|^We recommend\\|^Initialising' > src/lib/supabase/types.ts"
   },
   "dependencies": {

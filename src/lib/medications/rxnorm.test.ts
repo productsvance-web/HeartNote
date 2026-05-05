@@ -8,13 +8,10 @@
 //
 // Skipped automatically if RXNORM_TEST_OFFLINE=1 is set (e.g., flaky CI).
 //
+// Search-side tests (searchByIndex) live in rxnorm-search.test.ts and run
+// fully offline against the bundled index.
+//
 // What this verifies (each maps to an AC in the wizard plan):
-//  • Brand search returns BN type with linked ingredient (Lasix→Furosemide,
-//    Coreg→Carvedilol, Lopressor→Metoprolol).
-//  • Generic search returns IN type with no ingredient sub-line.
-//  • Short query (<3 chars) returns no results without a network call.
-//  • Pre-TTY heuristic filter accepts digit-bearing brand names that
-//    don't carry strength notation ("Tylenol 8 HR", "Vitamin D3", "B-12").
 //  • getDrugDetails returns a form list with sensible counts for furosemide,
 //    hydrocortisone, nitroglycerin.
 //  • Brand input pre-selects the correct form (Lasix → Oral Tablet).
@@ -24,12 +21,11 @@ import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  searchDrug,
   getDrugDetails,
   FORM_COUNT_NOUN,
-  looksLikeIngredientOrBrand,
   type DrugSearchResult,
 } from './rxnorm.ts';
+import { searchByIndex } from './rxnorm-search.ts';
 
 const OFFLINE = process.env.RXNORM_TEST_OFFLINE === '1';
 const skip = OFFLINE ? { skip: 'RXNORM_TEST_OFFLINE=1' } : {};
@@ -51,70 +47,19 @@ describe('FORM_COUNT_NOUN', () => {
   });
 });
 
-describe('searchDrug', () => {
-  it('returns no results for queries under 3 characters', async () => {
-    assert.deepEqual(await searchDrug(''), []);
-    assert.deepEqual(await searchDrug('la'), []);
-  });
-
-  it('returns no results for whitespace', async () => {
-    assert.deepEqual(await searchDrug('   '), []);
-  });
-
-  it('Lasix → brand with ingredient Furosemide', skip, async () => {
-    const results = await searchDrug('lasix');
-    const lasix = pickByName(results, 'Lasix');
-    assert.ok(lasix, `expected a Lasix result in ${JSON.stringify(results)}`);
-    assert.equal(lasix.type, 'brand');
-    assert.equal(lasix.ingredient?.toLowerCase(), 'furosemide');
-    assert.ok(lasix.ingredientRxcui, 'expected ingredientRxcui on brand result');
-  });
-
-  it('Coreg → brand with ingredient Carvedilol', skip, async () => {
-    const results = await searchDrug('coreg');
-    const coreg = pickByName(results, 'Coreg');
-    assert.ok(coreg, `expected a Coreg result in ${JSON.stringify(results)}`);
-    assert.equal(coreg.type, 'brand');
-    assert.equal(coreg.ingredient?.toLowerCase(), 'carvedilol');
-  });
-
-  it('Lopressor → brand with ingredient Metoprolol', skip, async () => {
-    const results = await searchDrug('lopressor');
-    const lopressor = pickByName(results, 'Lopressor');
-    assert.ok(lopressor, `expected a Lopressor result in ${JSON.stringify(results)}`);
-    assert.equal(lopressor.type, 'brand');
-    assert.equal(lopressor.ingredient?.toLowerCase(), 'metoprolol');
-  });
-
-  it('furosemide → generic with no ingredient sub-line', skip, async () => {
-    const results = await searchDrug('furosemide');
-    const fur = pickByName(results, 'furosemide');
-    assert.ok(fur, `expected a furosemide result in ${JSON.stringify(results)}`);
-    assert.equal(fur.type, 'generic');
-    assert.equal(fur.ingredient, undefined);
-  });
-
-  it('caps results at 10', skip, async () => {
-    // "metro" matches a lot of meds — guarantees overflow before cap.
-    const results = await searchDrug('metro');
-    assert.ok(results.length <= 10, `expected ≤10 results, got ${results.length}`);
-  });
-});
-
 describe('getDrugDetails', () => {
   let lasix: DrugSearchResult | undefined;
   let furosemide: DrugSearchResult | undefined;
   let hydrocortisone: DrugSearchResult | undefined;
   let nitroglycerin: DrugSearchResult | undefined;
 
-  before(async () => {
+  before(() => {
     if (OFFLINE) return;
-    [lasix, furosemide, hydrocortisone, nitroglycerin] = await Promise.all([
-      searchDrug('lasix').then((r) => pickByName(r, 'Lasix')),
-      searchDrug('furosemide').then((r) => pickByName(r, 'furosemide')),
-      searchDrug('hydrocortisone').then((r) => pickByName(r, 'hydrocortisone')),
-      searchDrug('nitroglycerin').then((r) => pickByName(r, 'nitroglycerin')),
-    ]);
+    // Source picks from the bundled index — same path the wizard uses.
+    lasix = pickByName(searchByIndex('lasix'), 'Lasix');
+    furosemide = pickByName(searchByIndex('furosemide'), 'Furosemide');
+    hydrocortisone = pickByName(searchByIndex('hydrocortisone'), 'Hydrocortisone');
+    nitroglycerin = pickByName(searchByIndex('nitroglycerin'), 'Nitroglycerin');
   });
 
   it('Lasix (brand) → forms include Oral Tablet, preselectedForm = Oral Tablet, strengths include 40 MG', skip, async () => {
@@ -190,42 +135,6 @@ describe('getDrugDetails', () => {
     const formNames = details.forms.map((f) => f.name);
     const unique = new Set(formNames);
     assert.equal(formNames.length, unique.size, `duplicates in ${formNames.join(', ')}`);
-  });
-});
-
-describe('looksLikeIngredientOrBrand', () => {
-  it('accepts plain ingredient and brand names', () => {
-    assert.equal(looksLikeIngredientOrBrand('furosemide'), true);
-    assert.equal(looksLikeIngredientOrBrand('Lasix'), true);
-    assert.equal(looksLikeIngredientOrBrand('Carvedilol'), true);
-    assert.equal(looksLikeIngredientOrBrand('Coreg'), true);
-  });
-
-  it('accepts digit-bearing brand names without strength units', () => {
-    // These are the regression cases from the post-PR-1 review:
-    // approximateTerm matches them, the wizard should keep them as
-    // brand candidates, the TTY check then confirms BN.
-    assert.equal(looksLikeIngredientOrBrand('Tylenol 8 HR'), true);
-    assert.equal(looksLikeIngredientOrBrand('Vitamin D3'), true);
-    assert.equal(looksLikeIngredientOrBrand('B-12'), true);
-    assert.equal(looksLikeIngredientOrBrand('5-FU'), true);
-  });
-
-  it('rejects clinical drug names with strength notation', () => {
-    assert.equal(looksLikeIngredientOrBrand('furosemide 40 MG Oral Tablet'), false);
-    assert.equal(looksLikeIngredientOrBrand('hydrocortisone 1 % Cream'), false);
-    assert.equal(looksLikeIngredientOrBrand('10 ML furosemide 10 MG/ML Injection'), false);
-  });
-
-  it('rejects branded products with bracket notation', () => {
-    assert.equal(looksLikeIngredientOrBrand('furosemide Cartridge [Lasix]'), false);
-    assert.equal(looksLikeIngredientOrBrand('furosemide Oral Tablet [Lasix]'), false);
-  });
-
-  it('rejects names with form-suffix words', () => {
-    assert.equal(looksLikeIngredientOrBrand('Lasix Pill'), false);
-    assert.equal(looksLikeIngredientOrBrand('Lasix Oral Product'), false);
-    assert.equal(looksLikeIngredientOrBrand('Lasix Injectable Product'), false);
   });
 });
 
