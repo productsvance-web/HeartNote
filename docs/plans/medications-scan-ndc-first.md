@@ -86,6 +86,7 @@ If you've never touched this app before, read these first (in order):
 
 - [ ] Photo without NDC (handwritten med list, hospital discharge printout, screenshot of an EHR): scan response includes the meds with `ndc: null`, `rxcui: null`, `ingredient: null`, `form: null`, `canonicalName: null`. UI behavior unchanged from current.
 - [ ] Photo with NDC, but RxNav returns "not found" (obscure or obsolete NDC): med entry has `ndc` populated, all RxNorm fields `null`, `canonicalName: null`. Caregiver still sees OCR'd drug_name and can save manually.
+- [ ] Model returns an NDC-shaped string that fails format validation (e.g., `"561-292-4511"` — phone-number-shaped, or `"6307050"` — Rx-number-shaped, or partial like `"72888-0112"`): no RxNav call is made; med entry has `ndc` populated verbatim (transparency — caregiver sees what the model thought it saw), all RxNorm fields `null`. Verifiable: in dev tools network panel, `/ndcstatus.json` is NOT requested for that med.
 - [ ] Photo with multiple meds, mix of NDC-bearing and not (e.g., one bottle photo + one printout in the same scan). Each med resolved independently.
 - [ ] NDC printed in 10-digit format (`72888-112-01`) versus 11-digit (`72888-0112-01`): both formats round-trip through RxNav successfully. We pass the string verbatim; RxNav handles segment-padding.
 - [ ] First-time user, empty medications table: scan inserts the first row(s) with NDC populated.
@@ -604,12 +605,22 @@ Replace with:
 - Rx number, refill counts, refill dates.
 ```
 
-- [ ] **Step 2: Add NDC extraction guidance**
+- [ ] **Step 2: Add NDC extraction guidance with strong null bias**
 
 In the `# Output rules` section, after the bullet for `is_dose_change`, append:
 
 ```
-- ndc: the National Drug Code as printed on the label, verbatim (e.g., "72888-0112-01" or "72888-112-01"). Hyphen-separated, 10 or 11 digits total. Null if no NDC is printed (handwritten lists, EHR screenshots, OTC packaging without an NDC visible) or if the NDC is illegible.
+- ndc: the National Drug Code as printed on the label, verbatim (e.g., "72888-0112-01" or "72888-112-01"). Hyphen-separated, 10 or 11 digits total.
+
+  **When in doubt, return null.** Returning null is the correct, safe answer — the caregiver still sees the OCR'd drug name and can save the medication manually. A hallucinated NDC routes them to the wrong drug, which is worse than missing the NDC entirely. False negatives are recoverable; false positives are not.
+
+  Set null when ANY of the following is true:
+  - No NDC is printed on the source (handwritten lists, EHR screenshots, OTC packaging without an NDC visible, hospital discharge papers).
+  - You see digits-with-hyphens that might be an NDC but might also be a phone number, Rx number, store number, or barcode caption — if you cannot tell with certainty, return null.
+  - The NDC is partially obscured, blurry, or any character is illegible.
+  - The NDC fails the FDA-mandated digit pattern (5-3-2, 5-4-2, or 4-4-2 segments). Do not "correct" or "complete" a partial NDC.
+
+  Only return a value when you can read every digit unambiguously and the format matches one of the FDA segments above.
 ```
 
 - [ ] **Step 3: Update the comment block at the top**
@@ -787,6 +798,52 @@ describe('extractMedicationsFromImage with NDC enrichment', () => {
     expect(out.medications[0].ndc).toBe('99999-9999-99');
     expect(out.medications[0].rxcui).toBeNull();
   });
+
+  it('skips the RxNav call entirely when NDC fails format validation', async () => {
+    mockGenerateContent({
+      medications: [
+        {
+          drug_name: 'Suspicious',
+          dose_value: 10,
+          dose_unit: 'mg',
+          doses_per_day: 1,
+          // Phone-number-shaped string that the model might hallucinate as
+          // an NDC. We must not waste a RxNav round-trip on this.
+          ndc: '561-292-4511',
+          is_dose_change: false,
+        },
+      ],
+    });
+
+    const out = await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
+    expect(resolveByNdc).not.toHaveBeenCalled();
+    expect(out.medications[0].ndc).toBe('561-292-4511');
+    expect(out.medications[0].rxcui).toBeNull();
+    expect(out.medications[0].canonicalName).toBeNull();
+  });
+
+  it('accepts the three FDA-valid NDC formats (5-4-2, 5-3-2, 4-4-2)', async () => {
+    const formats = ['72888-0112-01', '00378-112-01', '0777-3105-02'];
+    for (const ndc of formats) {
+      mockGenerateContent({
+        medications: [
+          {
+            drug_name: 'Test',
+            dose_value: 1,
+            dose_unit: 'mg',
+            doses_per_day: 1,
+            ndc,
+            is_dose_change: false,
+          },
+        ],
+      });
+      (resolveByNdc as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        rxcui: '1', ingredient: 'x', form: 'Oral Tablet', strength: '1 MG', canonicalName: 'Test',
+      });
+      await extractMedicationsFromImage(FAKE_BYTES, 'image/jpeg');
+      expect(resolveByNdc).toHaveBeenLastCalledWith(ndc);
+    }
+  });
 });
 ```
 
@@ -815,7 +872,14 @@ In `src/lib/medications/scan/extract.ts`, replace the bottom of `extractMedicati
 
   const enriched = await Promise.all(
     trimmed.map(async (med): Promise<ResolvedMed> => {
-      if (!med.ndc) {
+      // Skip RxNav round-trip for null NDC (no label printed) or for
+      // any string that doesn't match the three FDA-valid NDC segment
+      // patterns (5-4-2, 5-3-2, 4-4-2). The structured-output schema
+      // can't prevent the model from hallucinating an NDC-shaped string
+      // when uncertain (e.g., a phone number, Rx number, lot code), and
+      // at scale a wasted call per scan compounds. Validation is also
+      // a hint to NLM that we're a polite RxNav consumer.
+      if (!med.ndc || !isValidNdcFormat(med.ndc)) {
         return { ...med, rxcui: null, ingredient: null, form: null, strength: null, canonicalName: null };
       }
       const r = await resolveByNdc(med.ndc);
@@ -827,6 +891,13 @@ In `src/lib/medications/scan/extract.ts`, replace the bottom of `extractMedicati
   );
 
   return { medications: enriched, truncated };
+}
+
+// FDA NDC segments are 5-4-2, 5-3-2, or 4-4-2 digits, hyphen-separated.
+// Total digits = 10. Anything else is either a non-NDC value the model
+// fabricated, or a corrupted read.
+function isValidNdcFormat(ndc: string): boolean {
+  return /^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2})$/.test(ndc);
 }
 ```
 
@@ -1307,7 +1378,7 @@ git pull --ff-only origin main
 ## Risks and decisions worth flagging in plan-review
 
 1. **Resolution latency on the scan response.** Each NDC adds up to 1500ms to the scan response. With 5 meds and serial-worst-case, that's 7.5s on top of Vertex's ~3-5s. The `Promise.all` here is concurrent across meds, so practically the wall-clock cost is bounded by the slowest single resolution. Verify under realistic conditions; if it's too slow, move resolution to the confirm-click path.
-2. **NDC validation is loose.** We accept any string from the model and pass it to RxNav. RxNav's failure mode is benign (returns `null`). But if the model hallucinates an NDC where none was printed, we'd waste a network call. Mitigation: regex-validate `^\d{4,5}-\d{3,4}-\d{1,2}$` before calling. Optional — add if reviewers push back.
+2. **NDC format validation is in scope.** Reversed an earlier decision after thinking through 70k-account scale: at ~3.5M extractions/year and a plausible 1-3% hallucination rate, even free RxNav calls become an NLM-relationship liability without validation. Plan now validates with `^(?:\d{5}-\d{4}-\d{2}|\d{5}-\d{3}-\d{2}|\d{4}-\d{4}-\d{2})$` (the three FDA-valid segment patterns) before calling RxNav. Combined with strengthened null-bias guidance in the prompt (Task 5), false positives should be rare.
 3. **"From RxNorm" badge UX.** Caregivers may not know what "RxNorm" is. Alternative: "Verified" / "Unverified" or icon-only. Settled on "From RxNorm / From label" because pre-launch with no caregivers, transparency > polish; revisit when we have user feedback.
 4. **Splitting strength into value+unit.** `splitStrength` only handles the simple `\d+ UNIT` form. RxNorm uses compound forms like `"10 MG/ML"`, `"5 MG/2.5 MG"`, `"5 %"`. Compound forms fall through to OCR — fine for v1 since most ambulatory CHF meds are single-strength solids. Document in code comment.
 5. **No cross-check between OCR'd drug_name and canonical name.** A photo of bottle A with bottle B's NDC partially obscured wouldn't be flagged. The user's manual confirm step is the safety net. Add an explicit mismatch banner if reviewers feel the safety net is too thin.
@@ -1315,11 +1386,17 @@ git pull --ff-only origin main
 
 ---
 
-## Future improvements (NOT in this PR)
+## Deferred — must ship before public launch (NOT in this PR)
 
-- Edge cache or runtime cache of resolveByNdc responses (NLM recommends 12-24h caching).
-- Cross-check OCR'd name against canonical name; flag mismatches as a discrepancy banner.
-- Re-scan deduplication using NDC + ingestion timestamp.
+The following items are explicitly deferred but bound to a launch-gate trigger so they don't quietly disappear into "someday."
+
+- **Runtime cache for `resolveByNdc`.** NLM asks RxNav consumers to cache responses 12-24h. At pre-launch scale (zero customers) caching adds complexity for no realized benefit, so we ship without it. **Trigger to add caching: any of (a) onboarding-stage testers reach 100, (b) scan endpoint hits 500 invocations/day, (c) public-launch readiness review — whichever comes first.** Implementation: Vercel runtime cache with key `rxnav:ndc:<ndc>`, TTL 24h, cache MISS falls through to RxNav. Single function wrap in `rxnorm-ndc.ts`.
+
+## Future improvements (no launch-gate, evaluate as needs emerge)
+
+- Cross-check OCR'd name against canonical name; flag mismatches as a discrepancy banner. (Caregiver's Confirm step is the current safety net.)
+- Re-scan deduplication using NDC + ingestion timestamp. ("You already added this prescription.")
 - Refill reminder generation linked by NDC.
-- Compound-strength parsing in `splitStrength`.
+- Compound-strength parsing in `splitStrength` (handles `10 MG/ML`, `5 MG/2.5 MG`, `5 %`).
 - Backfill RxNorm fields for pre-existing rows whose drug names we can resolve.
+- Confidence signal from the vision model (`ndc_present_on_label: boolean` paired with `ndc: string | null`) to split the existence call from the value extraction. Add if observed hallucination rate exceeds the prompt's null-bias guidance.
