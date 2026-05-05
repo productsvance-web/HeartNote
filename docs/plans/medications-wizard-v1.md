@@ -104,11 +104,13 @@ Pre-launch, zero customers — straight `ALTER TABLE add column`. No backfill. R
 ## Acceptance criteria (PR-2a)
 
 ### Engineering
-- Plan reviewed by fresh-context subagent before any code (re-run for PR-2a since the data layer is now shipped).
-- No new abstractions or generic helpers added beyond what's described here.
+- Plan reviewed by fresh-context subagent before any code (re-run for PR-2a since the data layer is now shipped). **Done — findings folded in below.**
+- No new abstractions or generic helpers added beyond what's described here. One blessed exception: factor an internal `classifyByRxcui(rxcui)` helper out of `classifyDrugByName` so the wizard's known-rxcui path can call it without repeating the RxClass+ATC code. `classifyDrugByName` becomes a thin wrapper that resolves the rxcui then delegates. No public-surface change.
 - No incidental refactors of unrelated code.
 - All RxNorm logic stays in `src/lib/medications/rxnorm.ts`. UI imports wrappers only.
 - Each AC verifiable by reading specific behavior or running specific commands.
+- New migration filename: `supabase/migrations/<timestamp>_medications_rxnorm_columns.sql`. `supabase db push` run before merging.
+- Wizard parent component owns the shared shell (header, X button, back arrow, step indicator). Each step file renders its body only — no per-step duplication of the chrome.
 
 ### Happy path
 - Type "lasix" → "Lasix · Furosemide" appears within 1.3s perceived (last keystroke → first match) on 4G.
@@ -117,7 +119,7 @@ Pre-launch, zero customers — straight `ALTER TABLE add column`. No backfill. R
 - Strength pre-loads chips for known strengths + Custom.
 - Pick a strength → Dose reads "How many tablets per dose?"
 - 1 tablet × 2/day → Times shows 2 pickers.
-- Skip Times → Details. Skip Details → save lands on `/me/medications` showing the new entry.
+- Skip Times → Details. Skip Details → save lands on `/me/medications` showing the new entry (or `/me/medications/scan` when entry URL had `?from=scan`).
 
 ### Brand vs. generic display
 - "Lasix" search → top match sub-line "Furosemide."
@@ -130,17 +132,18 @@ Pre-launch, zero customers — straight `ALTER TABLE add column`. No backfill. R
 - Generic with many forms (hydrocortisone) → full alphabetical list, no pre-selection, Continue disabled until pick.
 - Non-pill form (cream) → Strength is generic number + unit (no chips); Dose skips count picker.
 - PRN frequency → Times step skipped automatically.
-- Back arrow / system back gesture preserves prior selections and goes to previous step.
-- X (close) prompts "Discard this medication?" — no partial save.
+- Back arrow preserves prior selections and goes to previous step. (System back gesture interception is implemented but verified in PR-2b iOS device testing — see Manual verification below.)
+- X (close) prompts a `window.confirm` whose copy is `"Discard the entry for ${drugName}?"` when a name has been typed; falls back to `"Discard this medication entry?"` only when step 1 is empty. No partial save. Class-B reversible-with-effort per `.claude/rules/destructive-actions.md` — typed-confirm not required.
 - Refresh on any wizard step discards in-progress wizard state and returns to `/me/medications/new` empty (or `/me/medications/scan` if `?from=scan` was set).
 
 ### Error states
-- RxNorm search call fails or 1500ms budget elapses → inline "Couldn't load suggestions — type to add as custom"; custom path still works.
+- RxNorm search call fails OR returns empty results OR 1500ms budget elapses → inline "Couldn't load suggestions — type to add as custom"; custom path still works. (The wrapper returns `[]` on both failure and empty match — same UX intentional.)
 - RxNorm form-list call fails → step shows universal generic fallback list + small "Couldn't load full list" hint.
 - RxNorm strength-list call fails → step shows generic number + unit fields with hint "Strength options unavailable; enter manually."
-- Save fails (network or DB) → error banner on Details with Try again. No partial DB write.
+- Save fails (network or DB) → error banner on Details with Try again. Single `INSERT` only, no auxiliary writes — no partial DB write possible.
 
 ### Performance (4G mobile)
+- Measurement protocol: Chrome DevTools → Network → "Slow 4G" preset. Stopwatch starts on the keystroke immediately preceding the call, stops on visible result paint. Median of three trials must meet the budget.
 - Search results render within 1.3s perceived (last keystroke → first match visible).
 - Form-list lookup renders within 2.5s.
 - Strength-list lookup renders within 2.5s.
@@ -148,18 +151,21 @@ Pre-launch, zero customers — straight `ALTER TABLE add column`. No backfill. R
 ### Persistence
 - One `medications` row per save with `rxcui`, `form`, `ingredient` populated when known; null for custom path.
 - Custom-path rows: `rxcui = null`, `drug_class` from `classifyDrugByName` on typed string (or `'other'` if that returns nothing), `allowed_strengths = null`.
-- Wizard-known-rxcui rows: `drug_class` populated via direct RxClass call (no name resolution).
-- In-progress wizard state lives in component memory only. No localStorage. No URL state for form data.
+- Wizard-known-rxcui rows: `drug_class` populated via `classifyByRxcui(rxcui)` (no name resolution); `'other'` if RxClass returns no usable codes (matches existing fallback).
+- In-progress wizard state lives in component memory only. No localStorage. No URL state for form data. Only `?from=scan` is read (navigation hint).
+- Wizard skips `validateDoseAgainstStrengths`. RxNorm-suggested chips constrain the input on the happy path; the custom path is intentionally unvalidated (matches the "no AI blocking" discipline — caregiver knows the dose better than our heuristic).
 
 ### Permissions / RLS
-- Migration adds three columns to `medications`; existing patient-id RLS still scopes them. Verified via cross-tenant select test in `supabase/tests`.
+- Migration adds three columns to `medications`; existing patient-id RLS still scopes them. (Adding columns does not alter row-level policy scope.)
+- Manual verification, not automated test (no `supabase/tests` harness exists yet — building one is out of scope for PR-2a): sign in as caregiver A, add a wizard medication, sign in as caregiver B, confirm row is not visible in `/me/medications`.
 - `medications` writes scoped to `auth.uid()` (existing).
 
 ### Side effects
 - No alerts, notifications, or AI calls in the wizard. Pure data-entry feature.
+- Edit page (`/me/medications/<id>`) continues to render legacy `MedicationForm` and saves correctly. Verify by editing one med post-merge — fields hydrate and save updates the row.
 
 ### Code quality (specific commitments)
-- No new `useEffect` containing a `setState` in any new file in this PR.
+- No new `useEffect` containing a `setState` derived from DB-canonical state in any new file. Debounced RxNorm-API derived state in the Search step is permitted (api response is not DB-canonical; this is exactly what `code-quality.md` §3 carves out — DB rows are canonical, remote API responses are not). The PR-3 final cleanup grep test still applies to the legacy form file, not to the wizard.
 - No file in `src/app/me/medications` exceeds 300 lines.
 - No clinical thresholds or strings hardcoded in wizard files.
 
@@ -171,9 +177,11 @@ Pre-launch, zero customers — straight `ALTER TABLE add column`. No backfill. R
 5. Repeat with "bumetanide" generic — Form shows multiple options, no pre-select, Continue disabled until pick.
 6. Repeat with "hydrocortisone" → Cream — Strength is generic number + unit, Dose skips count picker.
 7. Search "lasx" (typo, no match) → "Add 'lasx' as custom" → Form shows generic fallback list.
-8. Mid-wizard: tap X → confirm dialog → discard → land on previous page.
-9. Mid-wizard: tap browser/system back → goes to previous step (not exit).
+8. Mid-wizard: tap X (with name "lasix" typed) → confirm dialog reads `"Discard the entry for lasix?"` → discard → land on previous page.
+9. Mid-wizard: tap the wizard's back arrow → goes to previous step (not exit). Browser-back gesture leaves the route entirely (matches "refresh discards" behavior — system-back interception is iOS-only via Capacitor, deferred to device test).
 10. Mid-wizard: refresh → wizard discarded, lands on empty `/me/medications/new`.
+11. Visit `/me/medications/new?from=scan`, complete wizard → save lands on `/me/medications/scan`. (No scan callsite produces this URL until PR-2b; manual URL test only.)
+12. Cross-tenant: sign in as caregiver A, save a wizard med, sign out, sign in as caregiver B, confirm A's row is not visible.
 
 ## Acceptance criteria (PR-2b)
 

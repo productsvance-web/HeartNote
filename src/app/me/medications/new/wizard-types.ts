@@ -1,0 +1,61 @@
+// Shared types for the medication-add wizard. The parent
+// MedicationWizard owns one WizardState; each step receives the slice it
+// needs and a setter. Keeping the type module-local to /me/medications/new
+// because no other route reads or writes this shape.
+
+import type { DrugDetails } from '@/lib/medications/rxnorm';
+
+export type DrugSelection =
+  | {
+      kind: 'rxnorm';
+      rxcui: string;
+      name: string;
+      type: 'brand' | 'generic';
+      // Set only when type === 'brand'.
+      ingredient: string | null;
+      ingredientRxcui: string | null;
+    }
+  | {
+      // Caregiver typed a name with no RxNorm match and chose to add it
+      // anyway. drug_class will be derived via classifyDrugByName from the
+      // typed string at save time.
+      kind: 'custom';
+      name: string;
+    };
+
+export interface WizardState {
+  selection: DrugSelection | null;
+  // Populated when the parent fetches getDrugDetails after step 1. Null
+  // for custom-path or while loading. The same response powers steps 2
+  // and 3 — we never call getDrugDetails twice for the same selection.
+  drugDetails: DrugDetails | null;
+  drugDetailsLoading: boolean;
+  drugDetailsError: boolean;
+  form: string | null;
+  // Pre-formatted display string ("40 mg", "0.5 g", ""). The wizard
+  // builds this from chip selection or from custom number+unit input,
+  // and writes it through to medications.dose unchanged.
+  strength: string;
+  pillsPerDose: number;
+  dosesPerDay: number | null; // null = PRN
+  scheduleTimes: string[] | null; // null = caregiver doesn't track times
+  startedAt: string;
+  notes: string;
+}
+
+export const INITIAL_STATE: WizardState = {
+  selection: null,
+  drugDetails: null,
+  drugDetailsLoading: false,
+  drugDetailsError: false,
+  form: null,
+  strength: '',
+  pillsPerDose: 1,
+  dosesPerDay: 1,
+  scheduleTimes: null,
+  startedAt: '',
+  notes: '',
+};
+
+// 1: Search → 2: Form → 3: Strength → 4: Dose → 5: Times (skipped on PRN) → 6: Details.
+export type StepIndex = 1 | 2 | 3 | 4 | 5 | 6;
