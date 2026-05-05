@@ -21,6 +21,12 @@ const ResendSchema = z.object({
 export async function verifyCode(formData: FormData): Promise<void> {
   const rawEmail = ((formData.get('email') as string | null) ?? '').trim().toLowerCase();
   const rawCode = ((formData.get('code') as string | null) ?? '').trim();
+  const emailValid = z.string().email().safeParse(rawEmail).success;
+  if (!emailValid) {
+    // The hidden email input was tampered or empty. Sending the user back to
+    // the verify page with a code error would be misleading — start over.
+    redirect('/login?error=otp_send_failed');
+  }
   const parsed = VerifySchema.safeParse({ email: rawEmail, code: rawCode });
   if (!parsed.success) {
     redirect(`/auth/verify?email=${encodeURIComponent(rawEmail)}&error=invalid_code`);
