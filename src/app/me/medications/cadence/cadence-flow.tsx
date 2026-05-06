@@ -32,7 +32,11 @@ export function CadenceFlow({
   confirmReplace,
   allowSkip,
 }: Props) {
-  const [draft, setDraft] = useState<CadenceDraft>(initial ?? newDraft('as_needed'));
+  // Default to `every_day` for fresh entries (scan flow lands here without
+  // an initial draft). The caregiver almost always wants a daily schedule;
+  // making them dig past `as_needed` for the common case is friction. They
+  // can still pick `as_needed` from the inline kind list.
+  const [draft, setDraft] = useState<CadenceDraft>(initial ?? newDraft('every_day'));
   const [error, setError] = useState<string | null>(null);
 
   async function save() {

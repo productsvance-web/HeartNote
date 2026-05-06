@@ -82,7 +82,6 @@ export function CadenceFields({
   form,
 }: Props) {
   const noun: QtyNoun | null = form ? (FORM_COUNT_NOUN[form] ?? null) : null;
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [reminderDenied, setReminderDenied] = useState(false);
 
   useEffect(() => {
@@ -123,18 +122,36 @@ export function CadenceFields({
 
       <div>
         <p className="text-sm font-medium text-foreground mb-2">When will you take this?</p>
-        <div className="rounded-2xl bg-card shadow-card px-4 py-3 flex items-center justify-between gap-3">
-          <p className="text-base text-foreground flex-1 min-w-0">
-            {KIND_TITLES[draft.kind]}
-          </p>
-          <button
-            type="button"
-            onClick={() => setSheetOpen(true)}
-            className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
-          >
-            Change
-          </button>
-        </div>
+        <ul
+          className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden"
+          role="radiogroup"
+          aria-label="Cadence"
+        >
+          {CADENCE_KINDS.map((kind) => {
+            const isSelected = draft.kind === kind;
+            return (
+              <li key={kind}>
+                <button
+                  type="button"
+                  onClick={() => pickKind(kind)}
+                  className="w-full text-left px-4 py-3 flex items-center gap-3"
+                  role="radio"
+                  aria-checked={isSelected}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-semibold text-foreground">
+                      {KIND_TITLES[kind]}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {KIND_TAGLINES[kind]}
+                    </p>
+                  </div>
+                  {isSelected && <Check size={18} className="text-foreground shrink-0" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       {draft.kind === 'cyclical' && <CyclicalFields draft={draft} onChange={onChange} />}
@@ -184,92 +201,6 @@ export function CadenceFields({
         </button>
       )}
 
-      <KindSheet
-        open={sheetOpen}
-        value={draft.kind}
-        onPick={pickKind}
-        onClose={() => setSheetOpen(false)}
-      />
-    </div>
-  );
-}
-
-function KindSheet({
-  open,
-  value,
-  onPick,
-  onClose,
-}: {
-  open: boolean;
-  value: CadenceKind;
-  onPick: (k: CadenceKind) => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Choose cadence"
-    >
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className="relative w-full bg-card rounded-t-3xl pb-6 pt-3 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mx-auto h-1.5 w-10 rounded-full bg-muted mb-3" />
-        <ul className="divide-y divide-border">
-          {CADENCE_KINDS.map((kind) => {
-            const isSelected = value === kind;
-            return (
-              <li key={kind}>
-                <button
-                  type="button"
-                  onClick={() => onPick(kind)}
-                  className="w-full text-left px-5 py-3.5 flex items-center gap-3"
-                  aria-pressed={isSelected}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-semibold text-foreground">
-                      {KIND_TITLES[kind]}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {KIND_TAGLINES[kind]}
-                    </p>
-                  </div>
-                  {isSelected && <Check size={18} className="text-foreground shrink-0" />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="px-5 mt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold"
-          >
-            Done
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -431,11 +362,20 @@ function SpecificDaysGroups({
     onChange({ ...draft, groups: newGroups, doseTimes: newDoseTimes });
   }
 
+  // True when ANY group is currently empty. Group identity in this UI is
+  // the bitmap itself (setGroupBitmap maps `groups[i] === oldBm`), so two
+  // simultaneous bitmap=0 groups would propagate any day pick to all of
+  // them and break the disjoint invariant. Gate Schedule Other Days on
+  // this so the user finishes the current empty group before adding
+  // another. Also prevents claimedTotal=0 in two-empty state from
+  // disabling no pills (every day would be tappable in BOTH groups).
+  const hasEmptyGroup = groups.some((bm) => bm === 0);
+
   function addGroup() {
     if (claimedTotal === DOW_ALL) return;
+    if (hasEmptyGroup) return;
     // Apple Health: a fresh group starts empty; the user picks its days
-    // explicitly. The previous "claim all remaining days" default was
-    // the root cause of the orphaned-dose-times broken state.
+    // explicitly.
     onChange({ ...draft, groups: [...groups, 0] });
   }
 
@@ -534,7 +474,7 @@ function SpecificDaysGroups({
       <button
         type="button"
         onClick={addGroup}
-        disabled={claimedTotal === DOW_ALL}
+        disabled={claimedTotal === DOW_ALL || hasEmptyGroup}
         className="w-full rounded-full border border-border px-6 py-3 text-sm font-medium disabled:opacity-50"
       >
         Schedule Other Days
