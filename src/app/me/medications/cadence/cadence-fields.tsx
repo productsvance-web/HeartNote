@@ -778,11 +778,10 @@ function formatQuantityNumber(n: number): string {
 }
 
 function quantityNoun(n: number, noun: QtyNoun | null): string {
-  // Singular for anything < 1.5 (so "0.5 tablet", "1 tablet", "1.25 tablet"
-  // all read as one thing — half a tablet is still ONE tablet split). Plural
-  // for 1.5+ ("1.5 tablets", "2 tablets"). Reflects how caregivers actually
-  // count partial doses, not strict English plural rules.
-  const isSingular = n < 1.5;
+  // Singular for n <= 1, plural for n > 1. Half a tablet is "0.5 tablet"
+  // (one thing split), but 1.25 means one whole tablet PLUS part of another
+  // — two tablets involved, plural. The cutoff is at "more than one whole."
+  const isSingular = n <= 1;
   if (noun) return isSingular ? noun.single : noun.plural;
   return isSingular ? 'dose' : 'doses';
 }
