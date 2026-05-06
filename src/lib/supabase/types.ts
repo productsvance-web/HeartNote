@@ -366,6 +366,47 @@ export type Database = {
           },
         ]
       }
+      medication_dose_times: {
+        Row: {
+          applies_to_dow: number | null
+          created_at: string
+          id: string
+          medication_id: string
+          ordinal: number
+          quantity: number
+          time_of_day: string
+          updated_at: string
+        }
+        Insert: {
+          applies_to_dow?: number | null
+          created_at?: string
+          id?: string
+          medication_id: string
+          ordinal: number
+          quantity: number
+          time_of_day: string
+          updated_at?: string
+        }
+        Update: {
+          applies_to_dow?: number | null
+          created_at?: string
+          id?: string
+          medication_id?: string
+          ordinal?: number
+          quantity?: number
+          time_of_day?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "medication_dose_times_medication_id_fkey"
+            columns: ["medication_id"]
+            isOneToOne: false
+            referencedRelation: "medications"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       medication_events: {
         Row: {
           actual_taken_at: string | null
@@ -417,60 +458,63 @@ export type Database = {
       medications: {
         Row: {
           allowed_strengths: Json | null
+          cadence_kind: string
           created_at: string
+          cycle_off_days: number | null
+          cycle_on_days: number | null
           dose: string | null
-          doses_per_day: number | null
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
           form: string | null
           id: string
           ingredient: string | null
+          interval_days: number | null
           ndc: string | null
           notes: string | null
           patient_id: string
-          pills_per_dose: number
           rxcui: string | null
-          schedule_times: string[] | null
           started_at: string | null
           stopped_at: string | null
           updated_at: string
         }
         Insert: {
           allowed_strengths?: Json | null
+          cadence_kind?: string
           created_at?: string
+          cycle_off_days?: number | null
+          cycle_on_days?: number | null
           dose?: string | null
-          doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name: string
           form?: string | null
           id?: string
           ingredient?: string | null
+          interval_days?: number | null
           ndc?: string | null
           notes?: string | null
           patient_id: string
-          pills_per_dose?: number
           rxcui?: string | null
-          schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
           updated_at?: string
         }
         Update: {
           allowed_strengths?: Json | null
+          cadence_kind?: string
           created_at?: string
+          cycle_off_days?: number | null
+          cycle_on_days?: number | null
           dose?: string | null
-          doses_per_day?: number | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name?: string
           form?: string | null
           id?: string
           ingredient?: string | null
+          interval_days?: number | null
           ndc?: string | null
           notes?: string | null
           patient_id?: string
-          pills_per_dose?: number
           rxcui?: string | null
-          schedule_times?: string[] | null
           started_at?: string | null
           stopped_at?: string | null
           updated_at?: string
@@ -693,6 +737,10 @@ export type Database = {
           schedule_times: string[]
           slots_resolved: number
         }[]
+      }
+      save_medication_with_dose_times: {
+        Args: { payload: Json }
+        Returns: string
       }
     }
     Enums: {
