@@ -333,6 +333,7 @@ From the 5 research docs:
 8. **Lab-threshold integration** (K+, creatinine, INR, digoxin level) — out of scope for v1 voice-log product; defer to v2 lab-import feature.
 9. **Polypharmacy interactions** (antifungals + DOACs, antibiotics + warfarin, SSRIs + anticoagulants) — deferred to future med-scanner OCR feature.
 10. **Ethnic/genetic variation** (ACE-I angioedema in Black patients, BiDil indication, CYP2C9/VKORC1 warfarin) — out of scope v1; note in medical-advisor review.
+11. **MedlinePlus 000112.htm "6 to 9 cups" fluid quote** (re-verified missing 2026-05-06): the page no longer hosts the verbatim "6 to 9 cups (1.5 to 2 liters) a day" line. Sodium 1500–2300 mg/day claim still verifiable. No rule-layer impact (fluid is cardiologist-individualized per §3); flagged for future copy hygiene.
 
 ---
 
