@@ -130,7 +130,7 @@ export function CadenceFields({
             <button
               type="button"
               onClick={() => setSheetOpen(true)}
-              className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
+              className="text-sm font-semibold text-primary shrink-0"
             >
               Change
             </button>
@@ -357,7 +357,7 @@ function AtWhatTimeCard({
               ],
             })
           }
-          className="flex items-center gap-2 text-sm font-semibold text-foreground"
+          className="flex items-center gap-2 text-sm font-semibold text-primary"
         >
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
             <Plus size={14} strokeWidth={3} className="text-white" />
@@ -585,36 +585,37 @@ function SpecificDaysGroups({
       {groupedRows.map((g, gi) => {
         const canAddTime = g.bitmap !== 0;
         return (
-          <div key={gi} className="rounded-2xl bg-card shadow-card p-4 space-y-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-foreground mb-2">Days</p>
+          <div key={gi} className="rounded-2xl bg-card shadow-card p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
                 <DayPills
                   bitmap={g.bitmap}
                   claimedByOthers={claimedTotal & ~g.bitmap}
                   onChange={(next) => setGroupBitmap(g.bitmap, next)}
                 />
               </div>
-              {groups.length > 1 && (
+              {groups.length > 1 ? (
                 <button
                   type="button"
                   onClick={() => removeGroup(g.bitmap)}
-                  className="text-xs text-muted-foreground underline shrink-0 mt-7"
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                  aria-label="Remove group"
                 >
-                  Remove group
+                  <X size={12} strokeWidth={3} />
                 </button>
+              ) : (
+                // Reserve the slot so day-pill rows align across groups
+                // whether or not the X is rendered.
+                <span className="h-6 w-6 shrink-0" aria-hidden="true" />
               )}
             </div>
 
+            {/* Inset divider between Days and Times — sits inside the
+                card's padding so it doesn't touch the rounded edges. */}
+            <div className="mx-2 my-3 border-t border-border" />
+
             <div className="space-y-2">
-              <p className="text-sm font-medium text-foreground">Times</p>
-              {!canAddTime ? (
-                <p className="text-xs text-muted-foreground">
-                  Pick at least one day to add a time.
-                </p>
-              ) : g.rows.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No times yet.</p>
-              ) : (
+              {canAddTime &&
                 g.rows.map(({ dt, originalIndex }) => (
                   <DoseTimeRow
                     key={originalIndex}
@@ -623,13 +624,17 @@ function SpecificDaysGroups({
                     onChange={(next) => updateRow(originalIndex, next, g.bitmap)}
                     onRemove={() => removeRow(originalIndex)}
                   />
-                ))
+                ))}
+              {!canAddTime && (
+                <p className="text-xs text-muted-foreground">
+                  Pick at least one day to add a time.
+                </p>
               )}
               {canAddTime && (
                 <button
                   type="button"
                   onClick={() => addRowToGroup(g.bitmap)}
-                  className="flex items-center gap-2 text-sm font-semibold text-foreground"
+                  className="flex items-center gap-2 text-sm font-semibold text-primary"
                 >
                   <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
                     <Plus size={14} strokeWidth={3} className="text-white" />
@@ -647,7 +652,7 @@ function SpecificDaysGroups({
           type="button"
           onClick={addGroup}
           disabled={claimedTotal === DOW_ALL || hasEmptyGroup}
-          className="rounded-full bg-muted/60 px-6 py-2.5 text-sm font-semibold text-foreground disabled:opacity-50"
+          className="rounded-full bg-muted/60 px-6 py-2.5 text-sm font-semibold text-primary disabled:opacity-50"
         >
           Schedule Other Days
         </button>
