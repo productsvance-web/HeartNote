@@ -1,0 +1,15 @@
+# Drop Apple Health cadence screenshots here as visual reference for the
+# handoff doc one level up. AirDrop from phone → Mac → drag in.
+#
+# Suggested filenames:
+#   01-cadence-picker.png            -- the five-option list
+#   02-every-day.png                 -- (optional, the cadence picker shows this)
+#   03-cyclical-day-unit.png         -- "Use for 21 days / Pause for 7 days"
+#   04-cyclical-week-unit.png        -- "Use for 3 weeks / Pause for 1 week"
+#   05-specific-days-single.png      -- one schedule group
+#   06-specific-days-two-groups.png  -- the "Schedule Other Days" example
+#   07-every-few-days.png            -- the "Every Other Day" mode
+#   08-every-few-days-interval.png   -- the interval picker dropdown
+#
+# Not a hard requirement; the README.md doc has text annotations that
+# stand on their own.
