@@ -12,6 +12,7 @@
     "test:rxnorm:integration": "node --test --experimental-strip-types src/lib/medications/rxnorm.test.ts",
     "test:rxnorm-ndc": "node --test --experimental-strip-types src/lib/medications/rxnorm-ndc.test.ts",
     "test:scan-enrich": "node --test --experimental-strip-types src/lib/medications/scan/enrich.test.ts",
+    "test:scan-prompt": "node --test --experimental-strip-types src/lib/medications/scan/prompt.test.ts",
     "rxnorm:refresh": "node --experimental-strip-types scripts/refresh-rxnorm-index.ts",
     "db:types": "supabase gen types typescript --linked 2>/dev/null | grep -v '^A new version\\|^We recommend\\|^Initialising' > src/lib/supabase/types.ts"
   },

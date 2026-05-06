@@ -49,6 +49,31 @@ export const FORM_COUNT_NOUN: Record<string, { single: string; plural: string }>
   '24 HR Transdermal Patch': { single: 'patch', plural: 'patches' },
 };
 
+// RxNorm dose form → short caregiver-facing label for display only. Lives
+// alongside FORM_COUNT_NOUN because both translate the same vocabulary.
+// The RxNorm verbatim form is still what we persist to medications.form;
+// this map is the display layer only. Caregiver-noticed regression: the
+// raw "Oral Tablet" leaked into the scan-review screen of PR #37.
+const FORM_DISPLAY: Record<string, string> = {
+  'Oral Tablet': 'tablet',
+  'Sublingual Tablet': 'tablet',
+  'Buccal Tablet': 'tablet',
+  'Chewable Tablet': 'tablet',
+  'Disintegrating Oral Tablet': 'tablet',
+  'Extended Release Oral Tablet': 'tablet',
+  'Delayed Release Oral Tablet': 'tablet',
+  'Oral Capsule': 'capsule',
+  'Extended Release Oral Capsule': 'capsule',
+  'Delayed Release Oral Capsule': 'capsule',
+  'Oral Solution': 'solution',
+  'Injectable Solution': 'injection',
+};
+
+export function normalizeForm(raw: string | null): string | null {
+  if (!raw) return null;
+  return FORM_DISPLAY[raw] ?? raw.toLowerCase();
+}
+
 export interface DrugSearchResult {
   rxcui: string;
   name: string;

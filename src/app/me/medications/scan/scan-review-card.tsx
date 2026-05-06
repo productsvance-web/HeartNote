@@ -1,57 +1,83 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Check, Plus, Trash2 } from 'lucide-react';
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
+import { normalizeForm } from '@/lib/medications/rxnorm';
 import { addExtractedMedications, type MedicationPayload } from '../actions';
-import { MedicationForm } from '../medications-form';
-import { extractedMedToPayload } from './extracted-to-payload';
-import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
+import { extractedMedToPayload, toTitleCase, type ChosenSchedule } from './extracted-to-payload';
 
-// Per-card UX (matches plan §Surfaces / scan-review-card):
-//   1. Three confirm cells (drug name, dose, doses-per-day) with the
-//      extracted values editable inline.
-//   2. Once all three cells are confirmed AND non-empty, the card's
-//      "Add to my list" button enables.
-//   3. Tapping it expands the existing MedicationForm inline, pre-filled
-//      with the confirmed cell values. Caregiver can edit additional
-//      fields (schedule_times, started_at, notes) before final save.
-//   4. Form save calls addExtractedMedications via submitAction so the
-//      caregiver stays on /me/medications/scan; onSaved removes the card.
+// Two-step Apple-Health-style flow:
+//   Step 1 (review)  — read-only product summary; "This looks right" advances
+//   Step 2 (schedule)— caregiver picks frequency and times; saves
 //
-// Dose-change-flagged meds skip the cell UX entirely and render a
-// non-interactive notice (build convention #6 — never auto-ingest a
-// dose change as if it were a stable prescription).
+// is_dose_change short-circuits before either step renders. Build
+// convention #6: dose-change labels never ingest, only direct to the
+// prescriber.
 
 interface Props {
   med: ResolvedMed;
   onSkip: () => void;
   onAdded: () => void;
-  // Set when an "Add all" pass is in flight; per-card buttons disable
-  // to prevent races with the batch insert.
+  // Disabled while the parent's "Add all" batch is in flight, to prevent
+  // races with the per-card insert.
   disabled?: boolean;
+  // 1-indexed position within the multi-med scan, total fixed at scan
+  // time. Null when only one med was detected (no progress indicator).
+  position: number | null;
+  totalCount: number;
 }
 
-export function ScanReviewCard({ med, onSkip, onAdded, disabled }: Props) {
+export function ScanReviewCard({ med, onSkip, onAdded, disabled, position, totalCount }: Props) {
   if (med.is_dose_change) {
-    return <DoseChangeNotice drugName={med.drug_name} onSkip={onSkip} />;
+    return (
+      <DoseChangeNotice
+        drugName={med.drug_name}
+        onSkip={onSkip}
+        position={position}
+        totalCount={totalCount}
+      />
+    );
   }
-  return <EditableCard med={med} onSkip={onSkip} onAdded={onAdded} disabled={disabled} />;
+  return (
+    <TwoStepCard
+      med={med}
+      onSkip={onSkip}
+      onAdded={onAdded}
+      disabled={disabled}
+      position={position}
+      totalCount={totalCount}
+    />
+  );
+}
+
+function ProgressBadge({ position, totalCount }: { position: number | null; totalCount: number }) {
+  if (position === null || totalCount <= 1) return null;
+  return (
+    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-2">
+      Med {position} of {totalCount}
+    </p>
+  );
 }
 
 function DoseChangeNotice({
   drugName,
   onSkip,
+  position,
+  totalCount,
 }: {
   drugName: string;
   onSkip: () => void;
+  position: number | null;
+  totalCount: number;
 }) {
   return (
     <div className="rounded-2xl bg-card shadow-card p-4 border border-border">
+      <ProgressBadge position={position} totalCount={totalCount} />
       <div className="flex items-start gap-3">
         <AlertTriangle size={18} className="text-foreground mt-0.5 shrink-0" />
         <div className="flex-1">
-          <p className="font-semibold text-foreground">{drugName}</p>
+          <p className="font-semibold text-foreground">{toTitleCase(drugName)}</p>
           <p className="text-xs text-muted-foreground mt-1">
             This label has dose-change instructions. Confirm with the prescriber and add manually.
           </p>
@@ -70,235 +96,262 @@ function DoseChangeNotice({
   );
 }
 
-function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
-  // Prefer RxNorm-derived strength over OCR'd dose when both are present.
-  const canonicalDoseSplit = med.strength ? splitStrength(med.strength) : null;
-  const initialDoseValue =
-    canonicalDoseSplit?.value ??
-    (med.dose_value !== null ? String(med.dose_value) : '');
-  const initialDoseUnit =
-    canonicalDoseSplit?.unit ??
-    (med.dose_unit !== null && med.dose_unit.trim().length > 0
-      ? med.dose_unit.toLowerCase().trim()
-      : 'mg');
+function TwoStepCard({
+  med,
+  onSkip,
+  onAdded,
+  disabled,
+  position,
+  totalCount,
+}: {
+  med: ResolvedMed;
+  onSkip: () => void;
+  onAdded: () => void;
+  disabled?: boolean;
+  position: number | null;
+  totalCount: number;
+}) {
+  const [step, setStep] = useState<'review' | 'schedule'>('review');
+  const [times, setTimes] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const initialDrugName = med.canonicalName ?? med.drug_name;
-  const [drugName, setDrugName] = useState(initialDrugName);
-  const [doseValue, setDoseValue] = useState(initialDoseValue);
-  const [doseUnit, setDoseUnit] = useState(initialDoseUnit);
-  const [dosesPerDay, setDosesPerDay] = useState<number | null>(med.doses_per_day);
+  // Drug-name composition. OCR'd bottle text is the primary record (B5);
+  // RxNorm ingredient becomes a secondary line ONLY when it differs from
+  // the bottle. Title Case for display; the saved row uses raw OCR text.
+  const ocrName = med.drug_name.trim();
+  const ingredientName = (med.ingredient ?? '').trim();
+  const primary = toTitleCase(ocrName.length > 0 ? ocrName : (med.canonicalName ?? '').trim());
+  const secondary =
+    ingredientName.length > 0 &&
+    ocrName.length > 0 &&
+    ingredientName.toLowerCase() !== ocrName.toLowerCase()
+      ? toTitleCase(ingredientName)
+      : null;
 
-  const [drugNameOK, setDrugNameOK] = useState(false);
-  const [doseOK, setDoseOK] = useState(false);
-  const [dosesOK, setDosesOK] = useState(false);
+  // Strength / form display. The strength fallback chain matches
+  // resolveDose() in extracted-to-payload.ts so what's shown on Step 1
+  // equals what gets saved.
+  const displayDose = displayStrength(med);
+  const displayForm = normalizeForm(med.form);
+  const verified = !!med.canonicalName;
 
-  const [expanded, setExpanded] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const allConfirmed =
-    drugNameOK &&
-    doseOK &&
-    dosesOK &&
-    drugName.trim().length > 0;
-
-  // The form's submitAction; resolves the inserted med via the
-  // non-redirecting addExtractedMedications batch action so the
-  // caregiver stays on /me/medications/scan.
-  async function submitFromForm(payload: MedicationPayload) {
+  async function save() {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    const schedule: ChosenSchedule = {
+      dosesPerDay: times.length === 0 ? null : times.length,
+      scheduleTimes: times.length === 0 ? null : times.slice(),
+      startedAt: todayISO(),
+    };
+    const payload: MedicationPayload = extractedMedToPayload(med, schedule);
     const result = await addExtractedMedications([payload]);
+    setSaving(false);
     if (result.failedIndexes.length === 0) {
-      return { ok: true as const };
+      onAdded();
+      return;
     }
-    return { ok: false as const, error: result.errors[0] ?? 'Could not save.' };
+    setError(result.errors[0] ?? 'Could not save.');
   }
 
-  if (expanded) {
-    const initialPayload = extractedMedToPayload({
-      drug_name: drugName,
-      dose_value: doseValue.trim() ? Number(doseValue) : null,
-      dose_unit: doseValue.trim() ? doseUnit : null,
-      doses_per_day: dosesPerDay,
-      is_dose_change: false,
-      ndc: med.ndc,
-      rxcui: med.rxcui,
-      ingredient: med.ingredient,
-      form: med.form,
-      strength: med.strength,
-      canonicalName: med.canonicalName,
-    });
+  function addTime() {
+    setTimes((t) => [...t, currentLocalHHMM()]);
+  }
+  function removeTime(i: number) {
+    setTimes((t) => t.filter((_, j) => j !== i));
+  }
+  function setTime(i: number, value: string) {
+    setTimes((t) => t.map((v, j) => (j === i ? value : v)));
+  }
+
+  if (step === 'review') {
     return (
       <div className="rounded-2xl bg-card shadow-card p-4">
-        {formError && (
-          <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 mb-3">
-            {formError}
+        <ProgressBadge position={position} totalCount={totalCount} />
+
+        {verified ? (
+          <div className="inline-flex items-center gap-1 rounded-full bg-foreground/5 px-2 py-0.5 mb-2">
+            <Check size={12} className="text-foreground" />
+            <span className="text-[10px] uppercase tracking-wide text-foreground/70">Verified</span>
+          </div>
+        ) : (
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-2">
+            Read from label
           </p>
         )}
-        <MedicationForm
-          mode="new"
-          initial={initialPayload}
-          submitAction={async (payload) => {
-            setFormError(null);
-            const result = await submitFromForm(payload);
-            if (!result.ok) setFormError(result.error ?? 'Save failed');
-            return result;
-          }}
-          onSaved={onAdded}
-          submitLabel="Add to my list"
-        />
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => setExpanded(false)}
-            className="text-xs text-muted-foreground underline"
-          >
-            Back to confirm step
-          </button>
+
+        <div className="space-y-1">
+          <p className="text-base font-semibold text-foreground leading-tight">{primary}</p>
+          {secondary && (
+            <p className="text-xs text-muted-foreground leading-tight">{secondary}</p>
+          )}
         </div>
-      </div>
-    );
-  }
 
-  return (
-    <div className="rounded-2xl bg-card shadow-card p-4 space-y-3">
-      <Cell
-        label="Drug name"
-        confirmed={drugNameOK}
-        onConfirm={() => setDrugNameOK((v) => !v)}
-      >
-        <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-          {med.canonicalName ? 'Verified' : 'Read from label'}
-        </p>
-        <input
-          className={inputClass}
-          value={drugName}
-          onChange={(e) => {
-            setDrugName(e.target.value);
-            setDrugNameOK(false);
-          }}
-          placeholder="Lasix"
-        />
-      </Cell>
-
-      <Cell
-        label="Dose"
-        confirmed={doseOK}
-        onConfirm={() => setDoseOK((v) => !v)}
-      >
-        <div className="flex gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            step="any"
-            className={`${inputClass} flex-1`}
-            value={doseValue}
-            onChange={(e) => {
-              setDoseValue(e.target.value);
-              setDoseOK(false);
-            }}
-            placeholder="40"
+        <dl className="mt-4 space-y-2 text-sm">
+          <Row
+            label="Strength"
+            value={displayDose || <span className="text-muted-foreground">Not on label</span>}
           />
-          <select
-            className={`${inputClass} w-[90px]`}
-            value={doseUnit}
-            onChange={(e) => {
-              setDoseUnit(e.target.value);
-              setDoseOK(false);
-            }}
-          >
-            {ALL_UNITS.map((u) => (
-              <option key={u} value={u.toLowerCase()}>
-                {unitLabel(u)}
-              </option>
-            ))}
-          </select>
-        </div>
-      </Cell>
+          <Row
+            label="Form"
+            value={displayForm ?? <span className="text-muted-foreground">Not on label</span>}
+          />
+        </dl>
 
-      <Cell
-        label="Doses per day"
-        confirmed={dosesOK}
-        onConfirm={() => setDosesOK((v) => !v)}
-      >
-        <select
-          className={inputClass}
-          value={dosesPerDay === null ? 'prn' : String(dosesPerDay)}
-          onChange={(e) => {
-            setDosesPerDay(e.target.value === 'prn' ? null : Number(e.target.value));
-            setDosesOK(false);
-          }}
-        >
-          <option value="prn">As needed (PRN)</option>
-          {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
-            <option key={n} value={n}>
-              {n}× per day
-            </option>
-          ))}
-        </select>
-      </Cell>
-
-      <div className="flex gap-2 pt-1">
         <button
           type="button"
-          onClick={() => setExpanded(true)}
-          disabled={!allConfirmed || disabled}
-          className="flex-1 rounded-full bg-foreground text-background px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+          onClick={() => setStep('schedule')}
+          disabled={disabled}
+          className="mt-5 w-full rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
         >
-          Add to my list
+          This looks right
         </button>
         <button
           type="button"
           onClick={onSkip}
           disabled={disabled}
-          className="rounded-full border border-border bg-card px-4 py-2.5 text-sm font-medium disabled:opacity-50"
+          className="mt-2 w-full text-center text-xs text-muted-foreground underline"
         >
           Skip
         </button>
       </div>
+    );
+  }
+
+  // step === 'schedule'
+  return (
+    <div className="rounded-2xl bg-card shadow-card p-4">
+      <ProgressBadge position={position} totalCount={totalCount} />
+
+      <div className="space-y-1 mb-4">
+        <p className="text-base font-semibold text-foreground leading-tight">{primary}</p>
+        {displayDose && (
+          <p className="text-xs text-muted-foreground leading-tight">{displayDose}</p>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 mb-3">
+          {error}
+        </p>
+      )}
+
+      <Section label="When">
+        <p className="text-sm text-foreground">Every Day</p>
+      </Section>
+
+      <Section label="Times">
+        {times.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No times set — saves as &ldquo;as needed&rdquo; (PRN).
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {times.map((t, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={t}
+                  onChange={(e) => setTime(i, e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                />
+                <span className="text-xs text-muted-foreground">1 tablet</span>
+                <button
+                  type="button"
+                  onClick={() => removeTime(i)}
+                  aria-label="Remove time"
+                  className="ml-auto text-muted-foreground"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button
+          type="button"
+          onClick={addTime}
+          className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-foreground underline"
+        >
+          <Plus size={14} />
+          Add a time
+        </button>
+      </Section>
+
+      <Section label="Duration">
+        <p className="text-sm text-foreground">Start: today &nbsp;·&nbsp; End: none</p>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Adjust dates later from Medications.
+        </p>
+      </Section>
+
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving || disabled || !timesAreValid(times)}
+        className="mt-5 w-full rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
+      >
+        {saving ? 'Adding…' : 'Add to my list'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setStep('review')}
+        disabled={saving}
+        className="mt-2 w-full text-center text-xs text-muted-foreground underline"
+      >
+        Back to product details
+      </button>
     </div>
   );
 }
 
-const inputClass =
-  'w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
-// Split an RxNorm strength like "2.5 MG" or "10 MG/ML" into (value, unit).
-// Returns null on unparseable input — caller falls back to OCR.
-function splitStrength(s: string): { value: string; unit: string } | null {
-  const m = /^(\d+(?:\.\d+)?)\s+(.+)$/.exec(s.trim());
-  if (!m) return null;
-  return { value: m[1], unit: m[2].toLowerCase() };
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-xs uppercase tracking-wide text-muted-foreground/70">{label}</dt>
+      <dd className="text-sm text-foreground text-right">{value}</dd>
+    </div>
+  );
 }
 
-function Cell({
-  label,
-  confirmed,
-  onConfirm,
-  children,
-}: {
-  label: string;
-  confirmed: boolean;
-  onConfirm: () => void;
-  children: React.ReactNode;
-}) {
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <button
-          type="button"
-          onClick={onConfirm}
-          aria-label={confirmed ? 'Mark not confirmed' : 'Confirm'}
-          className={
-            confirmed
-              ? 'flex items-center gap-1 rounded-full bg-foreground text-background px-2.5 py-1 text-xs font-semibold'
-              : 'flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground'
-          }
-        >
-          <Check size={12} />
-          {confirmed ? 'Confirmed' : 'Confirm'}
-        </button>
-      </div>
+    <div className="border-t border-border/50 pt-3 mt-3 first:border-t-0 first:pt-0 first:mt-0">
+      <p className="text-xs font-medium text-muted-foreground mb-2">{label}</p>
       {children}
     </div>
   );
+}
+
+// Strength display string for Step 1 / Step 2 header. Mirrors the chain
+// in resolveDose() so the screen can't drift from the saved value.
+function displayStrength(med: ResolvedMed): string {
+  if (med.strength) return med.strength.toLowerCase().trim();
+  if (med.canonicalName && !med.canonicalName.includes(' / ')) {
+    const m = /(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:\/[A-Za-z]+)?)/.exec(med.canonicalName);
+    if (m) return `${m[1]} ${m[2].toLowerCase()}`;
+  }
+  if (med.dose_value !== null && med.dose_unit && med.dose_unit.trim().length > 0) {
+    return `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`;
+  }
+  return '';
+}
+
+function todayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function currentLocalHHMM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function timesAreValid(times: string[]): boolean {
+  if (times.length === 0) return true; // PRN — empty is allowed
+  return times.every((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
 }

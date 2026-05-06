@@ -39,6 +39,10 @@ type State =
   | {
       kind: 'review';
       medications: ResolvedMed[];
+      // Total count fixed at scan time — used for the "Med X of N"
+      // progress badge so the denominator doesn't shrink as cards are
+      // saved or skipped.
+      totalAtScan: number;
       addAllSummary: string | null;
       truncated: boolean;
     }
@@ -131,6 +135,7 @@ export function ScanClient() {
       setState({
         kind: 'review',
         medications: data.medications,
+        totalAtScan: data.medications.length,
         addAllSummary: null,
         truncated: !!data.truncated,
       });
@@ -146,11 +151,13 @@ export function ScanClient() {
     setState({ kind: 'capture' });
   }
 
-  function removeMed(index: number) {
+  // Pop the head of the review queue. Called by both the per-card
+  // success path (onAdded) and the per-card skip path. When the queue
+  // empties, return to capture so the caregiver can scan again.
+  function advanceHead() {
     setState((s) => {
       if (s.kind !== 'review') return s;
-      const next = s.medications.slice();
-      next.splice(index, 1);
+      const next = s.medications.slice(1);
       if (next.length === 0) return { kind: 'capture' };
       return { ...s, medications: next };
     });
@@ -165,7 +172,16 @@ export function ScanClient() {
     const candidateOrigIndexes: number[] = [];
     state.medications.forEach((med, i) => {
       if (med.is_dose_change) return;
-      candidatePayloads.push(extractedMedToPayload(med));
+      // AddAll bypasses the per-card schedule step. Each med saves with
+      // empty schedule (PRN, no clock times); caregiver edits dates and
+      // times later from /me/medications.
+      candidatePayloads.push(
+        extractedMedToPayload(med, {
+          dosesPerDay: null,
+          scheduleTimes: null,
+          startedAt: '',
+        })
+      );
       candidateOrigIndexes.push(i);
     });
     if (candidatePayloads.length === 0) return;
@@ -182,14 +198,15 @@ export function ScanClient() {
         );
         const summary =
           result.failedIndexes.length === 0
-            ? `${result.added} added`
-            : `${result.added} added, ${result.failedIndexes.length} need a fix`;
+            ? `${result.added} added. Set times in Medications when ready.`
+            : `${result.added} added, ${result.failedIndexes.length} need a fix.`;
         if (next.length === 0) {
           return { kind: 'capture' };
         }
         return {
           kind: 'review',
           medications: next,
+          totalAtScan: s.totalAtScan,
           addAllSummary: summary,
           truncated: s.truncated,
         };
@@ -324,14 +341,19 @@ export function ScanClient() {
     );
   }
 
-  // Review state
+  // Review state — sequential, one med at a time. Head of `medications`
+  // is the active card; `totalAtScan` keeps the progress denominator
+  // stable as cards are advanced. AddAll batches everything remaining.
+  const headMed = state.medications[0];
+  const position = state.totalAtScan - state.medications.length + 1;
+  const allRemainingAreDoseChange = state.medications.every((m) => m.is_dose_change);
+
   return (
     <section className="mt-6 mx-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
-          {state.medications.length} medication
-          {state.medications.length === 1 ? '' : 's'} detected. Tap to confirm each
-          field, or use Add all.
+          {state.totalAtScan} medication
+          {state.totalAtScan === 1 ? '' : 's'} detected.
         </p>
         {state.addAllSummary && (
           <p className="text-xs font-semibold text-foreground">{state.addAllSummary}</p>
@@ -344,40 +366,37 @@ export function ScanClient() {
         </p>
       )}
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={addAll}
-          disabled={
-            addAllPending ||
-            state.medications.every((m) => m.is_dose_change)
-          }
-          className="flex-1 rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
-        >
-          {addAllPending ? 'Adding…' : 'Add all'}
-        </button>
-        <button
-          type="button"
-          onClick={reset}
-          disabled={addAllPending}
-          className="flex-1 rounded-full border border-border bg-card px-4 py-3 text-sm font-medium disabled:opacity-50"
-        >
-          Take another
-        </button>
-      </div>
+      {state.medications.length > 1 && !allRemainingAreDoseChange && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={addAll}
+            disabled={addAllPending}
+            className="flex-1 rounded-full border border-border bg-card px-4 py-2.5 text-xs font-medium disabled:opacity-50"
+          >
+            {addAllPending
+              ? 'Adding…'
+              : `Add all ${state.medications.filter((m) => !m.is_dose_change).length} without schedules`}
+          </button>
+          <button
+            type="button"
+            onClick={reset}
+            disabled={addAllPending}
+            className="flex-1 rounded-full border border-border bg-card px-4 py-2.5 text-xs font-medium disabled:opacity-50"
+          >
+            Take another
+          </button>
+        </div>
+      )}
 
-      <ul className="space-y-3">
-        {state.medications.map((med, i) => (
-          <li key={i}>
-            <ScanReviewCard
-              med={med}
-              onSkip={() => removeMed(i)}
-              onAdded={() => removeMed(i)}
-              disabled={addAllPending}
-            />
-          </li>
-        ))}
-      </ul>
+      <ScanReviewCard
+        med={headMed}
+        onSkip={advanceHead}
+        onAdded={advanceHead}
+        disabled={addAllPending}
+        position={state.totalAtScan > 1 ? position : null}
+        totalCount={state.totalAtScan}
+      />
 
       {/* Empathetic note: navigation away drops scan state. */}
       <p className="text-xs text-muted-foreground text-center pt-2">
