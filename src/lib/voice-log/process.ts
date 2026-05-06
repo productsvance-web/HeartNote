@@ -45,13 +45,17 @@ const SymptomEventSchema = z.object({
     'extremities_cold_clammy',
     'cyanosis',
     'early_satiety',
+    'pulse_irregular',
+    'dizziness',
+    'nausea',
   ]),
   present: z.boolean(),
   severity: z.number().int().min(0).max(4).optional(),
   body_region: z.string().min(1).max(120).optional(),
   nocturnal: z.boolean().optional(),
-  sputum_color: z.enum(['clear', 'white', 'pink_frothy']).optional(),
+  sputum_color: z.enum(['clear', 'white', 'pink_frothy', 'white_frothy']).optional(),
   chest_pain_character: z.string().min(1).max(240).optional(),
+  resolves_overnight: z.boolean().optional(),
 });
 
 const DayLevelSchema = z.object({
@@ -59,6 +63,7 @@ const DayLevelSchema = z.object({
   appetite_change: z.enum(['decreased', 'unchanged', 'increased']).optional(),
   urine_output_change: z.enum(['decreased', 'unchanged', 'increased']).optional(),
   activity_tolerance_change: z.string().min(1).max(500).optional(),
+  activity_step_change: z.enum(['none', 'mild_slowdown', 'severe_change']).optional(),
 });
 
 const MedEventSchema = z.object({
@@ -136,7 +141,20 @@ export async function processVoiceLog(
           validationWarnings.push(`symptom_event rejected: ${JSON.stringify(e)}`);
           return [];
         }
-        return [parsed.data];
+        // Schema invariants the DB enforces. Strip locally so the insert
+        // succeeds even if the LLM violates them; warn so we notice drift.
+        const data = parsed.data;
+        if (data.symptom === 'fatigue' && data.severity !== undefined) {
+          delete data.severity;
+          validationWarnings.push('stripped severity from fatigue event (fatigue is binary)');
+        }
+        if (data.symptom !== 'swelling' && data.resolves_overnight !== undefined) {
+          delete data.resolves_overnight;
+          validationWarnings.push(
+            `stripped resolves_overnight from non-swelling event (symptom=${data.symptom})`
+          );
+        }
+        return [data];
       });
 
       const dayLevelParsed = DayLevelSchema.safeParse(extraction.dayLevel);

@@ -77,9 +77,12 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
                 'extremities_cold_clammy',
                 'cyanosis',
                 'early_satiety',
+                'pulse_irregular',
+                'dizziness',
+                'nausea',
               ],
               description:
-                'The symptom referenced. dyspnea=shortness of breath. pnd=paroxysmal nocturnal dyspnea (waking up gasping 1–3h after lying down). cyanosis=blue lips/fingers (TIER-1). syncope=fainted (TIER-1).',
+                'The symptom referenced. dyspnea=shortness of breath. pnd=paroxysmal nocturnal dyspnea (waking up gasping 1–3h after lying down). cyanosis=blue lips/fingers (TIER-1). syncope=fainted (TIER-1). pulse_irregular=skippy/fluttering pulse, watch-detected AFib (TIER-1 with chest pain or dizziness). dizziness=lightheaded, especially on standing. nausea=feels nauseous (TIER-2 if persisting >24 hr; distinct from early_satiety, which is "fills up after a few bites").',
             },
             present: {
               type: 'boolean',
@@ -91,7 +94,7 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
               minimum: 0,
               maximum: 4,
               description:
-                "For graded symptoms (dyspnea, swelling, fatigue, cognition_change). Use the per-symptom anchors below. Omit for non-graded boolean symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety). DYSPNEA: 0=none/breathing fine. 1=on heavy exertion. 2=on normal walking. 3=on minimal activity. 4=at rest, can't finish sentences (TIER-1). SWELLING: 0=none. 1=mild ankle. 2=moderate (calf). 3=severe (knee+). 4=anasarca/abdominal. FATIGUE: 0=none. 1=mild. 2=moderate. 3=severe. 4=can't move from chair. COGNITION_CHANGE: 0=none. 1=mild fog (tier-3). 2=confusion (tier-2). 4=severe / unable to recognize family (TIER-1).",
+                "For graded symptoms (dyspnea, swelling, cognition_change). Use the per-symptom anchors below. Omit for non-graded boolean symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety, fatigue, pulse_irregular, dizziness, nausea). DYSPNEA: 0=none/breathing fine. 1=on heavy exertion. 2=on normal walking. 3=on minimal activity. 4=at rest, can't finish sentences (TIER-1). SWELLING: 0=none. 1=mild ankle. 2=moderate (calf). 3=severe (knee+). 4=anasarca/abdominal. COGNITION_CHANGE: 0=none. 1=mild fog (tier-3). 2=confusion (tier-2). 4=severe / unable to recognize family (TIER-1). FATIGUE: BINARY ONLY — never include severity. The Phase 1 alert engine reads fatigue as frequency-vs-baseline, not as a daily severity level; the DB enforces severity-must-be-null when symptom='fatigue'.",
             },
             body_region: {
               type: 'string',
@@ -105,9 +108,14 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
             },
             sputum_color: {
               type: 'string',
-              enum: ['clear', 'white', 'pink_frothy'],
+              enum: ['clear', 'white', 'pink_frothy', 'white_frothy'],
               description:
-                'For cough events only. PINK FROTHY is a TIER-1 (911) sign of acute pulmonary edema. If the caregiver mentions pink frothy sputum without saying "cough," still record this as a cough event with present=true and sputum_color=pink_frothy — the sputum implies coughing.',
+                'For cough events only. clear/white = ordinary mucus, not alarming. PINK_FROTHY and WHITE_FROTHY are foamy/bubbly sputum and BOTH are TIER-1 (911) signs of acute pulmonary edema (research §2 Tier 1: "Coughing pink OR white frothy sputum"). The "frothy/foamy/bubbly" word is the discriminator: caregiver says "white foamy stuff" or "white bubbly mucus" → white_frothy; "pink-tinged foam" → pink_frothy. If the caregiver mentions frothy sputum without saying "cough," still record as a cough event with present=true and the matching sputum_color — the foam implies coughing.',
+            },
+            resolves_overnight: {
+              type: 'boolean',
+              description:
+                'For SWELLING events ONLY. true = swelling was there last night (or in the evening) and gone by morning. Caregiver phrases that map here: "her ankles were puffy last night but normal this morning" / "swelling resolves overnight" / "puffy in the evening, looks fine in the morning." This is the tier-3 evening-only-swelling trigger (research §2 Tier 3: "Mild swelling that resolves with elevation overnight"). OMIT for any non-swelling event — the DB enforces swelling-only via CHECK constraint, so other rows will be rejected.',
             },
             chest_pain_character: {
               type: 'string',
@@ -168,7 +176,13 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
           activity_tolerance_change: {
             type: 'string',
             description:
-              "The caregiver's exact phrase about what the patient can or can't do today (e.g. \"stopped halfway up the stairs\", \"she walked to the bathroom fine\"). Omit if not mentioned.",
+              "The caregiver's exact VERBATIM phrase about what the patient can or can't do today (e.g. \"stopped halfway up the stairs\", \"she walked to the bathroom fine\"). Free text — used in visit reports. DISTINCT from activity_step_change (structured field used by alert rules); fill BOTH when the caregiver describes a functional change. Omit if not mentioned.",
+          },
+          activity_step_change: {
+            type: 'string',
+            enum: ['none', 'mild_slowdown', 'severe_change'],
+            description:
+              "Cause-agnostic structured classification of how the patient is moving today vs her usual baseline. Read by Phase 1 alert engine. RULES: (a) caregiver said NOTHING about activity level → OMIT (do not default to 'none'). (b) caregiver explicitly said \"she was fine\" / \"moved around like usual\" / \"normal day\" → 'none'. (c) caregiver said \"a bit slower than usual\" / \"took her a while to get going\" / \"needed extra time\" — without describing inability — → 'mild_slowdown'. (d) caregiver said \"couldn't get out of bed\" / \"couldn't make it to the bathroom on her own\" / \"stayed in bed all day\" / \"needed help to sit up\" — describing inability to do something basic — → 'severe_change'. CONTRADICTION RULE: if the caregiver says BOTH a global \"she was fine\" AND a specific limitation (\"but she couldn't get out of bed\"), the specific phrase wins → 'severe_change'. The CAUSE (fatigue, swelling, breathing, etc.) goes in symptom_events as usual; this field captures the functional change regardless of cause.",
           },
         },
       },
@@ -233,7 +247,13 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - "no chest pain" → { symptom: "chest_pain", present: false }
 - "she fainted" → { symptom: "syncope", present: true } (TIER-1)
 - "she's been confused all morning" → { symptom: "cognition_change", present: true, severity: 2 }
-- Symptoms with severity scales: dyspnea, swelling, fatigue, cognition_change. Other symptoms (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety) are boolean — fill present, omit severity.
+- "her pulse felt skippy" / "her watch sent an AFib alert" / "her chest is fluttering" → { symptom: "pulse_irregular", present: true } (TIER-1 when combined with chest_pain or dizziness)
+- "she got dizzy when she stood up" / "she's lightheaded" → { symptom: "dizziness", present: true }
+- "she's been nauseous since dinner" / "she said she felt sick to her stomach" → { symptom: "nausea", present: true }
+- "white foamy stuff she coughed up" / "white bubbly mucus" → { symptom: "cough", present: true, sputum_color: "white_frothy" } (TIER-1 pulmonary edema — same urgency as pink frothy)
+- "her ankles were puffy last night, normal this morning" → { symptom: "swelling", present: true, severity: 1, resolves_overnight: true } (TIER-3 evening-only-swelling)
+- "she was tired today" / "she was wiped out" → { symptom: "fatigue", present: true } (NEVER include severity for fatigue — DB rejects it; fatigue is binary by design)
+- Symptoms with severity scales: dyspnea, swelling, cognition_change. ALL OTHERS are boolean — fill present, omit severity (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety, fatigue, pulse_irregular, dizziness, nausea).
 - Caregiver said nothing about a symptom → DO NOT include it. Empty array is correct when nothing was said.
 
 ## medication_events[] / med_match_failures[]
@@ -246,7 +266,8 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 ## day_level
 - pillow_count: see the field rule below.
 - appetite_change / urine_output_change: only if the caregiver named one of decreased / unchanged / increased.
-- activity_tolerance_change: capture the caregiver's actual phrase if they described what the patient could or couldn't do.
+- activity_tolerance_change: capture the caregiver's actual VERBATIM phrase if they described what the patient could or couldn't do (free text — used in visit reports).
+- activity_step_change: structured 3-level classification ('none' / 'mild_slowdown' / 'severe_change') of functional change today. SET BOTH activity_tolerance_change AND activity_step_change when the caregiver describes a functional change — they are different fields with different consumers (free text → reports; structured → alert engine). Read the activity_step_change field description for the classification rules and the contradiction rule.
 - Omit any field the caregiver didn't address. day_level: {} is valid.
 
 # pillow_count rules — read carefully (this is THE most common over-fill mistake)
@@ -310,13 +331,17 @@ export type SymptomEventExtraction = {
     | 'cognition_change'
     | 'extremities_cold_clammy'
     | 'cyanosis'
-    | 'early_satiety';
+    | 'early_satiety'
+    | 'pulse_irregular'
+    | 'dizziness'
+    | 'nausea';
   present: boolean;
   severity?: number;
   body_region?: string;
   nocturnal?: boolean;
-  sputum_color?: 'clear' | 'white' | 'pink_frothy';
+  sputum_color?: 'clear' | 'white' | 'pink_frothy' | 'white_frothy';
   chest_pain_character?: string;
+  resolves_overnight?: boolean;
 };
 
 export type DayLevelExtraction = {
@@ -324,6 +349,7 @@ export type DayLevelExtraction = {
   appetite_change?: 'decreased' | 'unchanged' | 'increased';
   urine_output_change?: 'decreased' | 'unchanged' | 'increased';
   activity_tolerance_change?: string;
+  activity_step_change?: 'none' | 'mild_slowdown' | 'severe_change';
 };
 
 export type MedicationEventExtraction = {
