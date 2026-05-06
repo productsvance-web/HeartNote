@@ -44,6 +44,9 @@ interface FormInitial {
   isStopped?: boolean;
   allowedStrengths?: AllowedStrengths | null;
   doseTimes?: InitialDoseTime[];
+  // Verbatim RxNorm form (e.g., "Oral Tablet") for form-aware quantity
+  // rendering inside the cadence flow ("1 tablet" instead of "1 dose").
+  form?: string | null;
 }
 
 interface Props {
@@ -254,6 +257,7 @@ export function MedicationForm({
       <CadenceFlow
         drugLabel={drugName.trim() || 'this medication'}
         initial={draft}
+        form={initial?.form ?? null}
         confirmReplace={mode === 'edit'}
         onCancel={() => setEditingCadence(false)}
         onSave={async (next) => {

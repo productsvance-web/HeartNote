@@ -232,6 +232,7 @@ export function MedicationWizard({ fromScan }: Props) {
           <CadenceFlow
             drugLabel={state.selection?.kind ? state.selection.name : 'this medication'}
             initial={state.cadence}
+            form={state.form}
             onCancel={goBack}
             onSave={async (next) => {
               setState((s) => ({ ...s, cadence: next }));

@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Check } from 'lucide-react';
 import {
   CADENCE_KINDS,
   DOW_ALL,
   type CadenceKind,
 } from '@/lib/medications/cadence';
+import { FORM_COUNT_NOUN } from '@/lib/medications/rxnorm';
 import { checkPermissionState } from '@/lib/medications/notifications';
 import { DayPills } from './day-pills';
 
@@ -30,14 +31,9 @@ export interface CadenceDraft {
   groups: number[];
 }
 
-interface Props {
-  draft: CadenceDraft;
-  onChange: (next: CadenceDraft) => void;
-  onBack: () => void;
-  onSave: () => void;
-  saving?: boolean;
-  error?: string | null;
-  drugLabel: string;
+interface QtyNoun {
+  single: string;
+  plural: string;
 }
 
 const KIND_TITLES: Record<CadenceKind, string> = {
@@ -48,8 +44,47 @@ const KIND_TITLES: Record<CadenceKind, string> = {
   as_needed: 'As Needed',
 };
 
-export function CadenceFields({ draft, onChange, onBack, onSave, saving, error, drugLabel }: Props) {
+const KIND_TAGLINES: Record<CadenceKind, string> = {
+  every_day: 'Take dose at the same time.',
+  cyclical: 'Take every day for 21 days and pause for 7 days.',
+  specific_days: 'On Mondays, On Weekdays.',
+  every_few_days: 'Every other day, Every 3 days.',
+  as_needed: 'No fixed schedule.',
+};
+
+interface Props {
+  draft: CadenceDraft;
+  onChange: (next: CadenceDraft) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  // Optional "Skip — save without a schedule" affordance used by the scan
+  // flow per-card review. When set, renders below Save and triggers a
+  // save with kind='as_needed'.
+  onSkip?: () => void;
+  saving?: boolean;
+  error?: string | null;
+  drugLabel: string;
+  // Verbatim RxNorm form (e.g., "Oral Tablet"). Used to render quantity
+  // links as "1 tablet" instead of "1 dose". Null when unknown (custom
+  // med, scan with no NDC match) or when form isn't in FORM_COUNT_NOUN.
+  form: string | null;
+}
+
+export function CadenceFields({
+  draft,
+  onChange,
+  onSave,
+  onCancel,
+  onSkip,
+  saving,
+  error,
+  drugLabel,
+  form,
+}: Props) {
+  const noun: QtyNoun | null = form ? (FORM_COUNT_NOUN[form] ?? null) : null;
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [reminderDenied, setReminderDenied] = useState(false);
+
   useEffect(() => {
     if (draft.kind === 'as_needed') return;
     let cancelled = false;
@@ -62,30 +97,51 @@ export function CadenceFields({ draft, onChange, onBack, onSave, saving, error, 
   }, [draft.kind]);
   const showReminderDenied = reminderDenied && draft.kind !== 'as_needed';
 
+  function pickKind(k: CadenceKind) {
+    // Tapping the currently active kind is a no-op so the user's
+    // in-progress entries aren't reset by an accidental re-tap.
+    if (k === draft.kind) return;
+    onChange(newDraft(k, draft));
+  }
+
   return (
     <div className="space-y-5">
       <button
         type="button"
-        onClick={onBack}
+        onClick={onCancel}
         className="text-xs text-muted-foreground underline underline-offset-2"
       >
-        ← Change cadence
+        ← Cancel
       </button>
 
       <div className="rounded-2xl bg-card shadow-card p-4">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">{drugLabel}</p>
-        <p className="text-base font-semibold text-foreground mt-1">{KIND_TITLES[draft.kind]}</p>
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          {drugLabel}
+        </p>
+        <p className="text-base font-semibold text-foreground mt-1">Set a schedule</p>
+      </div>
+
+      <div>
+        <p className="text-sm font-medium text-foreground mb-2">When will you take this?</p>
+        <div className="rounded-2xl bg-card shadow-card px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-base text-foreground flex-1 min-w-0">
+            {KIND_TITLES[draft.kind]}
+          </p>
+          <button
+            type="button"
+            onClick={() => setSheetOpen(true)}
+            className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
+          >
+            Change
+          </button>
+        </div>
       </div>
 
       {draft.kind === 'cyclical' && <CyclicalFields draft={draft} onChange={onChange} />}
       {draft.kind === 'every_few_days' && <IntervalFields draft={draft} onChange={onChange} />}
 
       {draft.kind !== 'as_needed' && (
-        <DoseTimesField
-          kind={draft.kind}
-          draft={draft}
-          onChange={onChange}
-        />
+        <DoseTimesField kind={draft.kind} draft={draft} onChange={onChange} noun={noun} />
       )}
 
       {(draft.kind === 'cyclical' || draft.kind === 'every_few_days') && (
@@ -117,6 +173,103 @@ export function CadenceFields({ draft, onChange, onBack, onSave, saving, error, 
       >
         {saving ? 'Saving…' : 'Save schedule'}
       </button>
+
+      {onSkip && (
+        <button
+          type="button"
+          onClick={onSkip}
+          className="w-full text-center text-xs text-muted-foreground underline"
+        >
+          Skip — save without a schedule
+        </button>
+      )}
+
+      <KindSheet
+        open={sheetOpen}
+        value={draft.kind}
+        onPick={pickKind}
+        onClose={() => setSheetOpen(false)}
+      />
+    </div>
+  );
+}
+
+function KindSheet({
+  open,
+  value,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  value: CadenceKind;
+  onPick: (k: CadenceKind) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose cadence"
+    >
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative w-full bg-card rounded-t-3xl pb-6 pt-3 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mx-auto h-1.5 w-10 rounded-full bg-muted mb-3" />
+        <ul className="divide-y divide-border">
+          {CADENCE_KINDS.map((kind) => {
+            const isSelected = value === kind;
+            return (
+              <li key={kind}>
+                <button
+                  type="button"
+                  onClick={() => onPick(kind)}
+                  className="w-full text-left px-5 py-3.5 flex items-center gap-3"
+                  aria-pressed={isSelected}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-semibold text-foreground">
+                      {KIND_TITLES[kind]}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {KIND_TAGLINES[kind]}
+                    </p>
+                  </div>
+                  {isSelected && <Check size={18} className="text-foreground shrink-0" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="px-5 mt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold"
+          >
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -193,13 +346,15 @@ function DoseTimesField({
   kind,
   draft,
   onChange,
+  noun,
 }: {
   kind: CadenceKind;
   draft: CadenceDraft;
   onChange: (d: CadenceDraft) => void;
+  noun: QtyNoun | null;
 }) {
   if (kind === 'specific_days') {
-    return <SpecificDaysGroups draft={draft} onChange={onChange} />;
+    return <SpecificDaysGroups draft={draft} onChange={onChange} noun={noun} />;
   }
   // every_day, cyclical, every_few_days — flat list of (time, quantity) rows.
   // appliesToDow is null for these kinds.
@@ -211,6 +366,7 @@ function DoseTimesField({
           <DoseTimeRow
             key={i}
             value={dt}
+            noun={noun}
             onChange={(next) => {
               const copy = [...draft.doseTimes];
               copy[i] = { ...next, appliesToDow: null };
@@ -243,35 +399,31 @@ function DoseTimesField({
 function SpecificDaysGroups({
   draft,
   onChange,
+  noun,
 }: {
   draft: CadenceDraft;
   onChange: (d: CadenceDraft) => void;
+  noun: QtyNoun | null;
 }) {
   // Group dose-times by bitmap. Group order is `draft.groups` (stable).
-  // A bitmap of 0 means the group is freshly added with no days picked.
+  // A bitmap of 0 means the group is freshly added with no days picked
+  // yet — its "Add time" button is gated so dose-times can't be created
+  // before the user picks at least one day.
   const groups = draft.groups.length > 0 ? draft.groups : [0];
   const groupedRows = groups.map((bm) => ({
     bitmap: bm,
     rows: draft.doseTimes
       .map((dt, originalIndex) => ({ dt, originalIndex }))
-      .filter(({ dt }) => dt.appliesToDow === bm || (dt.appliesToDow ?? 0) === bm),
+      .filter(({ dt }) => (dt.appliesToDow ?? 0) === bm),
   }));
   const claimedTotal = groups.reduce((acc, bm) => acc | bm, 0);
 
   function setGroupBitmap(oldBm: number, newBm: number) {
-    // Bitmap going to 0 = group has no days left. Drop the group and its
-    // dose-times entirely — keeping a 0-bitmap group around creates a
-    // collision with any other empty group and confuses the by-bitmap
-    // grouping render. The "Schedule Other Days" button creates fresh
-    // groups when the user wants more, so removing-on-empty is reversible.
-    if (newBm === 0) {
-      onChange({
-        ...draft,
-        groups: groups.filter((g) => g !== oldBm),
-        doseTimes: draft.doseTimes.filter((dt) => (dt.appliesToDow ?? 0) !== oldBm),
-      });
-      return;
-    }
+    // Apple's min-1-day rule (in day-pills.tsx) prevents the user from
+    // dropping a non-zero bitmap to 0 via the day-pill UI. The only path
+    // to bitmap=0 is the initial state of a freshly-added group, which
+    // is handled by addGroup directly. So newBm===0 is unreachable from
+    // an interactive deselect; no auto-remove branch needed here.
     const newGroups = groups.map((g) => (g === oldBm ? newBm : g));
     const newDoseTimes = draft.doseTimes.map((dt) =>
       (dt.appliesToDow ?? 0) === oldBm ? { ...dt, appliesToDow: newBm } : dt,
@@ -281,8 +433,10 @@ function SpecificDaysGroups({
 
   function addGroup() {
     if (claimedTotal === DOW_ALL) return;
-    const remaining = DOW_ALL & ~claimedTotal;
-    onChange({ ...draft, groups: [...groups, remaining] });
+    // Apple Health: a fresh group starts empty; the user picks its days
+    // explicitly. The previous "claim all remaining days" default was
+    // the root cause of the orphaned-dose-times broken state.
+    onChange({ ...draft, groups: [...groups, 0] });
   }
 
   function removeGroup(bm: number) {
@@ -294,18 +448,19 @@ function SpecificDaysGroups({
   }
 
   function addRowToGroup(bm: number) {
+    if (bm === 0) return; // gated; the button is also disabled when bm===0
     onChange({
       ...draft,
       doseTimes: [
         ...draft.doseTimes,
-        { timeOfDay: '', quantity: 1, appliesToDow: bm === 0 ? null : bm },
+        { timeOfDay: '', quantity: 1, appliesToDow: bm },
       ],
     });
   }
 
   function updateRow(originalIndex: number, next: DraftDoseTime, groupBm: number) {
     const copy = [...draft.doseTimes];
-    copy[originalIndex] = { ...next, appliesToDow: groupBm === 0 ? null : groupBm };
+    copy[originalIndex] = { ...next, appliesToDow: groupBm };
     onChange({ ...draft, doseTimes: copy });
   }
 
@@ -315,56 +470,66 @@ function SpecificDaysGroups({
 
   return (
     <div className="space-y-4">
-      {groupedRows.map((g, gi) => (
-        <div key={gi} className="rounded-2xl bg-card shadow-card p-4 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-foreground mb-2">Days</p>
-              <DayPills
-                bitmap={g.bitmap}
-                claimedByOthers={claimedTotal & ~g.bitmap}
-                onChange={(next) => setGroupBitmap(g.bitmap, next)}
-              />
-            </div>
-            {groups.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeGroup(g.bitmap)}
-                className="text-xs text-muted-foreground underline shrink-0 mt-7"
-              >
-                Remove group
-              </button>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">Times</p>
-            {g.rows.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No times yet.</p>
-            ) : (
-              g.rows.map(({ dt, originalIndex }) => (
-                <DoseTimeRow
-                  key={originalIndex}
-                  value={dt}
-                  onChange={(next) => updateRow(originalIndex, next, g.bitmap)}
-                  onRemove={
-                    g.rows.length > 1
-                      ? () => removeRow(originalIndex)
-                      : undefined
-                  }
+      {groupedRows.map((g, gi) => {
+        const canAddTime = g.bitmap !== 0;
+        return (
+          <div key={gi} className="rounded-2xl bg-card shadow-card p-4 space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground mb-2">Days</p>
+                <DayPills
+                  bitmap={g.bitmap}
+                  claimedByOthers={claimedTotal & ~g.bitmap}
+                  onChange={(next) => setGroupBitmap(g.bitmap, next)}
                 />
-              ))
-            )}
-            <button
-              type="button"
-              onClick={() => addRowToGroup(g.bitmap)}
-              className="text-sm text-foreground underline underline-offset-2"
-            >
-              Add time
-            </button>
+              </div>
+              {groups.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeGroup(g.bitmap)}
+                  className="text-xs text-muted-foreground underline shrink-0 mt-7"
+                >
+                  Remove group
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Times</p>
+              {!canAddTime ? (
+                <p className="text-xs text-muted-foreground">
+                  Pick at least one day to add a time.
+                </p>
+              ) : g.rows.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No times yet.</p>
+              ) : (
+                g.rows.map(({ dt, originalIndex }) => (
+                  <DoseTimeRow
+                    key={originalIndex}
+                    value={dt}
+                    noun={noun}
+                    onChange={(next) => updateRow(originalIndex, next, g.bitmap)}
+                    onRemove={
+                      g.rows.length > 1
+                        ? () => removeRow(originalIndex)
+                        : undefined
+                    }
+                  />
+                ))
+              )}
+              {canAddTime && (
+                <button
+                  type="button"
+                  onClick={() => addRowToGroup(g.bitmap)}
+                  className="text-sm text-foreground underline underline-offset-2"
+                >
+                  Add time
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <button
         type="button"
@@ -390,10 +555,12 @@ function DoseTimeRow({
   value,
   onChange,
   onRemove,
+  noun,
 }: {
   value: DraftDoseTime;
   onChange: (next: DraftDoseTime) => void;
   onRemove?: () => void;
+  noun: QtyNoun | null;
 }) {
   const [editingQty, setEditingQty] = useState(false);
   const [qtyDraft, setQtyDraft] = useState(String(value.quantity));
@@ -466,7 +633,7 @@ function DoseTimeRow({
             }}
             className="text-sm text-foreground underline underline-offset-2 whitespace-nowrap"
           >
-            {formatQuantity(value.quantity)}
+            {formatQuantity(value.quantity, noun)}
           </button>
         )}
         {onRemove && (
@@ -487,9 +654,14 @@ function DoseTimeRow({
   );
 }
 
-function formatQuantity(n: number): string {
-  const s = Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-  return n === 1 ? '1 dose' : `${s} doses`;
+function formatQuantity(n: number, noun: QtyNoun | null): string {
+  const display = Number.isInteger(n)
+    ? String(n)
+    : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  if (noun) {
+    return n === 1 ? `1 ${noun.single}` : `${display} ${noun.plural}`;
+  }
+  return n === 1 ? '1 dose' : `${display} doses`;
 }
 
 const inputClass =
@@ -513,10 +685,16 @@ function Field({
   );
 }
 
-// Build a fresh draft for a given cadence kind. Carries forward the
-// caregiver's typed start date when the new kind uses it; nulls out
-// fields that don't apply to the new kind so a switched-from-cyclical
-// med doesn't leave stale cycle_on_days behind.
+// Build a fresh draft for a given cadence kind. Carries forward kind-
+// agnostic state (start date, cycle unit) and like-shaped dose-times
+// across kinds in the same "shape family":
+//   - flat (every_day | cyclical | every_few_days) ↔ flat: carry, drop bitmaps
+//   - specific_days ↔ specific_days: carry doseTimes + groups verbatim
+//   - flat → specific_days: drop doseTimes (no synthesizable bitmaps)
+//   - specific_days → flat: drop doseTimes (bitmap context is gone)
+//   - as_needed → anything: fresh
+// Dropping rather than synthesizing keeps the broken-state class
+// (group bitmap=0 with dose-times) unreachable.
 export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft {
   const startedAt = prior?.startedAt ?? '';
   const cycleUnit = prior?.cycleUnit ?? 'day';
@@ -530,9 +708,7 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
     doseTimes: [],
     groups: [],
   };
-  if (kind === 'as_needed') {
-    return base;
-  }
+  if (kind === 'as_needed') return base;
   if (kind === 'cyclical') {
     base.cycleOnDays = prior?.cycleOnDays ?? null;
     base.cycleOffDays = prior?.cycleOffDays ?? null;
@@ -540,16 +716,27 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
     base.intervalDays = prior?.intervalDays ?? null;
   }
   if (kind === 'specific_days') {
-    base.doseTimes =
-      prior?.doseTimes && prior.doseTimes.length > 0
-        ? prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: dt.appliesToDow ?? 0 }))
-        : [{ timeOfDay: '', quantity: 1, appliesToDow: 0 }];
-    base.groups = prior?.groups && prior.groups.length > 0 ? prior.groups : [0];
+    if (prior?.kind === 'specific_days' && prior.doseTimes.length > 0) {
+      base.doseTimes = prior.doseTimes;
+      base.groups = prior.groups.length > 0 ? prior.groups : [0];
+    } else {
+      base.groups = [0];
+      base.doseTimes = [];
+    }
+    return base;
+  }
+  // Flat kinds. Carry from another flat kind (every_day ↔ cyclical ↔
+  // every_few_days). Coming from specific_days drops dose-times because
+  // their bitmaps don't translate to a flat list.
+  if (
+    prior &&
+    prior.kind !== 'as_needed' &&
+    prior.kind !== 'specific_days' &&
+    prior.doseTimes.length > 0
+  ) {
+    base.doseTimes = prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: null }));
   } else {
-    base.doseTimes =
-      prior?.doseTimes && prior.doseTimes.length > 0
-        ? prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: null }))
-        : [{ timeOfDay: '', quantity: 1, appliesToDow: null }];
+    base.doseTimes = [{ timeOfDay: '', quantity: 1, appliesToDow: null }];
   }
   return base;
 }

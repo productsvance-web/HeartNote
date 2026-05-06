@@ -201,7 +201,16 @@ export function ScanClient() {
           appliesToDow: dt.appliesToDow,
         })),
       };
-      const result = await addExtractedMedications([payload]);
+      // Belt-and-suspenders: convert thrown server-action exceptions
+      // (network blip, classifier rejection, etc.) into a returned
+      // `{ ok: false }` so the cadence flow's error banner renders the
+      // failure instead of letting it propagate to React's error boundary.
+      let result: Awaited<ReturnType<typeof addExtractedMedications>>;
+      try {
+        result = await addExtractedMedications([payload]);
+      } catch {
+        return { ok: false, error: 'Could not save schedule. Try again.' };
+      }
       if (result.failedIndexes.length === 0) {
         if (draft.kind !== 'as_needed') {
           const state = await checkPermissionState();
@@ -443,6 +452,7 @@ export function ScanClient() {
       {cadenceForHead ? (
         <CadenceFlow
           drugLabel={toTitleCase(headMed.drug_name.trim() || headMed.canonicalName || 'this medication')}
+          form={headMed.form}
           allowSkip
           saving={savingCadence}
           onCancel={() => setCadenceForHead(false)}
