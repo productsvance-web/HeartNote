@@ -3,16 +3,20 @@
 // PRN) and the form payload schema (a single `dose: string` matching
 // DOSE_FORMAT). Architectural decision #17 in the plan.
 
-import type { ExtractedMed } from '@/lib/medications/scan/schema';
+import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import type { MedicationPayload } from '../actions';
 
-export function extractedMedToPayload(med: ExtractedMed): MedicationPayload {
-  const dose =
-    med.dose_value !== null && med.dose_unit !== null && med.dose_unit.trim().length > 0
+export function extractedMedToPayload(med: ResolvedMed): MedicationPayload {
+  // Prefer RxNorm canonical strength when the NDC resolved. Falls back
+  // to OCR'd dose_value + dose_unit otherwise. Empty string when
+  // neither source has a usable value.
+  const dose = med.strength
+    ? med.strength.toLowerCase().trim()
+    : med.dose_value !== null && med.dose_unit !== null && med.dose_unit.trim().length > 0
       ? `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`
       : '';
   return {
-    drugName: med.drug_name.trim(),
+    drugName: (med.canonicalName ?? med.drug_name).trim(),
     dose,
     // Photo-scan extraction does not currently parse pills-per-dose from
     // the bottle (the prompt schema doesn't include it). Default 1; the
@@ -22,5 +26,9 @@ export function extractedMedToPayload(med: ExtractedMed): MedicationPayload {
     scheduleTimes: null,
     startedAt: '',
     notes: '',
+    ndc: med.ndc,
+    rxcui: med.rxcui,
+    ingredient: med.ingredient,
+    form: med.form,
   };
 }

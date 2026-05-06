@@ -20,9 +20,11 @@ import type { JWTInput } from 'google-auth-library';
 import {
   ExtractionResponseSchema,
   extractedMedsResponseSchema,
-  type ExtractedMed,
+  type ResolvedMed,
 } from './schema';
 import { EXTRACTION_SYSTEM_PROMPT } from './prompt';
+import { resolveByNdc } from '@/lib/medications/rxnorm-ndc';
+import { enrichMedications } from './enrich';
 
 const TIMEOUT_MS = 15_000;
 const MODEL = 'gemini-2.5-flash';
@@ -89,7 +91,7 @@ function getVertexClient(): VertexAI {
 export async function extractMedicationsFromImage(
   bytes: Uint8Array,
   mimeType: 'image/jpeg' | 'image/png'
-): Promise<{ medications: ExtractedMed[]; truncated: boolean }> {
+): Promise<{ medications: ResolvedMed[]; truncated: boolean }> {
   const model = getVertexClient().getGenerativeModel({
     model: MODEL,
     systemInstruction: {
@@ -177,5 +179,8 @@ export async function extractMedicationsFromImage(
 
   const all = validation.data.medications;
   const truncated = all.length > MAX_MEDS;
-  return { medications: all.slice(0, MAX_MEDS), truncated };
+  const trimmed = all.slice(0, MAX_MEDS);
+  const enriched = await enrichMedications(trimmed, resolveByNdc);
+
+  return { medications: enriched, truncated };
 }

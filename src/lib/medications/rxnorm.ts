@@ -192,6 +192,33 @@ interface RelatedResponse {
   };
 }
 
+// Run `fn` over `items` with at most `limit` promises in flight. Originally
+// used by searchDrug for TTY fan-out; that path was removed in the bundled
+// RxNorm index migration. Now used by scan/enrich.ts for NDC resolution
+// fan-out — keeps the 8-parallel cap consistent and the helper colocated
+// with the only other RxNav-touching code in the wizard module.
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 function extractConceptsOfTty(json: RelatedResponse | null, tty: string): string[] {
   const groups = json?.relatedGroup?.conceptGroup ?? [];
   for (const g of groups) {

@@ -425,6 +425,7 @@ export type Database = {
           form: string | null
           id: string
           ingredient: string | null
+          ndc: string | null
           notes: string | null
           patient_id: string
           pills_per_dose: number
@@ -444,6 +445,7 @@ export type Database = {
           form?: string | null
           id?: string
           ingredient?: string | null
+          ndc?: string | null
           notes?: string | null
           patient_id: string
           pills_per_dose?: number
@@ -463,6 +465,7 @@ export type Database = {
           form?: string | null
           id?: string
           ingredient?: string | null
+          ndc?: string | null
           notes?: string | null
           patient_id?: string
           pills_per_dose?: number

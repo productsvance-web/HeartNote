@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Check, AlertTriangle } from 'lucide-react';
-import type { ExtractedMed } from '@/lib/medications/scan/schema';
+import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import { addExtractedMedications, type MedicationPayload } from '../actions';
 import { MedicationForm } from '../medications-form';
 import { extractedMedToPayload } from './extracted-to-payload';
@@ -24,7 +24,7 @@ import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
 // dose change as if it were a stable prescription).
 
 interface Props {
-  med: ExtractedMed;
+  med: ResolvedMed;
   onSkip: () => void;
   onAdded: () => void;
   // Set when an "Add all" pass is in flight; per-card buttons disable
@@ -71,14 +71,19 @@ function DoseChangeNotice({
 }
 
 function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
+  // Prefer RxNorm-derived strength over OCR'd dose when both are present.
+  const canonicalDoseSplit = med.strength ? splitStrength(med.strength) : null;
   const initialDoseValue =
-    med.dose_value !== null ? String(med.dose_value) : '';
+    canonicalDoseSplit?.value ??
+    (med.dose_value !== null ? String(med.dose_value) : '');
   const initialDoseUnit =
-    med.dose_unit !== null && med.dose_unit.trim().length > 0
+    canonicalDoseSplit?.unit ??
+    (med.dose_unit !== null && med.dose_unit.trim().length > 0
       ? med.dose_unit.toLowerCase().trim()
-      : 'mg';
+      : 'mg');
 
-  const [drugName, setDrugName] = useState(med.drug_name);
+  const initialDrugName = med.canonicalName ?? med.drug_name;
+  const [drugName, setDrugName] = useState(initialDrugName);
   const [doseValue, setDoseValue] = useState(initialDoseValue);
   const [doseUnit, setDoseUnit] = useState(initialDoseUnit);
   const [dosesPerDay, setDosesPerDay] = useState<number | null>(med.doses_per_day);
@@ -114,6 +119,12 @@ function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
       dose_unit: doseValue.trim() ? doseUnit : null,
       doses_per_day: dosesPerDay,
       is_dose_change: false,
+      ndc: med.ndc,
+      rxcui: med.rxcui,
+      ingredient: med.ingredient,
+      form: med.form,
+      strength: med.strength,
+      canonicalName: med.canonicalName,
     });
     return (
       <div className="rounded-2xl bg-card shadow-card p-4">
@@ -154,6 +165,9 @@ function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
         confirmed={drugNameOK}
         onConfirm={() => setDrugNameOK((v) => !v)}
       >
+        <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          {med.canonicalName ? 'Verified' : 'Read from label'}
+        </p>
         <input
           className={inputClass}
           value={drugName}
@@ -246,6 +260,14 @@ function EditableCard({ med, onSkip, onAdded, disabled }: Props) {
 
 const inputClass =
   'w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+
+// Split an RxNorm strength like "2.5 MG" or "10 MG/ML" into (value, unit).
+// Returns null on unparseable input — caller falls back to OCR.
+function splitStrength(s: string): { value: string; unit: string } | null {
+  const m = /^(\d+(?:\.\d+)?)\s+(.+)$/.exec(s.trim());
+  if (!m) return null;
+  return { value: m[1], unit: m[2].toLowerCase() };
+}
 
 function Cell({
   label,
