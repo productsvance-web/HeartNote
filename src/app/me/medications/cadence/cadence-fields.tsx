@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Trash2, Check } from 'lucide-react';
+import { MinusCircle, PlusCircle, Check } from 'lucide-react';
 import {
   CADENCE_KINDS,
   DOW_ALL,
@@ -82,6 +82,7 @@ export function CadenceFields({
   form,
 }: Props) {
   const noun: QtyNoun | null = form ? (FORM_COUNT_NOUN[form] ?? null) : null;
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [reminderDenied, setReminderDenied] = useState(false);
 
   useEffect(() => {
@@ -113,45 +114,25 @@ export function CadenceFields({
         ← Cancel
       </button>
 
-      <div className="rounded-2xl bg-card shadow-card p-4">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-          {drugLabel}
-        </p>
-        <p className="text-base font-semibold text-foreground mt-1">Set a schedule</p>
+      <div className="text-center">
+        <p className="text-base font-semibold text-foreground">{drugLabel}</p>
+        <h2 className="font-display text-3xl text-foreground mt-3">Set a Schedule</h2>
       </div>
 
       <div>
         <p className="text-sm font-medium text-foreground mb-2">When will you take this?</p>
-        <ul
-          className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden"
-          role="radiogroup"
-          aria-label="Cadence"
-        >
-          {CADENCE_KINDS.map((kind) => {
-            const isSelected = draft.kind === kind;
-            return (
-              <li key={kind}>
-                <button
-                  type="button"
-                  onClick={() => pickKind(kind)}
-                  className="w-full text-left px-4 py-3 flex items-center gap-3"
-                  role="radio"
-                  aria-checked={isSelected}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-base font-semibold text-foreground">
-                      {KIND_TITLES[kind]}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {KIND_TAGLINES[kind]}
-                    </p>
-                  </div>
-                  {isSelected && <Check size={18} className="text-foreground shrink-0" />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="rounded-2xl bg-card shadow-card px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-base text-foreground flex-1 min-w-0">
+            {KIND_TITLES[draft.kind]}
+          </p>
+          <button
+            type="button"
+            onClick={() => setSheetOpen(true)}
+            className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
+          >
+            Change
+          </button>
+        </div>
       </div>
 
       {draft.kind === 'cyclical' && <CyclicalFields draft={draft} onChange={onChange} />}
@@ -159,6 +140,12 @@ export function CadenceFields({
 
       {draft.kind !== 'as_needed' && (
         <DoseTimesField kind={draft.kind} draft={draft} onChange={onChange} noun={noun} />
+      )}
+
+      {draft.kind !== 'as_needed' && !showReminderDenied && (
+        <p className="text-xs text-muted-foreground text-center px-4">
+          Reminders fire at the scheduled times.
+        </p>
       )}
 
       {(draft.kind === 'cyclical' || draft.kind === 'every_few_days') && (
@@ -201,6 +188,93 @@ export function CadenceFields({
         </button>
       )}
 
+      <KindSheet
+        open={sheetOpen}
+        value={draft.kind}
+        onPick={pickKind}
+        onClose={() => setSheetOpen(false)}
+      />
+    </div>
+  );
+}
+
+function KindSheet({
+  open,
+  value,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  value: CadenceKind;
+  onPick: (k: CadenceKind) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose cadence"
+    >
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className="relative w-full bg-card rounded-t-3xl pb-6 pt-3 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mx-auto h-1.5 w-10 rounded-full bg-muted mb-3" />
+        <ul className="divide-y divide-border" role="radiogroup" aria-label="Cadence">
+          {CADENCE_KINDS.map((kind) => {
+            const isSelected = value === kind;
+            return (
+              <li key={kind}>
+                <button
+                  type="button"
+                  onClick={() => onPick(kind)}
+                  className="w-full text-left px-5 py-3.5 flex items-center gap-3"
+                  role="radio"
+                  aria-checked={isSelected}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-semibold text-foreground">
+                      {KIND_TITLES[kind]}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {KIND_TAGLINES[kind]}
+                    </p>
+                  </div>
+                  {isSelected && <Check size={18} className="text-foreground shrink-0" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="px-5 mt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold"
+          >
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -319,9 +393,10 @@ function DoseTimesField({
             doseTimes: [...draft.doseTimes, { timeOfDay: '', quantity: 1, appliesToDow: null }],
           })
         }
-        className="text-sm text-foreground underline underline-offset-2"
+        className="flex items-center gap-2 text-sm font-semibold text-foreground"
       >
-        Add time
+        <PlusCircle size={20} />
+        Add a Time
       </button>
     </div>
   );
@@ -461,9 +536,10 @@ function SpecificDaysGroups({
                 <button
                   type="button"
                   onClick={() => addRowToGroup(g.bitmap)}
-                  className="text-sm text-foreground underline underline-offset-2"
+                  className="flex items-center gap-2 text-sm font-semibold text-foreground"
                 >
-                  Add time
+                  <PlusCircle size={20} />
+                  Add a Time
                 </button>
               )}
             </div>
@@ -471,14 +547,16 @@ function SpecificDaysGroups({
         );
       })}
 
-      <button
-        type="button"
-        onClick={addGroup}
-        disabled={claimedTotal === DOW_ALL || hasEmptyGroup}
-        className="w-full rounded-full border border-border px-6 py-3 text-sm font-medium disabled:opacity-50"
-      >
-        Schedule Other Days
-      </button>
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={addGroup}
+          disabled={claimedTotal === DOW_ALL || hasEmptyGroup}
+          className="rounded-full bg-muted/60 px-6 py-2.5 text-sm font-semibold text-foreground disabled:opacity-50"
+        >
+          Schedule Other Days
+        </button>
+      </div>
     </div>
   );
 }
@@ -526,6 +604,20 @@ function DoseTimeRow({
   return (
     <div>
       <div className="flex items-center gap-3">
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-destructive shrink-0"
+            aria-label="Remove time"
+          >
+            <MinusCircle size={22} />
+          </button>
+        ) : (
+          // Reserve the leading slot so the time pill stays in the same
+          // column as rows that DO have a remove button. Visual stability.
+          <span className="w-[22px] shrink-0" aria-hidden="true" />
+        )}
         <input
           ref={inputRef}
           type="time"
@@ -541,7 +633,7 @@ function DoseTimeRow({
               // ignore
             }
           }}
-          className={`${inputClass} flex-1`}
+          className="flex-1 rounded-full border border-border bg-background px-4 py-2.5 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
         {editingQty ? (
           <input
@@ -562,7 +654,7 @@ function DoseTimeRow({
                 setEditingQty(false);
               }
             }}
-            className={`${inputClass} w-20`}
+            className="w-20 rounded-full border border-border bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         ) : (
           <button
@@ -571,24 +663,14 @@ function DoseTimeRow({
               setQtyDraft(String(value.quantity));
               setEditingQty(true);
             }}
-            className="text-sm text-foreground underline underline-offset-2 whitespace-nowrap"
+            className="text-sm font-semibold text-foreground underline underline-offset-2 whitespace-nowrap"
           >
             {formatQuantity(value.quantity, noun)}
           </button>
         )}
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="text-muted-foreground"
-            aria-label="Remove time"
-          >
-            <Trash2 size={16} />
-          </button>
-        )}
       </div>
       {qtyError && (
-        <p className="text-xs text-destructive mt-1">{qtyError}</p>
+        <p className="text-xs text-destructive mt-1 ml-[34px]">{qtyError}</p>
       )}
     </div>
   );
