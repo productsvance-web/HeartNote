@@ -21,6 +21,13 @@ export const ExtractedMedSchema = z.object({
   dose_value: z.number().nullable(),
   dose_unit: z.string().nullable(),
   doses_per_day: z.number().int().min(1).max(12).nullable(),
+  // NDC — National Drug Code, printed on US prescription labels. The
+  // model returns the printed string verbatim (10 or 11 digits, with
+  // or without hyphens). RxNav accepts both forms; the format-validation
+  // in extract.ts decides whether to call out, so this Zod constraint
+  // stays loose. Null when no label is visible (handwritten lists, EHR
+  // screenshots) or when the NDC is illegible.
+  ndc: z.string().nullable(),
   // True when the label states a dose change / taper / future-dated
   // instruction. The UI renders a non-interactive notice card for these
   // and never inserts a row; build convention #6 (never recommend dose
@@ -28,6 +35,18 @@ export const ExtractedMedSchema = z.object({
   is_dose_change: z.boolean(),
 });
 export type ExtractedMed = z.infer<typeof ExtractedMedSchema>;
+
+// Wider shape returned to the API client. ExtractedMed = what Gemini
+// produced; ResolvedMed = ExtractedMed with the optional NDC-resolved
+// canonical fields merged in. The scan-review card and payload adapter
+// consume this shape.
+export interface ResolvedMed extends ExtractedMed {
+  rxcui: string | null;
+  ingredient: string | null;
+  form: string | null;
+  strength: string | null;
+  canonicalName: string | null;
+}
 
 // Schema allows headroom over the displayed cap so we can truncate-and-
 // flag gracefully if the model returns more than 30 (e.g., on a portal
@@ -51,9 +70,10 @@ export const extractedMedsResponseSchema: ResponseSchema = {
           dose_value: { type: SchemaType.NUMBER, nullable: true },
           dose_unit: { type: SchemaType.STRING, nullable: true },
           doses_per_day: { type: SchemaType.INTEGER, nullable: true },
+          ndc: { type: SchemaType.STRING, nullable: true },
           is_dose_change: { type: SchemaType.BOOLEAN },
         },
-        required: ['drug_name', 'dose_value', 'dose_unit', 'doses_per_day', 'is_dose_change'],
+        required: ['drug_name', 'dose_value', 'dose_unit', 'doses_per_day', 'ndc', 'is_dose_change'],
       },
     },
   },
