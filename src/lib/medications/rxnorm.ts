@@ -134,13 +134,17 @@ export async function getDrugDetails(input: {
   }
 
   try {
-    // Batched: SCDF (forms) + SCD (drugs with strengths) come back from a
-    // single /relatedByType call against the ingredient rxcui. Brand inputs
-    // additionally fetch SBDFs from the brand's rxcui — that's a separate
-    // call because the rxcui differs.
+    // Batched: SCDF (forms) + SCD (drugs with strengths) + SBDF (branded
+    // forms across any brand) come back from a single /relatedByType call
+    // against the ingredient rxcui. SBDF presence is the rank signal for
+    // "common form" — a form with no marketed brand product (e.g.,
+    // theoretical albuterol oral tablet) ranks below forms with one. Brand
+    // inputs additionally fetch SBDFs from the brand's own rxcui — same
+    // call as before, used only to pick that specific brand's preselected
+    // form.
     const [ingredientJson, brandJson] = await Promise.all([
       fetchJson<RelatedResponse>(
-        `${RXNAV_BASE}/rxcui/${encodeURIComponent(ingRxcui)}/related.json?tty=SCDF+SCD`,
+        `${RXNAV_BASE}/rxcui/${encodeURIComponent(ingRxcui)}/related.json?tty=SCDF+SCD+SBDF`,
         controller.signal
       ),
       input.type === 'brand'
@@ -152,12 +156,29 @@ export async function getDrugDetails(input: {
     ]);
 
     // Form list from SCDFs ("furosemide Oral Tablet"). Strip ingredient
-    // prefix and dedupe.
+    // prefix and dedupe. Drop combination SCDFs ("albuterol / budesonide
+    // Metered Dose Inhaler") — when stripped of the leading ingredient
+    // they leave an orphan slash + partner ingredient ("/ budesonide
+    // Metered Dose Inhaler"). Combinations are only sensible to add via
+    // their brand name search anyway.
     const formNames = uniqueValues(
       extractConceptsOfTty(ingredientJson, 'SCDF')
+        .filter((n) => !n.includes(' / '))
         .map((n) => stripLeadingIngredient(n, ingName))
         .filter((n): n is string => !!n && n.length > 0)
-    ).sort();
+    );
+
+    // Forms that have at least one marketed brand product. Used to rank
+    // "common" forms above theoretical-only ones in the form picker.
+    const brandedForms = new Set<string>(
+      extractConceptsOfTty(ingredientJson, 'SBDF')
+        .map((n) =>
+          stripLeadingIngredient(n, ingName)?.replace(/\s*\[[^\]]+\]\s*$/, '')
+        )
+        .filter((n): n is string => !!n && n.length > 0 && formNames.includes(n))
+    );
+
+    formNames.sort(formCommonnessComparator(brandedForms));
 
     // Strengths from SCDs ("furosemide 40 MG Oral Tablet"). Group by form.
     const formToStrengths = new Map<string, Set<string>>();
@@ -311,19 +332,45 @@ function errorReason(err: unknown): string {
   return 'unknown';
 }
 
-// Among a brand's available forms, pick the one a typical caregiver
-// expects: oral solid first, then any other discrete-dose form, then the
-// first remaining option. Encodes Apple's behavior of pre-selecting "Oral
-// Tablet" for Lasix even though Lasix also has a Cartridge form.
+// Among a drug's available forms, rank by how commonly a caregiver
+// encounters this form for ambulatory CHF/respiratory meds. Oral solids
+// dominate (most CHF meds: furosemide, lisinopril, metoprolol, etc.);
+// inhaled forms follow for the rescue/maintenance inhaler set
+// (albuterol, ipratropium, budesonide). Forms not in this list rank
+// after every form that is, then alphabetically.
 const PREFERRED_FORM_ORDER = [
   'Oral Tablet',
   'Oral Capsule',
   'Extended Release Oral Tablet',
   'Extended Release Oral Capsule',
+  'Metered Dose Inhaler',
+  'Inhalation Solution',
+  'Dry Powder Inhaler',
+  'Inhalation Powder',
   'Sublingual Tablet',
   'Chewable Tablet',
   'Disintegrating Oral Tablet',
 ];
+
+// Sort forms so the picker's top slots show the forms most likely to
+// match a real prescription. Branded forms (have at least one marketed
+// SBDF) come first; within each tier, PREFERRED_FORM_ORDER drives
+// position; forms outside the list fall through to alphabetical.
+function formCommonnessComparator(
+  brandedForms: Set<string>
+): (a: string, b: string) => number {
+  return (a, b) => {
+    const aBranded = brandedForms.has(a);
+    const bBranded = brandedForms.has(b);
+    if (aBranded !== bBranded) return aBranded ? -1 : 1;
+    const aIdx = PREFERRED_FORM_ORDER.indexOf(a);
+    const bIdx = PREFERRED_FORM_ORDER.indexOf(b);
+    const aRank = aIdx === -1 ? Number.MAX_SAFE_INTEGER : aIdx;
+    const bRank = bIdx === -1 ? Number.MAX_SAFE_INTEGER : bIdx;
+    if (aRank !== bRank) return aRank - bRank;
+    return a.localeCompare(b);
+  };
+}
 
 function pickPreferredForm(candidates: string[]): string | null {
   if (candidates.length === 0) return null;

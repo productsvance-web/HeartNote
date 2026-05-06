@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FORM_COUNT_NOUN,
   type DrugDetails,
@@ -41,6 +41,17 @@ export function StepStrength({
   const [manualMode, setManualMode] = useState(
     !showChips || (strength.length > 0 && !matchedChip)
   );
+
+  // Pre-fill the lowest available strength for the chosen form so the
+  // step opens with a sensible default (e.g., albuterol MDI → "0.09
+  // mg/actuat"). Only fires when the parent has no strength set, so a
+  // user navigating back to step 3 with a previously-typed value isn't
+  // overwritten.
+  useEffect(() => {
+    if (strength.length === 0 && formStrengths.length > 0) {
+      onChange(formatChipForDose(formStrengths[0]));
+    }
+  }, [strength, formStrengths, onChange]);
 
   const drugName = selection?.kind === 'rxnorm' || selection?.kind === 'custom'
     ? selection.name
@@ -193,6 +204,19 @@ function matchingStrengths(drugDetails: DrugDetails | null, form: string | null)
 
 // RxNorm strengths are uppercase ("40 MG", "0.5 G/ML"). The medications
 // table stores doses in caregiver-readable case ("40 mg") — match that.
+// Sub-1-mg leading values get rewritten to micrograms ("0.09 MG/ACTUAT"
+// → "90 mcg/actuat") because that's how the inhaler label reads and how
+// clinicians dose-quote — `0.09 mg` is mathematically right but visually
+// confusing.
 function formatChipForDose(strength: string): string {
-  return strength.replace(/\b(MG|MCG|G|ML|L|MEQ)\b/g, (m) => m.toLowerCase());
+  const promoted = strength.replace(
+    /^(\d+(?:\.\d+)?)\s+MG\b/i,
+    (match, num) => {
+      const value = parseFloat(num);
+      if (!Number.isFinite(value) || value >= 1) return match;
+      const mcg = Math.round(value * 1000);
+      return `${mcg} MCG`;
+    }
+  );
+  return promoted.replace(/\b(MG|MCG|G|ML|L|MEQ)\b/g, (m) => m.toLowerCase());
 }
