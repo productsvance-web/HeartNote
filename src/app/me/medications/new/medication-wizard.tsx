@@ -4,12 +4,16 @@ import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, X } from 'lucide-react';
 import { getDrugDetails } from '@/lib/medications/rxnorm';
-import { addMedicationFromWizard } from './wizard-action';
+import { addMedication, type MedicationPayload } from '../actions';
+import { CadenceFlow, type CadenceDraft } from '../cadence/cadence-flow';
+import {
+  rescheduleAll,
+  requestNotificationPermission,
+  checkPermissionState,
+} from '@/lib/medications/notifications';
 import { StepSearch } from './step-search';
 import { StepForm } from './step-form';
 import { StepStrength } from './step-strength';
-import { StepDose } from './step-dose';
-import { StepTimes } from './step-times';
 import { StepDetails } from './step-details';
 import {
   INITIAL_STATE,
@@ -20,7 +24,7 @@ import {
 interface Props {
   // True when the wizard was entered from /me/medications/scan (via
   // ?from=scan). Routes save back to scan and the close button returns
-  // there too. PR-2b will produce this URL from scan cards.
+  // there too.
   fromScan: boolean;
 }
 
@@ -32,15 +36,6 @@ export function MedicationWizard({ fromScan }: Props) {
   const [isPending, startTransition] = useTransition();
   const lastFetchedRxcuiRef = useRef<string | null>(null);
 
-  // Fetch DrugDetails when the user picks an rxnorm result in step 1.
-  // Custom-path selections skip the fetch; steps 2/3 use generic
-  // fallbacks. The ref guards against re-fetching the same rxcui when
-  // the user navigates back to step 1 and re-confirms the same drug.
-  //
-  // Synchronous loading=true reset lives in the onSelect handler below
-  // (event handler, not effect body) so the effect only contains the
-  // async fetch — keeps react-hooks/set-state-in-effect happy. setState
-  // inside .then() is asynchronous and not flagged by the rule.
   useEffect(() => {
     const sel = state.selection;
     if (!sel || sel.kind !== 'rxnorm') {
@@ -48,10 +43,6 @@ export function MedicationWizard({ fromScan }: Props) {
       return;
     }
     if (sel.rxcui === lastFetchedRxcuiRef.current) {
-      // Same drug already fetched. The onSelect handler optimistically
-      // primed drugDetailsLoading=true; flip it back so the cached
-      // drugDetails (or fallback) renders instead of a permanent
-      // spinner.
       setState((s) => ({ ...s, drugDetailsLoading: false }));
       return;
     }
@@ -85,27 +76,16 @@ export function MedicationWizard({ fromScan }: Props) {
         }));
       });
     return () => {
-      // User picked a different drug or unmounted — abort the in-
-      // flight RxNav request so we don't keep an open socket past the
-      // point its result is useful.
       controller.abort();
     };
   }, [state.selection]);
 
   function goNext() {
-    setStep((s) => {
-      // Step 4 → skip Times when PRN.
-      if (s === 4 && state.dosesPerDay === null) return 6;
-      return Math.min(6, s + 1) as StepIndex;
-    });
+    setStep((s) => Math.min(5, s + 1) as StepIndex);
   }
 
   function goBack() {
-    setStep((s) => {
-      // Step 6 → skip Times when PRN.
-      if (s === 6 && state.dosesPerDay === null) return 4;
-      return Math.max(1, s - 1) as StepIndex;
-    });
+    setStep((s) => Math.max(1, s - 1) as StepIndex);
   }
 
   function close() {
@@ -122,25 +102,56 @@ export function MedicationWizard({ fromScan }: Props) {
     router.push(fromScan ? '/me/medications/scan' : '/me/medications');
   }
 
-  function save() {
-    if (!state.selection) return;
-    setSaveError(null);
+  function buildPayload(cadence: CadenceDraft): MedicationPayload | null {
+    if (!state.selection) return null;
     const sel = state.selection;
+    return {
+      drugName: sel.name,
+      dose: state.strength,
+      cadenceKind: cadence.kind,
+      cycleOnDays: cadence.cycleOnDays,
+      cycleOffDays: cadence.cycleOffDays,
+      intervalDays: cadence.intervalDays,
+      startedAt:
+        cadence.kind === 'cyclical' || cadence.kind === 'every_few_days'
+          ? cadence.startedAt
+          : state.startedAt,
+      notes: state.notes,
+      doseTimes: cadence.doseTimes.map((dt, i) => ({
+        timeOfDay: dt.timeOfDay,
+        quantity: dt.quantity,
+        ordinal: i,
+        appliesToDow: dt.appliesToDow,
+      })),
+      rxcui: sel.kind === 'rxnorm' ? sel.rxcui : null,
+      ingredient: sel.kind === 'rxnorm' ? sel.ingredient : null,
+      form: state.form,
+    };
+  }
+
+  function save() {
+    const payload = buildPayload(state.cadence);
+    if (!payload) return;
+    setSaveError(null);
     startTransition(async () => {
-      const result = await addMedicationFromWizard({
-        drugName: sel.name,
-        rxcui: sel.kind === 'rxnorm' ? sel.rxcui : null,
-        form: state.form,
-        ingredient: sel.kind === 'rxnorm' ? sel.ingredient : null,
-        dose: state.strength,
-        pillsPerDose: state.pillsPerDose,
-        dosesPerDay: state.dosesPerDay,
-        scheduleTimes: state.scheduleTimes,
-        startedAt: state.startedAt,
-        notes: state.notes,
-        returnToScan: fromScan,
-      });
-      if (!result.ok) setSaveError(result.error);
+      const result = await addMedication(payload);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return;
+      }
+      if (state.cadence.kind !== 'as_needed') {
+        const ps = await checkPermissionState();
+        if (ps === 'prompt' || ps === 'prompt-with-rationale') {
+          await requestNotificationPermission();
+        }
+      }
+      await rescheduleAll();
+      const dest = fromScan
+        ? '/me/medications/scan'
+        : result.id
+          ? `/me/medications?added=${result.id}`
+          : '/me/medications';
+      router.push(dest);
     });
   }
 
@@ -159,10 +170,7 @@ export function MedicationWizard({ fromScan }: Props) {
         ) : (
           <span className="w-10" aria-hidden="true" />
         )}
-        <span className="text-xs font-medium text-muted-foreground">
-          Step {visibleStepNumber(step, state.dosesPerDay)} of{' '}
-          {visibleStepTotal(state.dosesPerDay)}
-        </span>
+        <span className="text-xs font-medium text-muted-foreground">Step {step} of 5</span>
         <button
           type="button"
           onClick={close}
@@ -178,13 +186,6 @@ export function MedicationWizard({ fromScan }: Props) {
           <StepSearch
             selection={state.selection}
             onSelect={(selection) => {
-              // Re-picking the SAME drug preserves the cached
-              // drugDetails (and form/strength) so the user doesn't
-              // re-wait for the fetch they already paid for. Switching
-              // to a DIFFERENT drug clears downstream selections AND
-              // resets dose/frequency/times — keeping Lasix's "1 tablet
-              // × 2/day with 8am/2pm" prefilled for Carvedilol would
-              // silently save the wrong row.
               setState((s) => {
                 const switched = !isSameSelection(s.selection, selection);
                 if (!switched) {
@@ -199,9 +200,7 @@ export function MedicationWizard({ fromScan }: Props) {
                   drugDetails: null,
                   drugDetailsLoading: willFetch,
                   drugDetailsError: false,
-                  pillsPerDose: 1,
-                  dosesPerDay: 1,
-                  scheduleTimes: null,
+                  cadence: INITIAL_STATE.cadence,
                 };
               });
             }}
@@ -230,42 +229,18 @@ export function MedicationWizard({ fromScan }: Props) {
           />
         )}
         {step === 4 && (
-          <StepDose
-            form={state.form}
-            pillsPerDose={state.pillsPerDose}
-            dosesPerDay={state.dosesPerDay}
-            onChange={(patch) =>
-              setState((s) => {
-                // Changing dosesPerDay invalidates the existing time
-                // schedule: PRN means no times, and a different count
-                // means the array length is wrong. Clearing here avoids
-                // a save-time CHECK constraint failure and a
-                // .trim()-on-undefined crash if the user ever returns
-                // to step 5 with a stale array.
-                const dosesChanged =
-                  patch.dosesPerDay !== undefined &&
-                  patch.dosesPerDay !== s.dosesPerDay;
-                return {
-                  ...s,
-                  ...patch,
-                  scheduleTimes: dosesChanged ? null : s.scheduleTimes,
-                };
-              })
-            }
-            onContinue={goNext}
+          <CadenceFlow
+            drugLabel={state.selection?.kind ? state.selection.name : 'this medication'}
+            initial={state.cadence}
+            onCancel={goBack}
+            onSave={async (next) => {
+              setState((s) => ({ ...s, cadence: next }));
+              goNext();
+              return { ok: true };
+            }}
           />
         )}
         {step === 5 && (
-          <StepTimes
-            dosesPerDay={state.dosesPerDay}
-            scheduleTimes={state.scheduleTimes}
-            onChange={(scheduleTimes) =>
-              setState((s) => ({ ...s, scheduleTimes }))
-            }
-            onContinue={goNext}
-          />
-        )}
-        {step === 6 && (
           <StepDetails
             startedAt={state.startedAt}
             notes={state.notes}
@@ -280,23 +255,6 @@ export function MedicationWizard({ fromScan }: Props) {
   );
 }
 
-// Step 5 (Times) is hidden when dosesPerDay is null (PRN). Display the
-// step counter as 5-of-5 instead of 6-of-6 in that case so the user
-// doesn't see a phantom step disappear.
-function visibleStepTotal(dosesPerDay: number | null): number {
-  return dosesPerDay === null ? 5 : 6;
-}
-
-function visibleStepNumber(step: StepIndex, dosesPerDay: number | null): number {
-  if (dosesPerDay === null && step === 6) return 5;
-  return step;
-}
-
-// Returns true when the new selection is the same conceptual drug as
-// the prior — used to decide whether to wipe the dose / frequency /
-// times accumulated for the previous selection. Re-confirming the same
-// drug (RxCUI match for rxnorm, name match for custom) preserves them;
-// switching wipes.
 function isSameSelection(
   prev: WizardState['selection'],
   next: WizardState['selection']

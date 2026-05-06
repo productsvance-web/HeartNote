@@ -3,10 +3,10 @@
 // (a single `dose: string` matching DOSE_FORMAT). Architectural decision
 // #17 in the plan.
 //
-// Frequency, schedule times, and start date are no longer collected at
-// scan time. Every saved med starts as PRN with no clock times — the
-// caregiver edits these later from /me/medications, and the reminders
-// PR will replace this with a proper schedule UI.
+// The scan flow does not parse cadence from the bottle. The payload
+// returned here defaults the cadence to as_needed so the scan-flow
+// continuation can either save-as-PRN (Skip path) or replace the cadence
+// when the caregiver completes the cadence picker.
 
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import type { MedicationPayload } from '../actions';
@@ -74,12 +74,11 @@ export function extractedMedToPayload(med: ResolvedMed): MedicationPayload {
   return {
     drugName: chooseDrugName(med),
     dose: resolveDose(med),
-    // Photo-scan does not parse pills-per-dose from the bottle.
-    // Default 1; caregiver can adjust later from /me/medications.
-    pillsPerDose: 1,
-    // PRN with no clock times — schedule UI deferred to the reminders PR.
-    dosesPerDay: null,
-    scheduleTimes: null,
+    cadenceKind: 'as_needed',
+    cycleOnDays: null,
+    cycleOffDays: null,
+    intervalDays: null,
+    doseTimes: [],
     startedAt: '',
     notes: '',
     ndc: med.ndc,

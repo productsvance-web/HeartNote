@@ -48,54 +48,58 @@ export async function confirmDose(
   // RLS on medications restricts this to the caregiver's own patient.
   const { data: med } = await supabase
     .from('medications')
-    .select('patient_id, stopped_at, doses_per_day')
+    .select('patient_id, stopped_at')
     .eq('id', parsed.data.medicationId)
     .single();
   if (!med) return { ok: false, error: 'Medication not found.' };
   if (med.stopped_at) return { ok: false, error: 'This medication has been stopped.' };
 
-  // Manual-tap server gates (non-PRN only). Two rules:
+  // Manual-tap server gates. Two rules:
   //   1. Slot capacity: Taken/Refused rejected once `slotsResolved >=
   //      dosesPerDay`. Forces caregiver to delete an event to change.
   //   2. Extra requires baseline doses: `'double_dosed'` rejected if any
   //      refused/missed entry exists today (Extra is supernumerary on top
   //      of regular doses; without baseline doses, "extra" is incoherent).
   //
+  // Both gates read `doses_per_day` from the adherence RPC, which computes
+  // it per-day cadence-aware (NULL for as_needed, count of dose-times due
+  // today otherwise). Bypassed when the RPC returns null (PRN).
+  //
   // Both gates are advisory (read-then-insert, not transactional). Voice-
   // log path bypasses both by design — voice records what was said
   // happened. The dashboard surfaces over-capacity via the `isOver` badge.
-  if (med.doses_per_day !== null) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('timezone')
-      .eq('id', user.id)
-      .single();
-    if (!profile?.timezone) {
-      return { ok: false, error: 'Timezone not configured. Please refresh.' };
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('timezone')
+    .eq('id', user.id)
+    .single();
+  if (!profile?.timezone) {
+    return { ok: false, error: 'Timezone not configured. Please refresh.' };
+  }
+  const today = getTodayInTimezone(profile.timezone);
+
+  const { data: rows, error: rpcError } = await supabase.rpc(
+    'medication_adherence_for_day',
+    {
+      p_patient_id: med.patient_id,
+      p_date: today,
+      p_tz: profile.timezone,
     }
-    const today = getTodayInTimezone(profile.timezone);
+  );
+  if (rpcError) return { ok: false, error: rpcError.message };
 
-    // Reuse the dashboard's adherence RPC so the client mute, the slot
-    // gate, and the Extra gate share one source of truth (the SQL
-    // `slots_resolved` filter — see migration
-    // 20260502070034_medication_slots_resolved.sql). Events are returned
-    // alongside so the Extra rule can inspect statuses directly.
-    const { data: rows, error: rpcError } = await supabase.rpc(
-      'medication_adherence_for_day',
-      {
-        p_patient_id: med.patient_id,
-        p_date: today,
-        p_tz: profile.timezone,
-      }
-    );
-    if (rpcError) return { ok: false, error: rpcError.message };
+  const target = (rows ?? []).find(
+    (r) => r.medication_id === parsed.data.medicationId
+  );
 
-    const target = (rows ?? []).find(
-      (r) => r.medication_id === parsed.data.medicationId
-    );
-
+  // Slot gate only applies on days when the cadence is firing (doses_per_day
+  // > 0). PRN meds (null) skip the gate entirely. Off-cycle days for
+  // cyclical/specific_days/every_few_days return 0 — let the dose record
+  // through (caregiver took it early/late) since the alternative is an
+  // unhelpful "already logged" copy when nothing is logged.
+  if (target && target.doses_per_day !== null && target.doses_per_day > 0) {
     if (parsed.data.status === 'double_dosed') {
-      const events = (target?.events ?? []) as Array<{ status: MedEventStatus }>;
+      const events = (target.events ?? []) as Array<{ status: MedEventStatus }>;
       const hasSkipped = events.some(
         (e) =>
           SLOT_CONSUMER_STATUSES.has(e.status) &&
@@ -107,7 +111,7 @@ export async function confirmDose(
           error: 'Extra needs at least one taken dose first. Delete a refused entry to log Extra.',
         };
       }
-    } else if (target && target.slots_resolved >= med.doses_per_day) {
+    } else if (target.slots_resolved >= target.doses_per_day) {
       return {
         ok: false,
         error: 'This dose is already logged for today. Undo a logged event to change.',

@@ -1,11 +1,15 @@
 'use server';
 
 import { z } from 'zod';
-import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
-import { classifyDrugByName, type AllowedStrengths } from '@/lib/medications/classify';
+import {
+  classifyDrugByName,
+  classifyByRxcui,
+  type AllowedStrengths,
+} from '@/lib/medications/classify';
+import { CADENCE_KINDS, HH_MM_REGEX, type CadenceKind } from '@/lib/medications/cadence';
 
 // Form-side strength lookup for inline unit constraints AND the
 // "did you mean" spell-correction chip. Both fields ride the same
@@ -28,17 +32,10 @@ export async function lookupDrugStrengths(
   };
 }
 
-const HH_MM = /^([01]\d|2[0-3]):[0-5]\d$/;
-
 // `<number> <unit>` with the unit drawn from a closed list of forms a
 // caregiver might reasonably enter. Catches "lots", "10x", "small dose"
 // at the format layer; semantic checks (is the unit class right for this
 // drug?) happen against allowed_strengths below.
-// Compound units (mg/ml, g/ml, mcg/ml, meq/ml) and `%` are produced by
-// the wizard's RxNorm chips for oral solutions and topicals — they must
-// match here or wizard-saved rows lock the legacy edit form. Longer
-// alternatives appear first so the regex doesn't truncate "mg/ml" to
-// "mg" before reaching the slash.
 const DOSE_FORMAT =
   /^\s*(\d+(?:\.\d+)?)\s*(mcg\/ml|mg\/ml|meq\/ml|g\/ml|%|mg|mcg|g|kg|ng|ml|l|units?|tablets?|capsules?|caps?|puffs?|drops?|tsp|tbsp|sprays?|patches?|meq)\s*$/i;
 
@@ -46,8 +43,6 @@ function normalizeUnit(u: string): string {
   return u.toLowerCase().replace(/[.\s]/g, '').replace(/s$/, '');
 }
 
-// Returns null when the user's dose is acceptable, an error string otherwise.
-// Soft-skip when allowedStrengths is null (drug uncategorized — no validation).
 function validateDoseAgainstStrengths(
   dose: string,
   drugName: string,
@@ -55,7 +50,7 @@ function validateDoseAgainstStrengths(
 ): string | null {
   if (!allowed) return null;
   const m = DOSE_FORMAT.exec(dose);
-  if (!m) return null; // format error already caught by Zod
+  if (!m) return null;
   const userUnit = normalizeUnit(m[2]);
   const allowedUnit = normalizeUnit(allowed.unit);
   if (userUnit === allowedUnit) return null;
@@ -63,7 +58,14 @@ function validateDoseAgainstStrengths(
   return `${drugName} is typically given in ${allowed.unit.toLowerCase()} (e.g. ${sample}), not ${m[2]}. Edit the dose and save again.`;
 }
 
-const MedicationPayloadSchema = z
+const DoseTimeSchema = z.object({
+  timeOfDay: z.string().regex(HH_MM_REGEX, 'Times must be HH:MM'),
+  quantity: z.number().positive().finite(),
+  ordinal: z.number().int().min(0),
+  appliesToDow: z.number().int().min(1).max(127).nullable(),
+});
+
+export const MedicationPayloadSchema = z
   .object({
     drugName: z.string().trim().min(1, 'Name is required').max(200),
     dose: z
@@ -75,34 +77,108 @@ const MedicationPayloadSchema = z
       .refine((v) => !v || DOSE_FORMAT.test(v), {
         message: 'Dose must be a number and unit, e.g. "40 mg" or "1 tablet"',
       }),
-    // Number of pills per administration. Default 1 (one pill per dose).
-    // Range 1-20 mirrors the schema CHECK in the migration.
-    pillsPerDose: z.number().int().min(1).max(20).default(1),
-    // null = PRN (as-needed); otherwise 1-12 doses per day.
-    dosesPerDay: z.number().int().min(1).max(12).nullable(),
-    // null when caregiver doesn't know clock times; otherwise length must equal dosesPerDay
-    scheduleTimes: z.array(z.string().regex(HH_MM, 'Times must be HH:MM')).nullable(),
-    startedAt: z.string().optional(), // YYYY-MM-DD or empty
+    cadenceKind: z.enum(CADENCE_KINDS),
+    cycleOnDays: z.number().int().min(1).max(365).nullable(),
+    cycleOffDays: z.number().int().min(1).max(365).nullable(),
+    intervalDays: z.number().int().min(2).max(30).nullable(),
+    doseTimes: z.array(DoseTimeSchema).max(24),
+    startedAt: z.string().optional(),
     notes: z.string().trim().max(1000).optional().or(z.literal('')),
-    // Scan-flow only — NDC and the RxNorm fields it resolves to. Wizard
-    // path leaves them undefined; insertOneMedication writes NULL when
-    // either undefined or null is passed.
     ndc: z.string().nullable().optional(),
     rxcui: z.string().nullable().optional(),
     ingredient: z.string().nullable().optional(),
     form: z.string().nullable().optional(),
   })
-  .refine(
-    (v) =>
-      v.scheduleTimes === null || (v.dosesPerDay !== null && v.scheduleTimes.length === v.dosesPerDay),
-    { message: 'Schedule times must match doses per day', path: ['scheduleTimes'] }
-  );
+  .superRefine((v, ctx) => {
+    if (v.cadenceKind === 'as_needed') {
+      if (v.doseTimes.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['doseTimes'],
+          message: 'As-needed schedules cannot have dose times.',
+        });
+      }
+      return;
+    }
+    if (v.doseTimes.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['doseTimes'],
+        message: 'Add at least one dose time.',
+      });
+    }
+    if (v.cadenceKind === 'cyclical') {
+      if (v.cycleOnDays == null || v.cycleOffDays == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['cycleOnDays'],
+          message: 'Set the on-period and off-period for cyclical schedules.',
+        });
+      }
+      if (!v.startedAt) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['startedAt'],
+          message: 'Set a start date for cyclical schedules.',
+        });
+      }
+    }
+    if (v.cadenceKind === 'every_few_days') {
+      if (v.intervalDays == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['intervalDays'],
+          message: 'Set the interval for every-few-days schedules.',
+        });
+      }
+      if (!v.startedAt) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['startedAt'],
+          message: 'Set a start date for interval schedules.',
+        });
+      }
+    }
+    if (v.cadenceKind === 'specific_days') {
+      const allHaveBitmaps = v.doseTimes.every((d) => d.appliesToDow !== null);
+      if (!allHaveBitmaps) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['doseTimes'],
+          message: 'Pick at least one day for each schedule group.',
+        });
+      } else {
+        let union = 0;
+        for (const d of v.doseTimes) {
+          const bm = d.appliesToDow ?? 0;
+          if ((union & bm) !== 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['doseTimes'],
+              message: 'Schedule groups must not share days.',
+            });
+            return;
+          }
+          union |= bm;
+        }
+      }
+    } else {
+      const anyHasBitmap = v.doseTimes.some((d) => d.appliesToDow !== null);
+      if (anyHasBitmap) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['doseTimes'],
+          message: 'Day-of-week is only used for Specific Days schedules.',
+        });
+      }
+    }
+  });
 
 export type MedicationPayload = z.infer<typeof MedicationPayloadSchema>;
 
 type ActionResult =
   | { ok: false; error: string }
-  | { ok: true };
+  | { ok: true; id?: string };
 
 async function resolvePatient(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -118,13 +194,71 @@ async function resolvePatient(
   return data;
 }
 
-// Insert one medication for a resolved patient. Validate, classify,
-// dose-unit-check, insert. NO redirect, NO revalidatePath. The caller
-// owns those side effects so this can be reused from batch contexts
-// (scan flow) without hijacking the response.
-async function insertOneMedication(
+interface RpcPayload {
+  medication_id: string | null;
+  patient_id: string;
+  drug_name: string;
+  drug_class: string;
+  dose: string | null;
+  started_at: string | null;
+  stopped_at: string | null;
+  notes: string | null;
+  ndc: string | null;
+  rxcui: string | null;
+  ingredient: string | null;
+  form: string | null;
+  allowed_strengths: AllowedStrengths | null;
+  cadence_kind: CadenceKind;
+  cycle_on_days: number | null;
+  cycle_off_days: number | null;
+  interval_days: number | null;
+  dose_times: Array<{
+    time_of_day: string;
+    quantity: number;
+    ordinal: number;
+    applies_to_dow: number | null;
+  }>;
+}
+
+function buildRpcPayload(args: {
+  medicationId: string | null;
+  patientId: string;
+  drugClass: string;
+  allowedStrengths: AllowedStrengths | null;
+  v: MedicationPayload;
+}): RpcPayload {
+  const { medicationId, patientId, drugClass, allowedStrengths, v } = args;
+  return {
+    medication_id: medicationId,
+    patient_id: patientId,
+    drug_name: v.drugName,
+    drug_class: drugClass,
+    dose: v.dose ? v.dose.trim() : null,
+    started_at: v.startedAt || null,
+    stopped_at: null,
+    notes: v.notes ? v.notes.trim() : null,
+    ndc: v.ndc ?? null,
+    rxcui: v.rxcui ?? null,
+    ingredient: v.ingredient ?? null,
+    form: v.form ?? null,
+    allowed_strengths: allowedStrengths,
+    cadence_kind: v.cadenceKind,
+    cycle_on_days: v.cycleOnDays,
+    cycle_off_days: v.cycleOffDays,
+    interval_days: v.intervalDays,
+    dose_times: v.doseTimes.map((d) => ({
+      time_of_day: d.timeOfDay,
+      quantity: d.quantity,
+      ordinal: d.ordinal,
+      applies_to_dow: d.appliesToDow,
+    })),
+  };
+}
+
+async function saveMedication(
   supabase: Awaited<ReturnType<typeof createClient>>,
   patientId: string,
+  medicationId: string | null,
   payload: MedicationPayload
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const parsed = MedicationPayloadSchema.safeParse(payload);
@@ -132,45 +266,39 @@ async function insertOneMedication(
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
   }
   const v = parsed.data;
-  // RxNorm classification is the only source of drug_class.
-  const classification = await classifyDrugByName(v.drugName);
+  // Wizard path supplies rxcui directly from the user's RxNorm pick at
+  // step 1 — skip the name → rxcui lookup classifyDrugByName has to do.
+  // Form / scan paths fall through to name-based classification.
+  let drugClass: string;
+  let allowedStrengths: AllowedStrengths | null = null;
+  if (v.rxcui) {
+    drugClass = await classifyByRxcui(v.rxcui);
+  } else {
+    const classification = await classifyDrugByName(v.drugName);
+    drugClass = classification.medClass;
+    allowedStrengths = classification.allowedStrengths ?? null;
+  }
 
   if (v.dose) {
-    const unitError = validateDoseAgainstStrengths(
-      v.dose,
-      v.drugName,
-      classification.allowedStrengths
-    );
+    const unitError = validateDoseAgainstStrengths(v.dose, v.drugName, allowedStrengths);
     if (unitError) return { ok: false, error: unitError };
   }
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('medications')
-    .insert({
-      patient_id: patientId,
-      drug_name: v.drugName,
-      drug_class: classification.medClass,
-      dose: v.dose || null,
-      pills_per_dose: v.pillsPerDose,
-      doses_per_day: v.dosesPerDay,
-      schedule_times: v.scheduleTimes,
-      started_at: v.startedAt || null,
-      notes: v.notes || null,
-      allowed_strengths: classification.allowedStrengths
-        ? (classification.allowedStrengths as unknown as never)
-        : null,
-      ndc: v.ndc ?? null,
-      rxcui: v.rxcui ?? null,
-      ingredient: v.ingredient ?? null,
-      form: v.form ?? null,
-    })
-    .select('id')
-    .single();
+  const rpcPayload = buildRpcPayload({
+    medicationId,
+    patientId,
+    drugClass,
+    allowedStrengths,
+    v,
+  });
 
-  if (insertError || !inserted) {
-    return { ok: false, error: insertError?.message ?? 'Insert failed' };
+  const { data, error } = await supabase.rpc('save_medication_with_dose_times', {
+    payload: rpcPayload as unknown as never,
+  });
+  if (error || !data) {
+    return { ok: false, error: error?.message ?? 'Save failed' };
   }
-  return { ok: true, id: inserted.id };
+  return { ok: true, id: data as unknown as string };
 }
 
 export async function addMedication(payload: MedicationPayload): Promise<ActionResult> {
@@ -183,12 +311,12 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
   const patient = await resolvePatient(supabase, user.id);
   if (!patient) return { ok: false, error: 'No patient on file.' };
 
-  const result = await insertOneMedication(supabase, patient.id, payload);
+  const result = await saveMedication(supabase, patient.id, null, payload);
   if (!result.ok) return result;
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications?added=${result.id}`);
+  return { ok: true, id: result.id };
 }
 
 // Batch insert path used by the scan flow — both single-card "Add to my
@@ -223,7 +351,7 @@ export async function addExtractedMedications(
   const errors: string[] = payloads.map(() => '');
   let added = 0;
   for (let i = 0; i < payloads.length; i++) {
-    const result = await insertOneMedication(supabase, patient.id, payloads[i]);
+    const result = await saveMedication(supabase, patient.id, null, payloads[i]);
     if (result.ok) {
       added++;
     } else {
@@ -242,16 +370,8 @@ export async function addExtractedMedications(
 
 export async function updateMedication(
   medicationId: string,
-  payload: MedicationPayload,
-  // True when the caregiver changed dosesPerDay during this edit; in that
-  // case schedule_times is forced to null per architectural decision #12.
-  dosesPerDayChanged: boolean
+  payload: MedicationPayload
 ): Promise<ActionResult> {
-  const parsed = MedicationPayloadSchema.safeParse(payload);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' };
-  }
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -261,57 +381,12 @@ export async function updateMedication(
   const patient = await resolvePatient(supabase, user.id);
   if (!patient) return { ok: false, error: 'No patient on file.' };
 
-  const v = parsed.data;
-  const scheduleTimes = dosesPerDayChanged ? null : v.scheduleTimes;
-
-  // Validate dose against existing allowed_strengths. If caregiver renamed
-  // the drug, re-classify so strengths AND drug_class reflect the new name.
-  const { data: existing } = await supabase
-    .from('medications')
-    .select('drug_name, allowed_strengths')
-    .eq('id', medicationId)
-    .eq('patient_id', patient.id)
-    .single();
-
-  let allowedStrengths = existing?.allowed_strengths as AllowedStrengths | null | undefined;
-  let reclassified: Awaited<ReturnType<typeof classifyDrugByName>> | null = null;
-  if (existing && existing.drug_name.trim().toLowerCase() !== v.drugName.trim().toLowerCase()) {
-    reclassified = await classifyDrugByName(v.drugName);
-    allowedStrengths = reclassified.allowedStrengths ?? null;
-  }
-
-  if (v.dose) {
-    const unitError = validateDoseAgainstStrengths(v.dose, v.drugName, allowedStrengths);
-    if (unitError) return { ok: false, error: unitError };
-  }
-
-  const { error: updateError } = await supabase
-    .from('medications')
-    .update({
-      drug_name: v.drugName,
-      dose: v.dose || null,
-      pills_per_dose: v.pillsPerDose,
-      doses_per_day: v.dosesPerDay,
-      schedule_times: scheduleTimes,
-      started_at: v.startedAt || null,
-      notes: v.notes || null,
-      ...(reclassified
-        ? {
-            drug_class: reclassified.medClass,
-            allowed_strengths: allowedStrengths
-              ? (allowedStrengths as unknown as never)
-              : null,
-          }
-        : {}),
-    })
-    .eq('id', medicationId)
-    .eq('patient_id', patient.id);
-
-  if (updateError) return { ok: false, error: updateError.message };
+  const result = await saveMedication(supabase, patient.id, medicationId, payload);
+  if (!result.ok) return result;
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect('/me/medications');
+  return { ok: true, id: result.id };
 }
 
 export async function stopMedication(medicationId: string): Promise<ActionResult> {
@@ -350,13 +425,8 @@ export async function restartMedication(medicationId: string): Promise<ActionRes
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications/${medicationId}`);
+  return { ok: true, id: medicationId };
 }
-
-// Bulk operations on the medication list. Selection lives in client state;
-// these actions receive the chosen ids and operate. RLS on `medications`
-// silently filters ids the caregiver does not own (intended: threat model
-// assumes caregivers cannot legitimately produce other caregivers' med ids).
 
 const IdsSchema = z.array(z.string().uuid()).min(1).max(50);
 
@@ -374,10 +444,6 @@ export async function stopMedications(
 
   const today = await getTodayForCaregiver(supabase, user.id);
 
-  // Filter to currently-active meds so a re-stop doesn't overwrite the
-  // original `stopped_at` date on rows that were already in Past medications.
-  // Caregiver-visible result is identical either way; the predicate keeps
-  // "stopped X days ago" labels and any downstream trend logic accurate.
   const { data, error } = await supabase
     .from('medications')
     .update({ stopped_at: today })
@@ -402,10 +468,6 @@ type DeleteMedicationsResult =
   | { ok: true; performed: true; deleted: number }
   | { ok: false; error: string };
 
-// `confirm=false` returns the impact preview for the dialog (med names +
-// event counts). `confirm=true` deletes; FK cascade removes medication_events
-// rows. Two-step flow lives in one action so impact preview and the
-// destructive call share validation/auth/RLS resolution.
 export async function deleteMedications(input: {
   ids: string[];
   confirm: boolean;
@@ -420,7 +482,6 @@ export async function deleteMedications(input: {
   if (!user) return { ok: false, error: 'Session expired. Please sign in again.' };
 
   if (!input.confirm) {
-    // RLS filters to caregiver's own meds. Foreign ids silently disappear.
     const [medsResult, eventsResult] = await Promise.all([
       supabase.from('medications').select('id, drug_name').in('id', parsed.data),
       supabase
@@ -444,8 +505,6 @@ export async function deleteMedications(input: {
     return { ok: true, performed: false, impact: { medications, totalEvents } };
   }
 
-  // confirm=true: perform delete. Cascade FK on medication_events removes
-  // history (per schema in 20260428153829_initial_schema.sql).
   const { data, error } = await supabase
     .from('medications')
     .delete()

@@ -8,6 +8,13 @@ import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import { ScanReviewCard } from './scan-review-card';
 import { addExtractedMedications, type MedicationPayload } from '../actions';
 import { extractedMedToPayload } from './extracted-to-payload';
+import { CadenceFlow, type CadenceDraft } from '../cadence/cadence-flow';
+import { toTitleCase } from './extracted-to-payload';
+import {
+  rescheduleAll,
+  requestNotificationPermission,
+  checkPermissionState,
+} from '@/lib/medications/notifications';
 
 // Compresses an image data URL down to ~800KB at max 1280px on the long
 // edge, JPEG quality 0.8. Pure browser code — Canvas + toDataURL. Runs
@@ -54,6 +61,11 @@ export function ScanClient() {
   const [state, setState] = useState<State>({ kind: 'capture' });
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [addAllPending, setAddAllPending] = useState(false);
+  // True while the head card has been accepted and the cadence flow is
+  // active for that med. The card itself stays mounted but the flow
+  // overlays it.
+  const [cadenceForHead, setCadenceForHead] = useState(false);
+  const [savingCadence, setSavingCadence] = useState(false);
   const searchParams = useSearchParams();
   const autoTriggeredRef = useRef(false);
 
@@ -155,12 +167,56 @@ export function ScanClient() {
   // success path (onAdded) and the per-card skip path. When the queue
   // empties, return to capture so the caregiver can scan again.
   function advanceHead() {
+    setCadenceForHead(false);
     setState((s) => {
       if (s.kind !== 'review') return s;
       const next = s.medications.slice(1);
       if (next.length === 0) return { kind: 'capture' };
       return { ...s, medications: next };
     });
+  }
+
+  async function saveHeadWithCadence(
+    headMed: ResolvedMed,
+    draft: CadenceDraft,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (savingCadence) return { ok: false, error: 'Already saving' };
+    setSavingCadence(true);
+    try {
+      const base = extractedMedToPayload(headMed);
+      const payload: MedicationPayload = {
+        ...base,
+        cadenceKind: draft.kind,
+        cycleOnDays: draft.cycleOnDays,
+        cycleOffDays: draft.cycleOffDays,
+        intervalDays: draft.intervalDays,
+        startedAt:
+          draft.kind === 'cyclical' || draft.kind === 'every_few_days'
+            ? draft.startedAt
+            : '',
+        doseTimes: draft.doseTimes.map((dt, i) => ({
+          timeOfDay: dt.timeOfDay,
+          quantity: dt.quantity,
+          ordinal: i,
+          appliesToDow: dt.appliesToDow,
+        })),
+      };
+      const result = await addExtractedMedications([payload]);
+      if (result.failedIndexes.length === 0) {
+        if (draft.kind !== 'as_needed') {
+          const state = await checkPermissionState();
+          if (state === 'prompt' || state === 'prompt-with-rationale') {
+            await requestNotificationPermission();
+          }
+        }
+        void rescheduleAll();
+        advanceHead();
+        return { ok: true };
+      }
+      return { ok: false, error: result.errors[0] ?? 'Could not save.' };
+    } finally {
+      setSavingCadence(false);
+    }
   }
 
 
@@ -384,14 +440,24 @@ export function ScanClient() {
         </div>
       )}
 
-      <ScanReviewCard
-        med={headMed}
-        onSkip={advanceHead}
-        onAdded={advanceHead}
-        disabled={addAllPending}
-        position={state.totalAtScan > 1 ? position : null}
-        totalCount={state.totalAtScan}
-      />
+      {cadenceForHead ? (
+        <CadenceFlow
+          drugLabel={toTitleCase(headMed.drug_name.trim() || headMed.canonicalName || 'this medication')}
+          allowSkip
+          saving={savingCadence}
+          onCancel={() => setCadenceForHead(false)}
+          onSave={(draft) => saveHeadWithCadence(headMed, draft)}
+        />
+      ) : (
+        <ScanReviewCard
+          med={headMed}
+          onSkip={advanceHead}
+          onAccept={() => setCadenceForHead(true)}
+          disabled={addAllPending}
+          position={state.totalAtScan > 1 ? position : null}
+          totalCount={state.totalAtScan}
+        />
+      )}
 
       {/* Empathetic note: navigation away drops scan state. */}
       <p className="text-xs text-muted-foreground text-center pt-2">

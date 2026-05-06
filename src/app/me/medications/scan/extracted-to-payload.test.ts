@@ -137,17 +137,15 @@ describe('extractedMedToPayload — drug-name composition (B5)', () => {
   });
 });
 
-describe('extractedMedToPayload — schedule defaults', () => {
-  it('always saves as PRN with no clock times (schedule UI deferred to reminders PR)', () => {
+describe('extractedMedToPayload — cadence defaults', () => {
+  it('defaults to as_needed with no dose-times (cadence picker fills in)', () => {
     const p = extractedMedToPayload(med());
-    assert.equal(p.dosesPerDay, null);
-    assert.equal(p.scheduleTimes, null);
+    assert.equal(p.cadenceKind, 'as_needed');
+    assert.deepEqual(p.doseTimes, []);
+    assert.equal(p.cycleOnDays, null);
+    assert.equal(p.cycleOffDays, null);
+    assert.equal(p.intervalDays, null);
     assert.equal(p.startedAt, '');
-  });
-
-  it('always hardcodes pillsPerDose to 1 (out-of-scope per plan)', () => {
-    const p = extractedMedToPayload(med());
-    assert.equal(p.pillsPerDose, 1);
   });
 });
 
