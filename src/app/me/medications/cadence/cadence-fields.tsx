@@ -783,7 +783,7 @@ function currentHhMm(): string {
 // Local-time YYYY-MM-DD for the Duration card's start-date default.
 // `Date.toISOString` would shift to UTC and return yesterday for users west
 // of GMT after midnight local time.
-function todayYmd(): string {
+export function todayYmd(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -886,5 +886,3 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
   }
   return base;
 }
-
-export const ALL_CADENCE_KINDS = CADENCE_KINDS;

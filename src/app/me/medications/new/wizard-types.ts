@@ -5,6 +5,7 @@
 
 import type { DrugDetails } from '@/lib/medications/rxnorm';
 import type { CadenceDraft } from '../cadence/cadence-flow';
+import { todayYmd } from '../cadence/cadence-fields';
 
 export type DrugSelection =
   | {
@@ -42,13 +43,18 @@ export interface WizardState {
   notes: string;
 }
 
+// Computed once at module load so brand-new wizard sessions see today's
+// date in the Duration card without an explicit fetch. The user can clear
+// or edit. Edge case: a tab kept open past midnight will retain the prior
+// day's date until the bundle reloads — accepted tradeoff (no zero
+// customers) over the complexity of converting these to live builders.
 const INITIAL_CADENCE: CadenceDraft = {
   kind: 'as_needed',
   cycleOnDays: null,
   cycleOffDays: null,
   cycleUnit: 'day',
   intervalDays: null,
-  startedAt: '',
+  startedAt: todayYmd(),
   endedAt: '',
   doseTimes: [],
   groups: [],
@@ -62,7 +68,7 @@ export const INITIAL_STATE: WizardState = {
   form: null,
   strength: '',
   cadence: INITIAL_CADENCE,
-  startedAt: '',
+  startedAt: todayYmd(),
   notes: '',
 };
 
