@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { searchDrug, type DrugSearchResult } from '@/lib/medications/rxnorm';
+import { useEffect, useRef, useState } from 'react';
+import { MIN_QUERY_LEN, type DrugSearchResult } from '@/lib/medications/rxnorm';
+import { searchMedications } from './search-action';
 import type { DrugSelection } from './wizard-types';
 
 const DEBOUNCE_MS = 300;
-const MIN_QUERY_LEN = 3;
 
 interface Props {
   selection: DrugSelection | null;
@@ -22,6 +22,12 @@ export function StepSearch({ selection, onSelect, onContinue }: Props) {
   const [results, setResults] = useState<DrugSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [errored, setErrored] = useState(false);
+  // Monotonic counter to discard out-of-order server-action responses
+  // (Decision 6 in the bundled-index plan). useRef rather than useState
+  // because the comparison runs inside .then() callbacks — useState would
+  // capture stale values across renders. Same pattern as the wizard
+  // parent's controller.signal.aborted check (medication-wizard.tsx:69).
+  const requestIdRef = useRef(0);
 
   // Synchronous state resets live in the onChange handler so the
   // useEffect body only schedules an async setTimeout — keeps the
@@ -46,26 +52,27 @@ export function StepSearch({ selection, onSelect, onContinue }: Props) {
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length < MIN_QUERY_LEN) return;
-    let cancelled = false;
+    const id = ++requestIdRef.current;
     const handle = setTimeout(() => {
-      searchDrug(trimmed)
+      searchMedications(trimmed)
         .then((r) => {
-          if (cancelled) return;
+          // Bail if a newer query has fired — the .then closure captures
+          // its own `id`, which falls behind the ref's current value as
+          // soon as the next keystroke increments it.
+          if (id !== requestIdRef.current) return;
           setResults(r);
-          // Wrapper returns [] on both empty match and failure — same
-          // UX intentional. Caregiver can fall through to custom path.
+          // Empty results → custom-path UI fires, same UX as a failure.
           setErrored(r.length === 0);
           setLoading(false);
         })
         .catch(() => {
-          if (cancelled) return;
+          if (id !== requestIdRef.current) return;
           setResults([]);
           setErrored(true);
           setLoading(false);
         });
     }, DEBOUNCE_MS);
     return () => {
-      cancelled = true;
       clearTimeout(handle);
     };
   }, [query]);

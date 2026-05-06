@@ -1,34 +1,26 @@
-// RxNorm API wrappers for the medication-add wizard.
+// RxNorm getDrugDetails wrapper for the medication-add wizard.
 //
-// Two endpoints, both via the public NLM RxNav API (no key required):
-//   1. searchDrug(query) — fuzzy match on the typed string. Returns top
-//      ingredients (IN) and brand names (BN), capped at 10. Brand results
-//      carry their generic ingredient.
-//   2. getDrugDetails(...) — for a picked drug, returns the canonical form
-//      list and per-form strengths. Brand inputs also include the brand's
-//      specific form so the wizard can preselect it.
+// Search has moved to src/lib/medications/rxnorm-search.ts (in-memory
+// substring search over a bundled index). This module now owns only the
+// per-pick form/strength lookup, which still hits the live NLM RxNav API.
 //
-// Latency budget: 1500ms shared deadline per searchDrug or getDrugDetails
-// invocation. AbortController propagates the deadline to every nested
-// fetch (gRPC-style deadline propagation), so a slow first call shortens
-// the budget for downstream parallel calls. Failures fall back to empty
-// results; the calling step shows its own error UI per plan ACs.
+// Latency budget: 1500ms shared deadline per getDrugDetails invocation.
+// AbortController propagates the deadline to every nested fetch (gRPC-
+// style deadline propagation), so a slow first call shortens the budget
+// for downstream parallel calls. Failures fall back to empty results;
+// the calling step shows its own error UI.
 //
-// Rate limiting: NLM caps RxNav at 20 requests/second/IP. searchDrug fans
-// out concurrently for TTY checks and brand→ingredient resolution; we cap
-// per-stage concurrency at MAX_PARALLEL to stay polite under load and to
-// keep two simultaneous user searches from tripping the limit. NLM also
-// recommends 12-24h response caching for production traffic — that lives
-// in a future PR (see wizard plan's Future Improvements).
-//
-// PHI safety: outbound payload is the typed string or an RxCUI — no
-// patient identifier, no caregiver identifier.
+// PHI safety: outbound payload is the picked drug's RxCUI — no patient
+// or caregiver identifier.
 
 const RXNAV_BASE = 'https://rxnav.nlm.nih.gov/REST';
 const TIMEOUT_MS = 1500;
-const SEARCH_RESULT_CAP = 10;
-const APPROX_OVERFETCH = 20;
-const MAX_PARALLEL = 8;
+
+// Minimum trimmed query length before the wizard's Search step fires a
+// network request. Lives here (universal module) so both client code
+// (step-search.tsx) and server code (rxnorm-search.ts) read the same
+// constant without either accidentally bundling the 3MB RxNorm index.
+export const MIN_QUERY_LEN = 3;
 
 // RxNorm dose form → singular/plural noun for the wizard's
 // "How many ___ per dose?" question. Only discrete-dose forms appear here;
@@ -80,98 +72,6 @@ export interface DrugDetails {
   // Set only when input was a brand. Wizard preselects this in the Form
   // step. Null on generic input or if the brand→form lookup failed.
   preselectedForm: string | null;
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// searchDrug
-// ────────────────────────────────────────────────────────────────────────
-
-export async function searchDrug(query: string): Promise<DrugSearchResult[]> {
-  const trimmed = query.trim();
-  if (trimmed.length < 3) return [];
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    const approxJson = await fetchJson<ApproximateResponse>(
-      `${RXNAV_BASE}/approximateTerm.json?term=${encodeURIComponent(trimmed)}&maxEntries=${APPROX_OVERFETCH}`,
-      controller.signal
-    );
-
-    const raw = approxJson?.approximateGroup?.candidate ?? [];
-
-    // Dedupe by rxcui (RxNav surfaces the same concept under multiple
-    // source vocabularies — USP, RXNORM, ATC, …) and drop names that
-    // obviously aren't IN/BN: brackets/slashes/parens are products, names
-    // with strength notation ("40 MG") are clinical drugs, names with
-    // form-suffix words ("Tablet") are products. Keeps the per-result TTY
-    // fan-out small enough to fit the 1500ms shared budget on broad
-    // searches like "lasix" that match many SBDs.
-    const seen = new Set<string>();
-    const deduped: Array<{ rxcui: string; name: string }> = [];
-    for (const c of raw) {
-      if (!c.rxcui || !c.name || seen.has(c.rxcui)) continue;
-      if (!looksLikeIngredientOrBrand(c.name)) continue;
-      seen.add(c.rxcui);
-      deduped.push({ rxcui: c.rxcui, name: c.name });
-    }
-
-    // Bounded-concurrency TTY lookup. approximateTerm matches against any
-    // term type; we keep only IN (generic ingredient) and BN (brand name)
-    // so the wizard's first screen surfaces conceptual drugs rather than
-    // specific products. MAX_PARALLEL caps how many concurrent /property
-    // calls we send — staying under NLM's 20 rps limit even when two
-    // caregivers search at the same time.
-    const ttied = await mapWithConcurrency(deduped, MAX_PARALLEL, async (c) => {
-      try {
-        const j = await fetchJson<PropertyResponse>(
-          `${RXNAV_BASE}/rxcui/${encodeURIComponent(c.rxcui)}/property.json?propName=TTY`,
-          controller.signal
-        );
-        const tty = j?.propConceptGroup?.propConcept?.[0]?.propValue;
-        return { ...c, tty };
-      } catch {
-        return null;
-      }
-    });
-
-    const filtered = ttied
-      .filter(
-        (c): c is { rxcui: string; name: string; tty: string } =>
-          c !== null && (c.tty === 'IN' || c.tty === 'BN')
-      )
-      .slice(0, SEARCH_RESULT_CAP);
-
-    // Brand → ingredient resolution, also concurrency-capped.
-    return await mapWithConcurrency(filtered, MAX_PARALLEL, async (c): Promise<DrugSearchResult> => {
-      if (c.tty !== 'BN') {
-        return { rxcui: c.rxcui, name: c.name, type: 'generic' };
-      }
-      try {
-        const j = await fetchJson<RelatedResponse>(
-          `${RXNAV_BASE}/rxcui/${encodeURIComponent(c.rxcui)}/related.json?tty=IN`,
-          controller.signal
-        );
-        const ing = j?.relatedGroup?.conceptGroup?.[0]?.conceptProperties?.[0];
-        return {
-          rxcui: c.rxcui,
-          name: c.name,
-          type: 'brand',
-          ingredient: ing?.name,
-          ingredientRxcui: ing?.rxcui,
-        };
-      } catch {
-        // Graceful: brand row renders without sub-line.
-        return { rxcui: c.rxcui, name: c.name, type: 'brand' };
-      }
-    });
-  } catch (err) {
-    console.warn(`[rxnorm.searchDrug] fallback to [] for "${trimmed}": ${errorReason(err)}`);
-    return [];
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -283,18 +183,6 @@ async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T> {
   return (await r.json()) as T;
 }
 
-interface ApproximateResponse {
-  approximateGroup?: {
-    candidate?: Array<{ rxcui?: string; name?: string }>;
-  };
-}
-
-interface PropertyResponse {
-  propConceptGroup?: {
-    propConcept?: Array<{ propValue?: string }>;
-  };
-}
-
 interface RelatedResponse {
   relatedGroup?: {
     conceptGroup?: Array<{
@@ -304,11 +192,11 @@ interface RelatedResponse {
   };
 }
 
-// Run `fn` over `items` with at most `limit` promises in flight. Used to
-// stay polite against NLM's 20 rps RxNav rate limit when fanning out TTY
-// or ingredient lookups across search results. Worker-pool pattern —
-// preserves input order in the result array. Exported for reuse by
-// scan/extract.ts so the NDC fan-out shares the same concurrency cap.
+// Run `fn` over `items` with at most `limit` promises in flight. Originally
+// used by searchDrug for TTY fan-out; that path was removed in the bundled
+// RxNorm index migration. Now used by scan/enrich.ts for NDC resolution
+// fan-out — keeps the 8-parallel cap consistent and the helper colocated
+// with the only other RxNav-touching code in the wizard module.
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
@@ -396,31 +284,6 @@ function errorReason(err: unknown): string {
     return err.message;
   }
   return 'unknown';
-}
-
-// Reject obvious non-IN/non-BN candidates from approximateTerm output so
-// the per-result TTY fan-out stays small. INs are usually a single
-// lowercase word ("furosemide"); BNs are short and typically capitalized
-// ("Lasix"). Anything with brackets/slashes/parens is a packaged product;
-// anything with strength notation ("40 MG", "10 MG/ML", "1 %") is a
-// clinical drug; anything mentioning a form-suffix word is a product.
-//
-// Exported for tests — treat as internal to this module.
-export function looksLikeIngredientOrBrand(name: string): boolean {
-  if (name.length > 40) return false;
-  if (/[\[\]/()]/.test(name)) return false;
-  // Strength notation: digit + optional decimal + optional space + unit.
-  // Allows digit-bearing brand names without strength units (e.g.,
-  // "Tylenol 8 HR", "Vitamin D3", "B-12") through to TTY check.
-  if (/\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|%)\b/i.test(name)) return false;
-  if (
-    /\b(Tablet|Capsule|Solution|Injection|Cream|Ointment|Powder|Pill|Product|Suppository|Patch|Spray|Injectable|Drop|Drops|Aerosol|Lozenge|Cartridge|Inhaler|Gel|Lotion|Foam|Liquid|Syrup|Emulsion|Suspension|Granules|Film|Disc)\b/i.test(
-      name
-    )
-  ) {
-    return false;
-  }
-  return true;
 }
 
 // Among a brand's available forms, pick the one a typical caregiver
