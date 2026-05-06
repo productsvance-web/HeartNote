@@ -69,6 +69,10 @@ interface Props {
   // links as "1 tablet" instead of "1 dose". Null when unknown (custom
   // med, scan with no NDC match) or when form isn't in FORM_COUNT_NOUN.
   form: string | null;
+  // When true, suppress built-in chrome (leading Cancel, centered title,
+  // Save and Skip buttons). The parent owns those — used by the unified
+  // flow's ScheduleStep where MedFlowChrome wraps this body.
+  embedded?: boolean;
 }
 
 export function CadenceFields({
@@ -81,6 +85,7 @@ export function CadenceFields({
   error,
   drugLabel,
   form,
+  embedded,
 }: Props) {
   const noun: QtyNoun | null = form ? (FORM_COUNT_NOUN[form] ?? null) : null;
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -107,18 +112,22 @@ export function CadenceFields({
 
   return (
     <div className="space-y-5">
-      <button
-        type="button"
-        onClick={onCancel}
-        className="text-xs text-muted-foreground underline underline-offset-2"
-      >
-        ← Cancel
-      </button>
+      {!embedded && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs text-muted-foreground underline underline-offset-2"
+        >
+          ← Cancel
+        </button>
+      )}
 
-      <div className="text-center">
-        <p className="text-base font-semibold text-foreground">{drugLabel}</p>
-        <h2 className="font-display text-3xl text-foreground mt-3">Set a Schedule</h2>
-      </div>
+      {!embedded && (
+        <div className="text-center">
+          <p className="text-base font-semibold text-foreground">{drugLabel}</p>
+          <h2 className="font-display text-3xl text-foreground mt-3">Set a Schedule</h2>
+        </div>
+      )}
 
       <div>
         <p className="text-sm font-medium text-foreground mb-2">When will you take this?</p>
@@ -205,16 +214,18 @@ export function CadenceFields({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving}
-        className="w-full rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save schedule'}
-      </button>
+      {!embedded && (
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className="w-full rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save schedule'}
+        </button>
+      )}
 
-      {onSkip && (
+      {!embedded && onSkip && (
         <button
           type="button"
           onClick={onSkip}

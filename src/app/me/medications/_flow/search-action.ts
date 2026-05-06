@@ -1,12 +1,9 @@
 'use server';
 
-// Public server action that wraps the bundled-index search.
-//
-// `'use server'` exposes a callable POST endpoint regardless of which
-// page imports the action — the security boundary travels with the
-// function, not with the route's auth gate. Auth + input validation
-// live in `authedSearch` (rxnorm-search.ts), unit-tested without
-// mocking the Supabase client.
+// Server action wrapper around the bundled-index drug search. `'use
+// server'` exposes a callable POST endpoint regardless of which page
+// imports it — the auth boundary travels with the function, not with the
+// route. Auth + input validation live in `authedSearch`.
 
 import { createClient } from '@/lib/supabase/server';
 import { authedSearch } from '@/lib/medications/rxnorm-search';

@@ -1,17 +1,9 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
-import { MedicationWizard } from './medication-wizard';
+import { NewMedicationFlow } from '../_flow/NewMedicationFlow';
 
-interface PageProps {
-  // Only one URL param honored: `?from=scan`. Set when the wizard was
-  // entered from /me/medications/scan; on save the wizard returns there
-  // instead of /me/medications. PR-2b will produce this URL from scan
-  // cards. No URL state for in-progress form data.
-  searchParams: Promise<{ from?: string }>;
-}
-
-export default async function NewMedicationPage({ searchParams }: PageProps) {
+export default async function NewMedicationPage() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -27,12 +19,9 @@ export default async function NewMedicationPage({ searchParams }: PageProps) {
     .single();
   if (!patient) redirect('/onboarding');
 
-  const params = await searchParams;
-  const fromScan = params.from === 'scan';
-
   return (
     <PhoneShell hideNav>
-      <MedicationWizard fromScan={fromScan} />
+      <NewMedicationFlow />
     </PhoneShell>
   );
 }

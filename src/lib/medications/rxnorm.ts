@@ -16,14 +16,14 @@
 const RXNAV_BASE = 'https://rxnav.nlm.nih.gov/REST';
 const TIMEOUT_MS = 1500;
 
-// Minimum trimmed query length before the wizard's Search step fires a
-// network request. Lives here (universal module) so both client code
-// (step-search.tsx) and server code (rxnorm-search.ts) read the same
-// constant without either accidentally bundling the 3MB RxNorm index.
+// Minimum trimmed query length before the SearchStep fires a network
+// request. Lives here (universal module) so both client code (SearchStep)
+// and server code (rxnorm-search.ts) read the same constant without
+// either accidentally bundling the 3MB RxNorm index.
 export const MIN_QUERY_LEN = 3;
 
-// RxNorm dose form → singular/plural noun for the wizard's
-// "How many ___ per dose?" question. Only discrete-dose forms appear here;
+// RxNorm dose form → singular/plural noun for the unified flow's quantity
+// row ("1 tablet" / "1 capsule"). Only discrete-dose forms appear here;
 // volume/topical/dose-by-application forms (cream, oral solution, etc.)
 // are absent and the wizard skips the count question for those. Keys must
 // match RxNorm's exact dose-form display name.

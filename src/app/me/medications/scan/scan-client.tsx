@@ -3,22 +3,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
-import { Camera as CameraIcon, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import {
+  Camera as CameraIcon,
+  Image as ImageIcon,
+  AlertTriangle,
+} from 'lucide-react';
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
-import { ScanReviewCard } from './scan-review-card';
-import { addExtractedMedications, type MedicationPayload } from '../actions';
-import { extractedMedToPayload } from './extracted-to-payload';
-import { CadenceFlow, type CadenceDraft } from '../cadence/cadence-flow';
-import { toTitleCase } from './extracted-to-payload';
+import {
+  addExtractedMedications,
+  type MedicationPayload,
+} from '../actions';
+import { extractedMedToPayload, toTitleCase } from './extracted-to-payload';
 import {
   rescheduleAll,
   requestNotificationPermission,
   checkPermissionState,
 } from '@/lib/medications/notifications';
+import { ScanMedicationFlow } from '../_flow/ScanMedicationFlow';
 
 // Compresses an image data URL down to ~800KB at max 1280px on the long
-// edge, JPEG quality 0.8. Pure browser code — Canvas + toDataURL. Runs
-// off the captured dataUrl, returns a new dataUrl.
+// edge, JPEG quality 0.8.
 async function compressImage(srcDataUrl: string): Promise<string> {
   const img = new Image();
   await new Promise<void>((resolve, reject) => {
@@ -46,9 +50,6 @@ type State =
   | {
       kind: 'review';
       medications: ResolvedMed[];
-      // Total count fixed at scan time — used for the "Med X of N"
-      // progress badge so the denominator doesn't shrink as cards are
-      // saved or skipped.
       totalAtScan: number;
       addAllSummary: string | null;
       truncated: boolean;
@@ -61,18 +62,12 @@ export function ScanClient() {
   const [state, setState] = useState<State>({ kind: 'capture' });
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [addAllPending, setAddAllPending] = useState(false);
-  // True while the head card has been accepted and the cadence flow is
-  // active for that med. The card itself stays mounted but the flow
-  // overlays it.
-  const [cadenceForHead, setCadenceForHead] = useState(false);
-  const [savingCadence, setSavingCadence] = useState(false);
+  // True while the head card is being scheduled — shows the
+  // ScanMedicationFlow overlay instead of the head's summary.
+  const [schedulingHead, setSchedulingHead] = useState(false);
   const searchParams = useSearchParams();
   const autoTriggeredRef = useRef(false);
 
-  // Auto-trigger the picker once on mount when entered with ?source=camera
-  // or ?source=photos — caregiver tapped Scan or Upload from the previous
-  // page. The ref guard prevents re-firing on subsequent re-renders or
-  // when the picker state changes the URL.
   useEffect(() => {
     if (autoTriggeredRef.current) return;
     const source = searchParams.get('source');
@@ -109,7 +104,6 @@ export function ScanClient() {
       ) {
         setPermissionDenied(true);
       } else if (!message.includes('cancel')) {
-        // Genuine error (not a user-cancel). Don't toast on cancel.
         setState({ kind: 'error', message: 'Could not open camera. Try again.' });
       }
     }
@@ -163,11 +157,8 @@ export function ScanClient() {
     setState({ kind: 'capture' });
   }
 
-  // Pop the head of the review queue. Called by both the per-card
-  // success path (onAdded) and the per-card skip path. When the queue
-  // empties, return to capture so the caregiver can scan again.
   function advanceHead() {
-    setCadenceForHead(false);
+    setSchedulingHead(false);
     setState((s) => {
       if (s.kind !== 'review') return s;
       const next = s.medications.slice(1);
@@ -176,74 +167,39 @@ export function ScanClient() {
     });
   }
 
-  async function saveHeadWithCadence(
-    headMed: ResolvedMed,
-    draft: CadenceDraft,
+  async function saveHead(
+    payload: MedicationPayload,
+    cadenceKind: MedicationPayload['cadenceKind']
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (savingCadence) return { ok: false, error: 'Already saving' };
-    setSavingCadence(true);
+    let result: Awaited<ReturnType<typeof addExtractedMedications>>;
     try {
-      const base = extractedMedToPayload(headMed);
-      const payload: MedicationPayload = {
-        ...base,
-        cadenceKind: draft.kind,
-        cycleOnDays: draft.cycleOnDays,
-        cycleOffDays: draft.cycleOffDays,
-        intervalDays: draft.intervalDays,
-        startedAt: draft.kind === 'as_needed' ? '' : draft.startedAt,
-        endedAt: draft.kind === 'as_needed' ? '' : draft.endedAt,
-        doseTimes: draft.doseTimes.map((dt, i) => ({
-          timeOfDay: dt.timeOfDay,
-          quantity: dt.quantity,
-          ordinal: i,
-          appliesToDow: dt.appliesToDow,
-        })),
-      };
-      // Belt-and-suspenders: convert thrown server-action exceptions
-      // (network blip, classifier rejection, missing migration, etc.)
-      // into a returned `{ ok: false }` so the cadence flow's error
-      // banner renders the failure instead of letting it propagate to
-      // React's error boundary. Surface the underlying error message
-      // so missing-migration and similar diagnostic cases are visible
-      // in the UI rather than swallowed behind a generic toast.
-      let result: Awaited<ReturnType<typeof addExtractedMedications>>;
-      try {
-        result = await addExtractedMedications([payload]);
-      } catch (err) {
-        console.error('saveHeadWithCadence threw', err);
-        const detail = err instanceof Error ? err.message : 'unknown error';
-        return { ok: false, error: `Could not save schedule: ${detail}` };
-      }
-      if (result.failedIndexes.length === 0) {
-        if (draft.kind !== 'as_needed') {
-          const state = await checkPermissionState();
-          if (state === 'prompt' || state === 'prompt-with-rationale') {
-            await requestNotificationPermission();
-          }
-        }
-        void rescheduleAll();
-        advanceHead();
-        return { ok: true };
-      }
-      return { ok: false, error: result.errors[0] ?? 'Could not save.' };
-    } finally {
-      setSavingCadence(false);
+      result = await addExtractedMedications([payload]);
+    } catch (err) {
+      console.error('saveHead threw', err);
+      const detail = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: `Could not save schedule: ${detail}` };
     }
+    if (result.failedIndexes.length === 0) {
+      if (cadenceKind !== 'as_needed') {
+        const ps = await checkPermissionState();
+        if (ps === 'prompt' || ps === 'prompt-with-rationale') {
+          await requestNotificationPermission();
+        }
+      }
+      void rescheduleAll();
+      advanceHead();
+      return { ok: true };
+    }
+    return { ok: false, error: result.errors[0] ?? 'Could not save.' };
   }
-
 
   async function addAll() {
     if (state.kind !== 'review' || addAllPending) return;
-    // Dose-change cards never participate in Add all; they require
-    // prescriber confirmation per build conv #6.
+    // Dose-change cards never participate in Add all per build conv #6.
     const candidatePayloads: MedicationPayload[] = [];
     const candidateOrigIndexes: number[] = [];
     state.medications.forEach((med, i) => {
       if (med.is_dose_change) return;
-      // AddAll and per-card save produce identical payloads now that
-      // schedule is no longer collected at scan time — both default
-      // to PRN with no clock times. Caregiver sets reminders later
-      // from /me/medications when reminders feature ships.
       candidatePayloads.push(extractedMedToPayload(med));
       candidateOrigIndexes.push(i);
     });
@@ -279,7 +235,6 @@ export function ScanClient() {
     }
   }
 
-  // Capture state
   if (state.kind === 'capture') {
     return (
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 space-y-3">
@@ -310,13 +265,12 @@ export function ScanClient() {
     );
   }
 
-  // Preview state — show captured image, confirm or retake
   if (state.kind === 'preview') {
     return (
       <section className="mt-6 mx-4 space-y-3">
         <div className="rounded-3xl bg-card shadow-card overflow-hidden">
           {/* In-memory data URL preview — next/image can't optimize a base64
-              dataUrl and adds layout overhead. Plain <img> is correct here. */}
+              dataUrl. Plain <img> is correct. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={state.dataUrl}
@@ -342,7 +296,6 @@ export function ScanClient() {
     );
   }
 
-  // Processing
   if (state.kind === 'processing') {
     return (
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-8 text-center">
@@ -352,7 +305,6 @@ export function ScanClient() {
     );
   }
 
-  // No meds detected
   if (state.kind === 'empty') {
     return (
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 text-center">
@@ -369,7 +321,6 @@ export function ScanClient() {
     );
   }
 
-  // Safety filter
   if (state.kind === 'safety') {
     return (
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 text-center">
@@ -388,7 +339,6 @@ export function ScanClient() {
     );
   }
 
-  // Error
   if (state.kind === 'error') {
     return (
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 text-center">
@@ -404,12 +354,24 @@ export function ScanClient() {
     );
   }
 
-  // Review state — sequential, one med at a time. Head of `medications`
-  // is the active card; `totalAtScan` keeps the progress denominator
-  // stable as cards are advanced. AddAll batches everything remaining.
+  // Review state — sequential, one med at a time.
   const headMed = state.medications[0];
   const position = state.totalAtScan - state.medications.length + 1;
   const allRemainingAreDoseChange = state.medications.every((m) => m.is_dose_change);
+
+  // When the caregiver tapped Set schedule on the head, render the unified
+  // flow full-bleed for that one med. Multi-card chrome (Add all, etc.)
+  // is intentionally hidden during scheduling so the focus is on this med.
+  if (schedulingHead && !headMed.is_dose_change) {
+    return (
+      <ScanMedicationFlow
+        med={headMed}
+        onSave={saveHead}
+        onCancel={() => setSchedulingHead(false)}
+        allowSkip={state.medications.length > 1}
+      />
+    );
+  }
 
   return (
     <section className="mt-6 mx-4 space-y-3">
@@ -452,30 +414,119 @@ export function ScanClient() {
         </div>
       )}
 
-      {cadenceForHead ? (
-        <CadenceFlow
-          drugLabel={toTitleCase(headMed.drug_name.trim() || headMed.canonicalName || 'this medication')}
-          form={headMed.form}
-          allowSkip
-          saving={savingCadence}
-          onCancel={() => setCadenceForHead(false)}
-          onSave={(draft) => saveHeadWithCadence(headMed, draft)}
+      {headMed.is_dose_change ? (
+        <DoseChangeNotice
+          drugName={headMed.drug_name}
+          onSkip={advanceHead}
+          position={state.totalAtScan > 1 ? position : null}
+          totalCount={state.totalAtScan}
         />
       ) : (
-        <ScanReviewCard
+        <PendingMedSummary
           med={headMed}
+          onSetSchedule={() => setSchedulingHead(true)}
           onSkip={advanceHead}
-          onAccept={() => setCadenceForHead(true)}
           disabled={addAllPending}
           position={state.totalAtScan > 1 ? position : null}
           totalCount={state.totalAtScan}
         />
       )}
 
-      {/* Empathetic note: navigation away drops scan state. */}
       <p className="text-xs text-muted-foreground text-center pt-2">
         Tapped Back too soon? Scan again from the list.
       </p>
     </section>
+  );
+}
+
+// Compact per-med entry card. Replaces ScanReviewCard's verification view —
+// the unified flow's Type/Strength subtitle now handles confirmation
+// inline on the schedule screen.
+function PendingMedSummary({
+  med,
+  onSetSchedule,
+  onSkip,
+  disabled,
+  position,
+  totalCount,
+}: {
+  med: ResolvedMed;
+  onSetSchedule: () => void;
+  onSkip: () => void;
+  disabled?: boolean;
+  position: number | null;
+  totalCount: number;
+}) {
+  const ocrName = med.drug_name.trim();
+  const primary = toTitleCase(
+    ocrName.length > 0 ? ocrName : (med.canonicalName ?? '').trim()
+  );
+  return (
+    <div className="rounded-2xl bg-card shadow-card p-4">
+      {position !== null && totalCount > 1 && (
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-2">
+          Med {position} of {totalCount}
+        </p>
+      )}
+      <p className="text-base font-semibold text-foreground">{primary}</p>
+      <button
+        type="button"
+        onClick={onSetSchedule}
+        disabled={disabled}
+        className="mt-4 w-full rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
+      >
+        Set schedule
+      </button>
+      <button
+        type="button"
+        onClick={onSkip}
+        disabled={disabled}
+        className="mt-2 w-full text-center text-xs text-muted-foreground underline"
+      >
+        Skip
+      </button>
+    </div>
+  );
+}
+
+// Dose-change short-circuit per build conv #6: labels with dose-change
+// instructions never auto-ingest.
+function DoseChangeNotice({
+  drugName,
+  onSkip,
+  position,
+  totalCount,
+}: {
+  drugName: string;
+  onSkip: () => void;
+  position: number | null;
+  totalCount: number;
+}) {
+  return (
+    <div className="rounded-2xl bg-card shadow-card p-4 border border-border">
+      {position !== null && totalCount > 1 && (
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-2">
+          Med {position} of {totalCount}
+        </p>
+      )}
+      <div className="flex items-start gap-3">
+        <AlertTriangle size={18} className="text-foreground mt-0.5 shrink-0" />
+        <div className="flex-1">
+          <p className="font-semibold text-foreground">{toTitleCase(drugName)}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            This label has dose-change instructions. Confirm with the prescriber and add manually.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={onSkip}
+          className="text-xs text-muted-foreground underline"
+        >
+          Skip
+        </button>
+      </div>
+    </div>
   );
 }

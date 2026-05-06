@@ -6,7 +6,7 @@
 // and refreshed monthly via `npm run rxnorm:refresh`.
 //
 // Bundle isolation contract: the only callers of this module are the
-// 'use server' action at src/app/me/medications/new/search-action.ts and
+// 'use server' action at src/app/me/medications/_flow/search-action.ts and
 // the offline test file. No client component imports from here. The
 // build's bundle-leakage AC enforces this property by grepping
 // `.next/static/` for the index's distinctive `fetchedAt` field — a leak
