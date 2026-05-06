@@ -341,10 +341,8 @@ function AtWhatTimeCard({
               copy[i] = { ...next, appliesToDow: null };
               onChange({ ...draft, doseTimes: copy });
             }}
-            onRemove={
-              draft.doseTimes.length > 1
-                ? () => onChange({ ...draft, doseTimes: draft.doseTimes.filter((_, j) => j !== i) })
-                : undefined
+            onRemove={() =>
+              onChange({ ...draft, doseTimes: draft.doseTimes.filter((_, j) => j !== i) })
             }
           />
         ))}
@@ -372,48 +370,53 @@ function AtWhatTimeCard({
 }
 
 function CycleCard({ draft, onChange }: { draft: CadenceDraft; onChange: (d: CadenceDraft) => void }) {
-  const unitLabel = draft.cycleUnit === 'week' ? 'weeks' : 'days';
   const factor = draft.cycleUnit === 'week' ? 7 : 1;
-  const onValue = draft.cycleOnDays != null ? Math.round(draft.cycleOnDays / factor) : '';
-  const offValue = draft.cycleOffDays != null ? Math.round(draft.cycleOffDays / factor) : '';
-  const max = draft.cycleUnit === 'week' ? 52 : 365;
+  // 60-day max covers the longest common ambulatory cyclical regimens
+  // (typical CHF/hormonal cycles fit comfortably under this). Weeks cap
+  // at 12 (~3 months) for the same practical ceiling.
+  const max = draft.cycleUnit === 'week' ? 12 : 60;
+  const singularUnit = draft.cycleUnit === 'week' ? 'week' : 'day';
+  const pluralUnit = draft.cycleUnit === 'week' ? 'weeks' : 'days';
+  const onValue = draft.cycleOnDays != null ? Math.round(draft.cycleOnDays / factor) : null;
+  const offValue = draft.cycleOffDays != null ? Math.round(draft.cycleOffDays / factor) : null;
+
   return (
     <div>
       <p className="text-sm font-medium text-foreground mb-2">What is the cycle?</p>
       <div className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
         <div className="px-4 py-3 flex items-center justify-between gap-3">
           <p className="text-base text-foreground">Use for</p>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              min={1}
-              max={max}
-              value={onValue}
-              onChange={(e) => {
-                const n = e.target.value === '' ? null : Number(e.target.value);
-                onChange({ ...draft, cycleOnDays: n == null ? null : n * factor });
-              }}
-              className="w-14 bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
-            />
-            <span className="text-base font-semibold text-foreground">{unitLabel}</span>
-          </div>
+          <select
+            value={onValue ?? ''}
+            onChange={(e) => {
+              const n = e.target.value === '' ? null : Number(e.target.value);
+              onChange({ ...draft, cycleOnDays: n == null ? null : n * factor });
+            }}
+            className="bg-transparent text-base font-semibold text-primary text-right focus:outline-none"
+          >
+            {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n} {n === 1 ? singularUnit : pluralUnit}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="px-4 py-3 flex items-center justify-between gap-3">
           <p className="text-base text-foreground">Pause for</p>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              min={1}
-              max={max}
-              value={offValue}
-              onChange={(e) => {
-                const n = e.target.value === '' ? null : Number(e.target.value);
-                onChange({ ...draft, cycleOffDays: n == null ? null : n * factor });
-              }}
-              className="w-14 bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
-            />
-            <span className="text-base font-semibold text-foreground">{unitLabel}</span>
-          </div>
+          <select
+            value={offValue ?? ''}
+            onChange={(e) => {
+              const n = e.target.value === '' ? null : Number(e.target.value);
+              onChange({ ...draft, cycleOffDays: n == null ? null : n * factor });
+            }}
+            className="bg-transparent text-base font-semibold text-primary text-right focus:outline-none"
+          >
+            {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n} {n === 1 ? singularUnit : pluralUnit}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
@@ -582,11 +585,7 @@ function SpecificDaysGroups({
                     value={dt}
                     noun={noun}
                     onChange={(next) => updateRow(originalIndex, next, g.bitmap)}
-                    onRemove={
-                      g.rows.length > 1
-                        ? () => removeRow(originalIndex)
-                        : undefined
-                    }
+                    onRemove={() => removeRow(originalIndex)}
                   />
                 ))
               )}
@@ -624,10 +623,11 @@ function SpecificDaysGroups({
 // Single (time, quantity, optional remove) row. The time input is mounted
 // without a default value so iOS Safari opens its native picker on tap;
 // once a value is set it stays. Quantity opens an inline numeric editor.
-// Decimal-only quantity. Number() would accept "1e2" → 100, contradicting
-// the AC that rejects scientific notation. The regex gate catches it
-// upstream of the Number() parse.
-const QTY_DECIMAL = /^\d+(?:\.\d+)?$/;
+// Decimal-only quantity. Allows "1", "0.5", "0.75", and ".5" (leading-dot
+// shorthand caregivers commonly type). Number() would accept "1e2" → 100,
+// contradicting the rule that rejects scientific notation; the regex gate
+// catches it upstream of the Number() parse. Trailing dot ("1.") rejected.
+const QTY_DECIMAL = /^\d*\.?\d+$/;
 
 function DoseTimeRow({
   value,
@@ -693,22 +693,25 @@ function DoseTimeRow({
           className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
         {editingQty ? (
-          <input
-            type="text"
-            inputMode="decimal"
-            autoFocus
-            value={qtyDraft}
-            onChange={(e) => setQtyDraft(e.target.value)}
-            onBlur={commitQty}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitQty();
-              if (e.key === 'Escape') {
-                setQtyDraft(String(value.quantity));
-                setEditingQty(false);
-              }
-            }}
-            className="ml-auto w-20 bg-transparent text-sm font-semibold text-primary text-right focus:outline-none"
-          />
+          <span className="ml-auto inline-flex items-baseline gap-1 text-sm font-semibold text-primary whitespace-nowrap">
+            <input
+              type="text"
+              inputMode="decimal"
+              autoFocus
+              value={qtyDraft}
+              onChange={(e) => setQtyDraft(e.target.value)}
+              onBlur={commitQty}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitQty();
+                if (e.key === 'Escape') {
+                  setQtyDraft(String(value.quantity));
+                  setEditingQty(false);
+                }
+              }}
+              className="w-12 bg-transparent text-right focus:outline-none"
+            />
+            <span>{liveNounForDraft(qtyDraft, value.quantity, noun)}</span>
+          </span>
         ) : (
           <button
             type="button"
@@ -744,14 +747,33 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function formatQuantity(n: number, noun: QtyNoun | null): string {
-  const display = Number.isInteger(n)
+function formatQuantityNumber(n: number): string {
+  return Number.isInteger(n)
     ? String(n)
     : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-  if (noun) {
-    return n === 1 ? `1 ${noun.single}` : `${display} ${noun.plural}`;
+}
+
+function quantityNoun(n: number, noun: QtyNoun | null): string {
+  if (noun) return n === 1 ? noun.single : noun.plural;
+  return n === 1 ? 'dose' : 'doses';
+}
+
+function formatQuantity(n: number, noun: QtyNoun | null): string {
+  return `${formatQuantityNumber(n)} ${quantityNoun(n, noun)}`;
+}
+
+// Live-pluralized unit word for the quantity edit field. As the user
+// types, the unit word updates ("0.5 tablets" → "1 tablet" → "2 tablets")
+// without losing the word entirely. Invalid drafts (empty, scientific,
+// negative) fall back to the last committed quantity so we don't flicker
+// between singular/plural while the user is clearing the field.
+function liveNounForDraft(draft: string, lastCommitted: number, noun: QtyNoun | null): string {
+  const trimmed = draft.trim();
+  if (QTY_DECIMAL.test(trimmed)) {
+    const n = Number(trimmed);
+    if (Number.isFinite(n) && n > 0) return quantityNoun(n, noun);
   }
-  return n === 1 ? '1 dose' : `${display} doses`;
+  return quantityNoun(lastCommitted, noun);
 }
 
 // Build a fresh draft for a given cadence kind. `startedAt` and
