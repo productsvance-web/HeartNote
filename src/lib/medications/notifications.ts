@@ -44,7 +44,7 @@ interface MedRow {
   }>;
 }
 
-export type PermissionState = PermissionStatus['display'];
+export type PermissionState = PermissionStatus['display'] | 'unsupported';
 
 async function fetchActiveMeds(): Promise<MedRow[]> {
   const supabase = createClient();
@@ -139,13 +139,13 @@ function computeFiresForMed(med: MedRow, from: Date): PlannedFire[] {
 }
 
 export async function checkPermissionState(): Promise<PermissionState> {
-  if (!Capacitor.isNativePlatform()) return 'denied';
+  if (!Capacitor.isNativePlatform()) return 'unsupported';
   const result = await LocalNotifications.checkPermissions();
   return result.display;
 }
 
 export async function requestNotificationPermission(): Promise<PermissionState> {
-  if (!Capacitor.isNativePlatform()) return 'denied';
+  if (!Capacitor.isNativePlatform()) return 'unsupported';
   const result = await LocalNotifications.requestPermissions();
   return result.display;
 }

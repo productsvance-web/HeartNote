@@ -92,7 +92,12 @@ export async function confirmDose(
     (r) => r.medication_id === parsed.data.medicationId
   );
 
-  if (target && target.doses_per_day !== null) {
+  // Slot gate only applies on days when the cadence is firing (doses_per_day
+  // > 0). PRN meds (null) skip the gate entirely. Off-cycle days for
+  // cyclical/specific_days/every_few_days return 0 — let the dose record
+  // through (caregiver took it early/late) since the alternative is an
+  // unhelpful "already logged" copy when nothing is logged.
+  if (target && target.doses_per_day !== null && target.doses_per_day > 0) {
     if (parsed.data.status === 'double_dosed') {
       const events = (target.events ?? []) as Array<{ status: MedEventStatus }>;
       const hasSkipped = events.some(

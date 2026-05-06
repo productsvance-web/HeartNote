@@ -1,7 +1,6 @@
 'use server';
 
 import { z } from 'zod';
-import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayForCaregiver } from '@/lib/dates/today';
@@ -179,7 +178,7 @@ export type MedicationPayload = z.infer<typeof MedicationPayloadSchema>;
 
 type ActionResult =
   | { ok: false; error: string }
-  | { ok: true };
+  | { ok: true; id?: string };
 
 async function resolvePatient(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -317,7 +316,7 @@ export async function addMedication(payload: MedicationPayload): Promise<ActionR
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications?added=${result.id}`);
+  return { ok: true, id: result.id };
 }
 
 // Batch insert path used by the scan flow — both single-card "Add to my
@@ -387,7 +386,7 @@ export async function updateMedication(
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect('/me/medications');
+  return { ok: true, id: result.id };
 }
 
 export async function stopMedication(medicationId: string): Promise<ActionResult> {
@@ -426,7 +425,7 @@ export async function restartMedication(medicationId: string): Promise<ActionRes
 
   revalidatePath('/me/medications');
   revalidatePath('/dashboard');
-  redirect(`/me/medications/${medicationId}`);
+  return { ok: true, id: medicationId };
 }
 
 const IdsSchema = z.array(z.string().uuid()).min(1).max(50);

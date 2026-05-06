@@ -259,9 +259,22 @@ function SpecificDaysGroups({
   const claimedTotal = groups.reduce((acc, bm) => acc | bm, 0);
 
   function setGroupBitmap(oldBm: number, newBm: number) {
+    // Bitmap going to 0 = group has no days left. Drop the group and its
+    // dose-times entirely — keeping a 0-bitmap group around creates a
+    // collision with any other empty group and confuses the by-bitmap
+    // grouping render. The "Schedule Other Days" button creates fresh
+    // groups when the user wants more, so removing-on-empty is reversible.
+    if (newBm === 0) {
+      onChange({
+        ...draft,
+        groups: groups.filter((g) => g !== oldBm),
+        doseTimes: draft.doseTimes.filter((dt) => (dt.appliesToDow ?? 0) !== oldBm),
+      });
+      return;
+    }
     const newGroups = groups.map((g) => (g === oldBm ? newBm : g));
     const newDoseTimes = draft.doseTimes.map((dt) =>
-      (dt.appliesToDow ?? 0) === oldBm ? { ...dt, appliesToDow: newBm === 0 ? null : newBm } : dt,
+      (dt.appliesToDow ?? 0) === oldBm ? { ...dt, appliesToDow: newBm } : dt,
     );
     onChange({ ...draft, groups: newGroups, doseTimes: newDoseTimes });
   }
@@ -368,6 +381,11 @@ function SpecificDaysGroups({
 // Single (time, quantity, optional remove) row. The time input is mounted
 // without a default value so iOS Safari opens its native picker on tap;
 // once a value is set it stays. Quantity opens an inline numeric editor.
+// Decimal-only quantity. Number() would accept "1e2" → 100, contradicting
+// the AC that rejects scientific notation. The regex gate catches it
+// upstream of the Number() parse.
+const QTY_DECIMAL = /^\d+(?:\.\d+)?$/;
+
 function DoseTimeRow({
   value,
   onChange,
@@ -379,72 +397,91 @@ function DoseTimeRow({
 }) {
   const [editingQty, setEditingQty] = useState(false);
   const [qtyDraft, setQtyDraft] = useState(String(value.quantity));
+  const [qtyError, setQtyError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   function commitQty() {
-    const n = Number(qtyDraft.trim());
-    if (Number.isFinite(n) && n > 0) {
-      onChange({ ...value, quantity: n });
-    } else {
-      setQtyDraft(String(value.quantity));
+    const trimmed = qtyDraft.trim();
+    if (!QTY_DECIMAL.test(trimmed)) {
+      setQtyError('Enter a positive number, e.g. 1 or 0.5.');
+      return;
     }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n <= 0) {
+      setQtyError('Enter a positive number, e.g. 1 or 0.5.');
+      return;
+    }
+    onChange({ ...value, quantity: n });
+    setQtyError(null);
     setEditingQty(false);
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <input
-        ref={inputRef}
-        type="time"
-        // No default value: iOS Safari blocks the native picker on inputs
-        // that already have a value. Tapping the empty input opens the
-        // wheel; on change we capture the HH:MM.
-        {...(value.timeOfDay ? { value: value.timeOfDay } : {})}
-        onChange={(e) => onChange({ ...value, timeOfDay: e.target.value })}
-        onClick={() => {
-          // Capacitor WebView sometimes needs an explicit showPicker call.
-          inputRef.current?.showPicker?.();
-        }}
-        className={`${inputClass} flex-1`}
-      />
-      {editingQty ? (
+    <div>
+      <div className="flex items-center gap-3">
         <input
-          type="text"
-          inputMode="decimal"
-          autoFocus
-          value={qtyDraft}
-          onChange={(e) => setQtyDraft(e.target.value)}
-          onBlur={commitQty}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitQty();
-            if (e.key === 'Escape') {
-              setQtyDraft(String(value.quantity));
-              setEditingQty(false);
+          ref={inputRef}
+          type="time"
+          {...(value.timeOfDay ? { value: value.timeOfDay } : {})}
+          onChange={(e) => onChange({ ...value, timeOfDay: e.target.value })}
+          onClick={() => {
+            // Capacitor WebView sometimes needs an explicit showPicker call.
+            // showPicker() can throw InvalidStateError if the picker is
+            // already opening on this click — swallow.
+            try {
+              inputRef.current?.showPicker?.();
+            } catch {
+              // ignore
             }
           }}
-          className={`${inputClass} w-20`}
+          className={`${inputClass} flex-1`}
         />
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            setQtyDraft(String(value.quantity));
-            setEditingQty(true);
-          }}
-          className="text-sm text-foreground underline underline-offset-2 whitespace-nowrap"
-        >
-          {formatQuantity(value.quantity)}
-        </button>
-      )}
-      {onRemove && (
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-muted-foreground"
-          aria-label="Remove time"
-        >
-          <Trash2 size={16} />
-        </button>
+        {editingQty ? (
+          <input
+            type="text"
+            inputMode="decimal"
+            autoFocus
+            value={qtyDraft}
+            onChange={(e) => {
+              setQtyDraft(e.target.value);
+              if (qtyError) setQtyError(null);
+            }}
+            onBlur={commitQty}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitQty();
+              if (e.key === 'Escape') {
+                setQtyDraft(String(value.quantity));
+                setQtyError(null);
+                setEditingQty(false);
+              }
+            }}
+            className={`${inputClass} w-20`}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setQtyDraft(String(value.quantity));
+              setEditingQty(true);
+            }}
+            className="text-sm text-foreground underline underline-offset-2 whitespace-nowrap"
+          >
+            {formatQuantity(value.quantity)}
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-muted-foreground"
+            aria-label="Remove time"
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
+      {qtyError && (
+        <p className="text-xs text-destructive mt-1">{qtyError}</p>
       )}
     </div>
   );
@@ -476,37 +513,45 @@ function Field({
   );
 }
 
-// Build a fresh draft for a given cadence kind, preserving cross-kind data
-// (start date, dose times) where it carries meaning.
+// Build a fresh draft for a given cadence kind. Carries forward the
+// caregiver's typed start date when the new kind uses it; nulls out
+// fields that don't apply to the new kind so a switched-from-cyclical
+// med doesn't leave stale cycle_on_days behind.
 export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft {
-  const carry = prior ?? {
+  const startedAt = prior?.startedAt ?? '';
+  const cycleUnit = prior?.cycleUnit ?? 'day';
+  const base: CadenceDraft = {
     kind,
     cycleOnDays: null,
     cycleOffDays: null,
-    cycleUnit: 'day' as const,
+    cycleUnit,
     intervalDays: null,
-    startedAt: '',
+    startedAt,
     doseTimes: [],
     groups: [],
   };
   if (kind === 'as_needed') {
-    return { ...carry, kind, doseTimes: [], groups: [] };
+    return base;
+  }
+  if (kind === 'cyclical') {
+    base.cycleOnDays = prior?.cycleOnDays ?? null;
+    base.cycleOffDays = prior?.cycleOffDays ?? null;
+  } else if (kind === 'every_few_days') {
+    base.intervalDays = prior?.intervalDays ?? null;
   }
   if (kind === 'specific_days') {
-    const seedRow = { timeOfDay: '', quantity: 1, appliesToDow: null };
-    const doseTimes =
-      carry.doseTimes.length > 0
-        ? carry.doseTimes.map((dt) => ({ ...dt, appliesToDow: dt.appliesToDow ?? 0 }))
-        : [seedRow];
-    const groups = carry.groups.length > 0 ? carry.groups : [0];
-    return { ...carry, kind, doseTimes, groups };
+    base.doseTimes =
+      prior?.doseTimes && prior.doseTimes.length > 0
+        ? prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: dt.appliesToDow ?? 0 }))
+        : [{ timeOfDay: '', quantity: 1, appliesToDow: 0 }];
+    base.groups = prior?.groups && prior.groups.length > 0 ? prior.groups : [0];
+  } else {
+    base.doseTimes =
+      prior?.doseTimes && prior.doseTimes.length > 0
+        ? prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: null }))
+        : [{ timeOfDay: '', quantity: 1, appliesToDow: null }];
   }
-  // every_day, cyclical, every_few_days
-  const doseTimes =
-    carry.doseTimes.length > 0
-      ? carry.doseTimes.map((dt) => ({ ...dt, appliesToDow: null }))
-      : [{ timeOfDay: '', quantity: 1, appliesToDow: null }];
-  return { ...carry, kind, doseTimes, groups: [] };
+  return base;
 }
 
 export const ALL_CADENCE_KINDS = CADENCE_KINDS;

@@ -145,7 +145,13 @@ export function MedicationWizard({ fromScan }: Props) {
           await requestNotificationPermission();
         }
       }
-      void rescheduleAll();
+      await rescheduleAll();
+      const dest = fromScan
+        ? '/me/medications/scan'
+        : result.id
+          ? `/me/medications?added=${result.id}`
+          : '/me/medications';
+      router.push(dest);
     });
   }
 

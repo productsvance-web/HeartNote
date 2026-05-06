@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   addMedication,
   updateMedication,
@@ -124,6 +125,7 @@ export function MedicationForm({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const lastLookedUpRef = useRef<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     const name = drugName.trim();
@@ -203,10 +205,15 @@ export function MedicationForm({
         if (!result.ok) {
           setError(result.error);
           resolve({ ok: false, error: result.error });
-        } else {
-          void syncNotifications(forDraft);
-          resolve({ ok: true });
+          return;
         }
+        await syncNotifications(forDraft);
+        const dest =
+          mode === 'new' && result.id
+            ? `/me/medications?added=${result.id}`
+            : '/me/medications';
+        router.push(dest);
+        resolve({ ok: true });
       });
     });
   }
@@ -224,8 +231,12 @@ export function MedicationForm({
     if (!medicationId) return;
     startTransition(async () => {
       const result = await restartMedication(medicationId);
-      if (!result.ok) setError(result.error);
-      else void rescheduleAll();
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      void rescheduleAll();
+      router.push(`/me/medications/${medicationId}`);
     });
   }
 
@@ -243,7 +254,7 @@ export function MedicationForm({
       <CadenceFlow
         drugLabel={drugName.trim() || 'this medication'}
         initial={draft}
-        confirmReplace={mode === 'edit' && (initial?.doseTimes?.length ?? 0) > 0}
+        confirmReplace={mode === 'edit'}
         onCancel={() => setEditingCadence(false)}
         onSave={async (next) => {
           const result = await submit(next);
