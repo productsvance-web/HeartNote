@@ -83,6 +83,7 @@ const MedicationPayloadSchema = z
     intervalDays: z.number().int().min(2).max(30).nullable(),
     doseTimes: z.array(DoseTimeSchema).max(24),
     startedAt: z.string().optional(),
+    endedAt: z.string().optional(),
     notes: z.string().trim().max(1000).optional().or(z.literal('')),
     ndc: z.string().nullable().optional(),
     rxcui: z.string().nullable().optional(),
@@ -201,6 +202,7 @@ interface RpcPayload {
   drug_class: string;
   dose: string | null;
   started_at: string | null;
+  ended_at: string | null;
   stopped_at: string | null;
   notes: string | null;
   ndc: string | null;
@@ -235,6 +237,7 @@ function buildRpcPayload(args: {
     drug_class: drugClass,
     dose: v.dose ? v.dose.trim() : null,
     started_at: v.startedAt || null,
+    ended_at: v.endedAt || null,
     stopped_at: null,
     notes: v.notes ? v.notes.trim() : null,
     ndc: v.ndc ?? null,

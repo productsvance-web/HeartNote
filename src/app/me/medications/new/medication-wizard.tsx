@@ -112,10 +112,8 @@ export function MedicationWizard({ fromScan }: Props) {
       cycleOnDays: cadence.cycleOnDays,
       cycleOffDays: cadence.cycleOffDays,
       intervalDays: cadence.intervalDays,
-      startedAt:
-        cadence.kind === 'cyclical' || cadence.kind === 'every_few_days'
-          ? cadence.startedAt
-          : state.startedAt,
+      startedAt: cadence.kind === 'as_needed' ? '' : cadence.startedAt || state.startedAt,
+      endedAt: cadence.kind === 'as_needed' ? '' : cadence.endedAt,
       notes: state.notes,
       doseTimes: cadence.doseTimes.map((dt, i) => ({
         timeOfDay: dt.timeOfDay,
@@ -232,6 +230,7 @@ export function MedicationWizard({ fromScan }: Props) {
           <CadenceFlow
             drugLabel={state.selection?.kind ? state.selection.name : 'this medication'}
             initial={state.cadence}
+            form={state.form}
             onCancel={goBack}
             onSave={async (next) => {
               setState((s) => ({ ...s, cadence: next }));

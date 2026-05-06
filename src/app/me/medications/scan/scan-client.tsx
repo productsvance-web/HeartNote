@@ -190,10 +190,8 @@ export function ScanClient() {
         cycleOnDays: draft.cycleOnDays,
         cycleOffDays: draft.cycleOffDays,
         intervalDays: draft.intervalDays,
-        startedAt:
-          draft.kind === 'cyclical' || draft.kind === 'every_few_days'
-            ? draft.startedAt
-            : '',
+        startedAt: draft.kind === 'as_needed' ? '' : draft.startedAt,
+        endedAt: draft.kind === 'as_needed' ? '' : draft.endedAt,
         doseTimes: draft.doseTimes.map((dt, i) => ({
           timeOfDay: dt.timeOfDay,
           quantity: dt.quantity,
@@ -201,7 +199,21 @@ export function ScanClient() {
           appliesToDow: dt.appliesToDow,
         })),
       };
-      const result = await addExtractedMedications([payload]);
+      // Belt-and-suspenders: convert thrown server-action exceptions
+      // (network blip, classifier rejection, missing migration, etc.)
+      // into a returned `{ ok: false }` so the cadence flow's error
+      // banner renders the failure instead of letting it propagate to
+      // React's error boundary. Surface the underlying error message
+      // so missing-migration and similar diagnostic cases are visible
+      // in the UI rather than swallowed behind a generic toast.
+      let result: Awaited<ReturnType<typeof addExtractedMedications>>;
+      try {
+        result = await addExtractedMedications([payload]);
+      } catch (err) {
+        console.error('saveHeadWithCadence threw', err);
+        const detail = err instanceof Error ? err.message : 'unknown error';
+        return { ok: false, error: `Could not save schedule: ${detail}` };
+      }
       if (result.failedIndexes.length === 0) {
         if (draft.kind !== 'as_needed') {
           const state = await checkPermissionState();
@@ -443,6 +455,7 @@ export function ScanClient() {
       {cadenceForHead ? (
         <CadenceFlow
           drugLabel={toTitleCase(headMed.drug_name.trim() || headMed.canonicalName || 'this medication')}
+          form={headMed.form}
           allowSkip
           saving={savingCadence}
           onCancel={() => setCadenceForHead(false)}

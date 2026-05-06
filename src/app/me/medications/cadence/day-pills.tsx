@@ -22,12 +22,18 @@ export function DayPills({ bitmap, claimedByOthers, onChange }: Props) {
             type="button"
             onClick={() => {
               if (disabled) return;
+              // Apple Health rule: tap on the only selected day in a group
+              // is a silent no-op. Users delete groups via the explicit
+              // "Remove group" link, not by deselecting all days. Makes the
+              // bitmap=0-with-dose-times broken state unreachable from
+              // interaction.
+              if (isOn && bitmap === dow.bit) return;
               onChange(isOn ? bitmap & ~dow.bit : bitmap | dow.bit);
             }}
             disabled={disabled}
             aria-pressed={isOn}
             aria-label={dow.long}
-            className={`flex-1 h-10 rounded-full text-xs font-semibold transition-colors ${
+            className={`flex-1 aspect-square rounded-full text-xs font-semibold transition-colors ${
               isOn
                 ? 'bg-foreground text-background'
                 : disabled

@@ -35,6 +35,7 @@ interface MedRow {
   cycle_off_days: number | null;
   interval_days: number | null;
   started_at: string | null;
+  ended_at: string | null;
   stopped_at: string | null;
   dose_times: Array<{
     time_of_day: string;
@@ -51,7 +52,7 @@ async function fetchActiveMeds(): Promise<MedRow[]> {
   const { data } = await supabase
     .from('medications')
     .select(
-      'id, cadence_kind, cycle_on_days, cycle_off_days, interval_days, started_at, stopped_at, dose_times:medication_dose_times(time_of_day, quantity, ordinal, applies_to_dow)'
+      'id, cadence_kind, cycle_on_days, cycle_off_days, interval_days, started_at, ended_at, stopped_at, dose_times:medication_dose_times(time_of_day, quantity, ordinal, applies_to_dow)'
     )
     .is('stopped_at', null);
   return (data ?? []).map((m) => ({
@@ -61,6 +62,7 @@ async function fetchActiveMeds(): Promise<MedRow[]> {
     cycle_off_days: m.cycle_off_days,
     interval_days: m.interval_days,
     started_at: m.started_at,
+    ended_at: m.ended_at,
     stopped_at: m.stopped_at,
     dose_times: m.dose_times ?? [],
   }));
@@ -71,7 +73,7 @@ async function fetchOneMed(medicationId: string): Promise<MedRow | null> {
   const { data } = await supabase
     .from('medications')
     .select(
-      'id, cadence_kind, cycle_on_days, cycle_off_days, interval_days, started_at, stopped_at, dose_times:medication_dose_times(time_of_day, quantity, ordinal, applies_to_dow)'
+      'id, cadence_kind, cycle_on_days, cycle_off_days, interval_days, started_at, ended_at, stopped_at, dose_times:medication_dose_times(time_of_day, quantity, ordinal, applies_to_dow)'
     )
     .eq('id', medicationId)
     .single();
@@ -83,6 +85,7 @@ async function fetchOneMed(medicationId: string): Promise<MedRow | null> {
     cycle_off_days: data.cycle_off_days,
     interval_days: data.interval_days,
     started_at: data.started_at,
+    ended_at: data.ended_at,
     stopped_at: data.stopped_at,
     dose_times: data.dose_times ?? [],
   };
@@ -103,10 +106,16 @@ function computeFiresForMed(med: MedRow, from: Date): PlannedFire[] {
   const horizon = new Date(from);
   horizon.setDate(horizon.getDate() + ROLLING_DAYS);
 
+  // Stop scheduling fires past the planned end date. `ended_at` is a
+  // YYYY-MM-DD local date; we treat it as inclusive (fires on the end
+  // date are kept; fires after midnight the following day are dropped).
+  const endDate = med.ended_at ? new Date(med.ended_at + 'T23:59:59') : null;
+
   const cursor = new Date(from);
   cursor.setHours(0, 0, 0, 0);
 
   while (cursor < horizon) {
+    if (endDate && cursor > endDate) break;
     const dowBit = 1 << cursor.getDay();
     const active = isCadenceActiveOnDate({
       cadenceKind: med.cadence_kind as CadenceKind,
