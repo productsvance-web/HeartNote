@@ -464,8 +464,8 @@ function DateRow({
 }) {
   return (
     <div className="px-4 py-3 flex items-center justify-between gap-3">
-      <p className="text-base text-foreground">{label}</p>
-      <div className="flex items-center gap-2">
+      <p className="text-base text-foreground min-w-0 truncate">{label}</p>
+      <div className="flex items-center gap-2 shrink-0">
         <span className="relative inline-block">
           <input
             type="date"
@@ -479,7 +479,10 @@ function DateRow({
             </span>
           )}
         </span>
-        {value && (
+        {/* Always reserve the clear-button slot so the date pill sits in
+            the same column whether or not a value is set. The slot is
+            an invisible spacer when empty; tapping it does nothing. */}
+        {value ? (
           <button
             type="button"
             onClick={() => onChange('')}
@@ -488,6 +491,8 @@ function DateRow({
           >
             <X size={12} strokeWidth={3} />
           </button>
+        ) : (
+          <span className="h-6 w-6 shrink-0" aria-hidden="true" />
         )}
       </div>
     </div>
