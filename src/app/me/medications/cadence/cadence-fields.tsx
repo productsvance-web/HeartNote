@@ -642,22 +642,19 @@ function DoseTimeRow({
 }) {
   const [editingQty, setEditingQty] = useState(false);
   const [qtyDraft, setQtyDraft] = useState(String(value.quantity));
-  const [qtyError, setQtyError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   function commitQty() {
+    // Silent form validation: revert on anything other than a positive
+    // decimal. Negatives, scientific notation, NaN, empty all just snap
+    // back to the previous quantity. The decimal-regex gate also catches
+    // "1e2" (which Number() would parse to 100) — same reasoning as
+    // before, just no toast about it.
     const trimmed = qtyDraft.trim();
-    if (!QTY_DECIMAL.test(trimmed)) {
-      setQtyError('Enter a positive number, e.g. 1 or 0.5.');
-      return;
-    }
     const n = Number(trimmed);
-    if (!Number.isFinite(n) || n <= 0) {
-      setQtyError('Enter a positive number, e.g. 1 or 0.5.');
-      return;
+    if (QTY_DECIMAL.test(trimmed) && Number.isFinite(n) && n > 0) {
+      onChange({ ...value, quantity: n });
     }
-    onChange({ ...value, quantity: n });
-    setQtyError(null);
     setEditingQty(false);
   }
 
@@ -701,20 +698,16 @@ function DoseTimeRow({
             inputMode="decimal"
             autoFocus
             value={qtyDraft}
-            onChange={(e) => {
-              setQtyDraft(e.target.value);
-              if (qtyError) setQtyError(null);
-            }}
+            onChange={(e) => setQtyDraft(e.target.value)}
             onBlur={commitQty}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commitQty();
               if (e.key === 'Escape') {
                 setQtyDraft(String(value.quantity));
-                setQtyError(null);
                 setEditingQty(false);
               }
             }}
-            className="ml-auto w-20 rounded-full bg-muted/50 px-3 py-1.5 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="ml-auto w-20 bg-transparent text-sm font-semibold text-primary text-right focus:outline-none"
           />
         ) : (
           <button
@@ -723,15 +716,12 @@ function DoseTimeRow({
               setQtyDraft(String(value.quantity));
               setEditingQty(true);
             }}
-            className="ml-auto text-sm font-semibold text-foreground underline underline-offset-2 whitespace-nowrap"
+            className="ml-auto text-sm font-semibold text-primary whitespace-nowrap"
           >
             {formatQuantity(value.quantity, noun)}
           </button>
         )}
       </div>
-      {qtyError && (
-        <p className="text-xs text-destructive mt-1 ml-[34px]">{qtyError}</p>
-      )}
     </div>
   );
 }
