@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3001 --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
+    "dev": "NODE_TLS_REJECT_UNAUTHORIZED=0 next dev -H 0.0.0.0 -p 3001 --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem",
     "prebuild": "node --experimental-strip-types scripts/validate-rxnorm-index.ts",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3001",
