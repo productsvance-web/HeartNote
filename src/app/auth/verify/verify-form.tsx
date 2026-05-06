@@ -87,7 +87,7 @@ export function VerifyForm({ email }: { email: string }) {
 
   return (
     <div className="space-y-4">
-      <form ref={formRef} action={verifyCode} className="space-y-3">
+      <form ref={formRef} action={verifyCode} className="space-y-3" suppressHydrationWarning>
         <input type="hidden" name="email" value={email} />
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">6-digit code</span>

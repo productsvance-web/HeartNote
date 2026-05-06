@@ -38,7 +38,7 @@ function EmailSubmit() {
 export function LoginForm() {
   return (
     <div className="space-y-4">
-      <form action={signInWithGoogle.bind(null, '/login')}>
+      <form action={signInWithGoogle.bind(null, '/login')} suppressHydrationWarning>
         <GoogleSubmit />
       </form>
 
@@ -48,7 +48,7 @@ export function LoginForm() {
         <div className="flex-1 h-px bg-border" />
       </div>
 
-      <form action={sendOtp} className="space-y-3">
+      <form action={sendOtp} className="space-y-3" suppressHydrationWarning>
         <label className="block space-y-1.5">
           <span className="text-sm font-medium">Email</span>
           <input
