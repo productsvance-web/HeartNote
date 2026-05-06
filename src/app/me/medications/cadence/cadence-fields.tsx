@@ -432,26 +432,26 @@ function DurationCard({
       <p className="text-sm font-medium text-foreground mb-2">Duration</p>
       <div className="rounded-2xl bg-card shadow-card p-4">
         <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">
+          <label className="block space-y-1.5">
+            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
               Start date
             </span>
             <input
               type="date"
               value={draft.startedAt}
               onChange={(e) => onChange({ ...draft, startedAt: e.target.value })}
-              className="w-full bg-transparent text-base font-semibold text-foreground focus:outline-none"
+              className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </label>
-          <label className="block">
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">
+          <label className="block space-y-1.5">
+            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
               End date
             </span>
             <input
               type="date"
               value={draft.endedAt}
               onChange={(e) => onChange({ ...draft, endedAt: e.target.value })}
-              className="w-full bg-transparent text-base font-semibold text-foreground focus:outline-none"
+              className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </label>
         </div>
