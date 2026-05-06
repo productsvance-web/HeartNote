@@ -29,7 +29,6 @@ function ocrMed(overrides: Partial<ExtractedMed> = {}): ExtractedMed {
     drug_name: 'MIDODRINE HCL 2.5MG TABS',
     dose_value: 2.5,
     dose_unit: 'mg',
-    doses_per_day: 3,
     ndc: '72888-0112-01',
     is_dose_change: false,
     ...overrides,

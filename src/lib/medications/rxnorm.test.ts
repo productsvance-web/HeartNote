@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import {
   getDrugDetails,
   FORM_COUNT_NOUN,
+  normalizeForm,
   type DrugSearchResult,
 } from './rxnorm.ts';
 import { searchByIndex } from './rxnorm-search.ts';
@@ -44,6 +45,38 @@ describe('FORM_COUNT_NOUN', () => {
     assert.equal(FORM_COUNT_NOUN['Ointment'], undefined);
     assert.equal(FORM_COUNT_NOUN['Oral Solution'], undefined);
     assert.equal(FORM_COUNT_NOUN['Injectable Solution'], undefined);
+  });
+});
+
+describe('normalizeForm', () => {
+  it('maps the tablet variants to "tablet"', () => {
+    assert.equal(normalizeForm('Oral Tablet'), 'tablet');
+    assert.equal(normalizeForm('Sublingual Tablet'), 'tablet');
+    assert.equal(normalizeForm('Extended Release Oral Tablet'), 'tablet');
+    assert.equal(normalizeForm('Delayed Release Oral Tablet'), 'tablet');
+  });
+
+  it('maps the capsule variants to "capsule"', () => {
+    assert.equal(normalizeForm('Oral Capsule'), 'capsule');
+    assert.equal(normalizeForm('Extended Release Oral Capsule'), 'capsule');
+    assert.equal(normalizeForm('Delayed Release Oral Capsule'), 'capsule');
+  });
+
+  it('maps "Oral Solution" to "solution" and "Injectable Solution" to "injection"', () => {
+    assert.equal(normalizeForm('Oral Solution'), 'solution');
+    assert.equal(normalizeForm('Injectable Solution'), 'injection');
+  });
+
+  it('returns null for null input', () => {
+    assert.equal(normalizeForm(null), null);
+  });
+
+  it('lowercase passthrough for unmapped forms — never crashes display', () => {
+    assert.equal(normalizeForm('Some Future Form'), 'some future form');
+  });
+
+  it('treats empty string as null (matches "no form known" semantics)', () => {
+    assert.equal(normalizeForm(''), null);
   });
 });
 
