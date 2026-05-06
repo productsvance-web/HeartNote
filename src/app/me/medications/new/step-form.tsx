@@ -10,9 +10,9 @@ import type { DrugSelection } from './wizard-types';
 //   2. RxNorm path with a failed/empty getDrugDetails — the AC asks for
 //      a "universal fallback list" so the user can still proceed.
 //
-// Top three are the common ambulatory forms; the rest hide behind
+// Top two are the most common ambulatory forms; the rest hide behind
 // "Show more" to keep the initial view scannable on a phone.
-const FALLBACK_TOP = ['Oral Tablet', 'Oral Capsule', 'Oral Solution'] as const;
+const FALLBACK_TOP = ['Oral Tablet', 'Oral Capsule'] as const;
 const FALLBACK_REST = [
   '24 HR Transdermal Patch',
   'Chewable Tablet',
@@ -28,6 +28,7 @@ const FALLBACK_REST = [
   'Lotion',
   'Nasal Spray',
   'Ointment',
+  'Oral Solution',
   'Oral Suspension',
   'Rectal Suppository',
   'Sublingual Spray',
@@ -71,9 +72,10 @@ export function StepForm({
       ? selection.ingredient
       : null;
 
-  // Brand-picked + RxNorm returned a preselectedForm: top is just that one,
-  // rest of brand-supported forms are under Show more. Otherwise every
-  // returned form shows alphabetically.
+  // Top 2 forms shown by default; rest under "Show more". Brand path
+  // pins its preselected form as #1 (Apple's pattern); the second slot
+  // and tail come from rxnorm.ts's commonness ranking. Generic path
+  // takes the top 2 from that same ranking directly.
   let topForms: readonly string[] = [];
   let restForms: readonly string[] = [];
   if (usingFallback) {
@@ -82,11 +84,12 @@ export function StepForm({
   } else if (drugDetails) {
     const all = drugDetails.forms.map((f) => f.name);
     if (selection.kind === 'rxnorm' && selection.type === 'brand' && drugDetails.preselectedForm) {
-      topForms = [drugDetails.preselectedForm];
-      restForms = all.filter((n) => n !== drugDetails.preselectedForm);
+      const without = all.filter((n) => n !== drugDetails.preselectedForm);
+      topForms = [drugDetails.preselectedForm, ...without.slice(0, 1)];
+      restForms = without.slice(1);
     } else {
-      topForms = all;
-      restForms = [];
+      topForms = all.slice(0, 2);
+      restForms = all.slice(2);
     }
   }
 
