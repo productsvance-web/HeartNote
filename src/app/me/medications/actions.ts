@@ -65,7 +65,7 @@ const DoseTimeSchema = z.object({
   appliesToDow: z.number().int().min(1).max(127).nullable(),
 });
 
-export const MedicationPayloadSchema = z
+const MedicationPayloadSchema = z
   .object({
     drugName: z.string().trim().min(1, 'Name is required').max(200),
     dose: z
