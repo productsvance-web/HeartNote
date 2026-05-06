@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
     '10.0.0.29',
     '10.0.0.*',
     '192.168.*.*',
+    // Cloudflare Quick Tunnels (free, ephemeral). URLs are random per session
+    // — wildcard the subdomain so we don't have to update this on each spin-up.
+    '*.trycloudflare.com',
   ],
 
   async headers() {
