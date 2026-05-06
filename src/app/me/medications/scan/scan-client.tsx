@@ -10,6 +10,11 @@ import { addExtractedMedications, type MedicationPayload } from '../actions';
 import { extractedMedToPayload } from './extracted-to-payload';
 import { CadenceFlow, type CadenceDraft } from '../cadence/cadence-flow';
 import { toTitleCase } from './extracted-to-payload';
+import {
+  rescheduleAll,
+  requestNotificationPermission,
+  checkPermissionState,
+} from '@/lib/medications/notifications';
 
 // Compresses an image data URL down to ~800KB at max 1280px on the long
 // edge, JPEG quality 0.8. Pure browser code — Canvas + toDataURL. Runs
@@ -198,6 +203,13 @@ export function ScanClient() {
       };
       const result = await addExtractedMedications([payload]);
       if (result.failedIndexes.length === 0) {
+        if (draft.kind !== 'as_needed') {
+          const state = await checkPermissionState();
+          if (state === 'prompt' || state === 'prompt-with-rationale') {
+            await requestNotificationPermission();
+          }
+        }
+        void rescheduleAll();
         advanceHead();
         return { ok: true };
       }

@@ -1,12 +1,13 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import {
   CADENCE_KINDS,
   DOW_ALL,
   type CadenceKind,
 } from '@/lib/medications/cadence';
+import { checkPermissionState } from '@/lib/medications/notifications';
 import { DayPills } from './day-pills';
 
 export interface DraftDoseTime {
@@ -48,6 +49,19 @@ const KIND_TITLES: Record<CadenceKind, string> = {
 };
 
 export function CadenceFields({ draft, onChange, onBack, onSave, saving, error, drugLabel }: Props) {
+  const [reminderDenied, setReminderDenied] = useState(false);
+  useEffect(() => {
+    if (draft.kind === 'as_needed') return;
+    let cancelled = false;
+    void checkPermissionState().then((state) => {
+      if (!cancelled) setReminderDenied(state === 'denied');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.kind]);
+  const showReminderDenied = reminderDenied && draft.kind !== 'as_needed';
+
   return (
     <div className="space-y-5">
       <button
@@ -87,6 +101,12 @@ export function CadenceFields({ draft, onChange, onBack, onSave, saving, error, 
 
       {error && (
         <p className="text-sm text-destructive bg-destructive/10 rounded-lg px-3 py-2">{error}</p>
+      )}
+
+      {showReminderDenied && (
+        <p className="text-xs text-muted-foreground bg-muted/60 rounded-lg px-3 py-2">
+          Reminders blocked. Enable in Settings → Notifications → HeartNote.
+        </p>
       )}
 
       <button

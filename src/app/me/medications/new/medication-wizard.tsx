@@ -6,6 +6,11 @@ import { ChevronLeft, X } from 'lucide-react';
 import { getDrugDetails } from '@/lib/medications/rxnorm';
 import { addMedication, type MedicationPayload } from '../actions';
 import { CadenceFlow, type CadenceDraft } from '../cadence/cadence-flow';
+import {
+  rescheduleAll,
+  requestNotificationPermission,
+  checkPermissionState,
+} from '@/lib/medications/notifications';
 import { StepSearch } from './step-search';
 import { StepForm } from './step-form';
 import { StepStrength } from './step-strength';
@@ -130,7 +135,17 @@ export function MedicationWizard({ fromScan }: Props) {
     setSaveError(null);
     startTransition(async () => {
       const result = await addMedication(payload);
-      if (!result.ok) setSaveError(result.error);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return;
+      }
+      if (state.cadence.kind !== 'as_needed') {
+        const ps = await checkPermissionState();
+        if (ps === 'prompt' || ps === 'prompt-with-rationale') {
+          await requestNotificationPermission();
+        }
+      }
+      void rescheduleAll();
     });
   }
 

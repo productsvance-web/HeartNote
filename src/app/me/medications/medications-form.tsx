@@ -16,6 +16,12 @@ import {
   formatCadenceSummary,
   type CadenceKind,
 } from '@/lib/medications/cadence';
+import {
+  rescheduleAll,
+  requestNotificationPermission,
+  checkPermissionState,
+  cancelNotificationsForMed,
+} from '@/lib/medications/notifications';
 
 type Mode = 'new' | 'edit';
 
@@ -160,6 +166,19 @@ export function MedicationForm({
     };
   }
 
+  async function syncNotifications(forDraft: CadenceDraft) {
+    if (forDraft.kind === 'as_needed') {
+      // Re-balance to drop any stale fires for this med.
+      await rescheduleAll();
+      return;
+    }
+    const state = await checkPermissionState();
+    if (state === 'prompt' || state === 'prompt-with-rationale') {
+      await requestNotificationPermission();
+    }
+    await rescheduleAll();
+  }
+
   function submit(forDraft: CadenceDraft = draft): Promise<{ ok: true } | { ok: false; error: string }> {
     setError(null);
     return new Promise((resolve) => {
@@ -171,6 +190,7 @@ export function MedicationForm({
             setError(result.error ?? 'Save failed');
             resolve({ ok: false, error: result.error ?? 'Save failed' });
           } else {
+            void syncNotifications(forDraft);
             onSaved?.();
             resolve({ ok: true });
           }
@@ -184,6 +204,7 @@ export function MedicationForm({
           setError(result.error);
           resolve({ ok: false, error: result.error });
         } else {
+          void syncNotifications(forDraft);
           resolve({ ok: true });
         }
       });
@@ -195,6 +216,7 @@ export function MedicationForm({
     startTransition(async () => {
       const result = await stopMedication(medicationId);
       if (!result.ok) setError(result.error);
+      else void cancelNotificationsForMed(medicationId);
     });
   }
 
@@ -203,6 +225,7 @@ export function MedicationForm({
     startTransition(async () => {
       const result = await restartMedication(medicationId);
       if (!result.ok) setError(result.error);
+      else void rescheduleAll();
     });
   }
 

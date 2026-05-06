@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { Camera, ChevronRight, Pill, Plus, Upload } from 'lucide-react';
 import { MED_CLASS_LABEL } from '@/lib/medications/classes';
 import { formatCadenceSummary, type CadenceKind } from '@/lib/medications/cadence';
+import { cancelNotificationsForMed } from '@/lib/medications/notifications';
 import {
   deleteMedications,
   stopMedications,
@@ -149,12 +150,14 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
   function handleStop() {
     if (selectedCount === 0) return;
     setError(null);
+    const ids = Array.from(selected);
     startTransition(async () => {
-      const result = await stopMedications(Array.from(selected));
+      const result = await stopMedications(ids);
       if (!result.ok) {
         setError(result.error);
         return;
       }
+      void Promise.all(ids.map((id) => cancelNotificationsForMed(id)));
       exitEditMode();
       router.refresh();
     });
@@ -185,6 +188,7 @@ export function MedicationsListClient({ active, stopped, patientName, addedId }:
         setError(result.error);
         return;
       }
+      void Promise.all(ids.map((id) => cancelNotificationsForMed(id)));
       setPendingImpact(null);
       exitEditMode();
       router.refresh();

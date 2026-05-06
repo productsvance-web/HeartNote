@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter, Fraunces } from 'next/font/google';
 import './globals.css';
 import { PwaElementsBootstrap } from '@/components/PwaElementsBootstrap';
+import { MedicationNotificationsBootstrap } from '@/components/MedicationNotificationsBootstrap';
 
 const inter = Inter({
   variable: '--font-inter',
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <PwaElementsBootstrap />
+        <MedicationNotificationsBootstrap />
         {children}
       </body>
     </html>
