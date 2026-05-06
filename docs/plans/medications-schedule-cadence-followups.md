@@ -18,6 +18,17 @@ The user wants:
 - Sub-pickers like the interval list also open a sheet on tap (matching the Apple overlay)
 - No more full-screen picker; Save advances to whatever the parent context expects (in scan flow: next med card; in edit flow: back to summary; in wizard: step 5)
 
+### Specific-Days day-pill rule (verified against Apple Health)
+
+Apple Health enforces a **minimum of one day per group** at the input layer — the user cannot deselect the last selected day in a group; the tap is a silent no-op. This is stricter than HeartNote's current behavior (auto-remove the group when its bitmap drops to 0) and is the better UX:
+
+- HeartNote today: tap last selected day → bitmap goes to 0 → group disappears (and via my `setGroupBitmap` patch, its dose-times disappear too). Jarring.
+- Apple's rule: tap last selected day → no-op. Bitmap=0 is unreachable from interaction.
+
+The flatten refactor should adopt Apple's rule. Concretely, in `day-pills.tsx`'s `onChange`, before computing `bitmap & ~dow.bit` (deselect), check whether the resulting bitmap would be 0 *and* the group has dose-times — if so, skip. Adding an explicit "Remove group" button (visible in `apple-specific-days-with-groups.png` as `Remove group` link adjacent to the day-pills row) is the user's path to delete a group entirely, not deselecting its last day.
+
+This rule makes the broken state in `heartnote-current-broken-state.png` unreachable — a group with 0 days + dose-times can no longer exist, which removes the Issue 3 root cause structurally.
+
 ## Issue 2: Form-aware quantity rendering
 
 `formatQuantity()` in `cadence-fields.tsx` currently renders generic "1 dose" / "1.5 doses". We already have `medications.form` populated from RxNorm and `normalizeForm()` mapping it to short names ("tablet", "capsule", "drop", etc.). Plumb `form` from the parent (medication row / scanned-med / wizard state) through `CadenceFlow` → `CadenceFields` → `DoseTimeRow` and render "1 tablet" / "1.5 tablets" / "0.5 capsule".
@@ -26,18 +37,16 @@ Pluralization edge: `0.5` and `1.5` should both pluralize to "tablets" / "capsul
 
 ## Issue 3: "Save schedule" doesn't advance on Vercel preview
 
-**Root cause is likely a UX state-machine bug, not a server bug.** The screenshot `heartnote-current-broken-state.png` shows it: in Specific Days cadence, the user has group 2 claiming all 7 days (all pills dark), leaving group 1's pills disabled (claimed-by-others). But group 1 still has two dose-times entered (6:25 AM and 9:25 AM). Per the Zod refinement in `actions.ts` for `cadence_kind = 'specific_days'`, every dose-time must have a non-null `applies_to_dow`. When group 1's pills go to bitmap=0 (no claim), my recent patch (`setGroupBitmap` auto-removes the group on bitmap→0) should drop the orphaned dose-times — but in this screenshot the dose-times are visibly still there, so the auto-remove isn't catching this entry path.
+**Root cause is a UX state-machine bug, not a server bug.** The screenshot `heartnote-current-broken-state.png` shows it: in Specific Days cadence, group 2 claims all 7 days (pills dark), leaving group 1's pills disabled (claimed-by-others). But group 1 still has two dose-times entered (6:25 AM, 9:25 AM). Per the Zod refinement in `actions.ts` for `cadence_kind = 'specific_days'`, every dose-time must have a non-null `applies_to_dow` ≥ 1. The dose-times in group 1 hit `appliesToDow = 0` (placeholder) when the group has no days picked — Zod rejects on save, the scan-client's `saveHeadWithCadence` swallows the error, and the UI stays on the same screen.
 
-Likely sub-issues to investigate:
-- The "Save schedule" tap triggers Zod rejection ("Pick at least one day for each schedule group" or "Day-of-week is only used for Specific Days schedules"), `addExtractedMedications` returns a `failedIndexes` entry, but `scan-client.tsx`'s `saveHeadWithCadence` doesn't surface the error to the user — silently stays on the same screen
-- The `auto-remove on bitmap=0` patch only fires from `setGroupBitmap`, not from initial-state where a fresh group is added without days
-- Or: the user added times BEFORE picking days for that group, leaving dose-times with `appliesToDow = 0` (not null) which Zod accepts as a bitmap value but represents "no days" — should be a UX guard
+The structural fix is the Apple-Health rule documented under Issue 1 above: prevent bitmap=0 from being reachable in the first place. Once the day-pills component refuses to deselect the last day in a group, this entire bug class is impossible.
 
-Once Issue 1's flatten + sheet refactor is in place, this state should become unreachable: a single source of cadence-state truth + better disjoint enforcement at the UI layer should prevent the empty-group-with-times pattern.
+Belt-and-suspenders sub-fixes worth doing alongside the structural one:
+- Surface the save error in `scan-client.tsx`'s catch path — render `result.errors[0]` the same way the per-card error renders elsewhere in the scan flow. Today the failure is silent.
+- Block the "Add time" affordance for any group with bitmap=0 — a group needs days before it can have times.
+- Audit `setGroupBitmap` for any path that can leave dose-times with `appliesToDow = 0` (the auto-remove patch only fires when an *existing* group's bitmap drops to 0; a fresh-from-newDraft group already starts at 0).
 
-Until then, the immediate fix is to surface the save error in `scan-client.tsx`'s catch path — render the `result.errors[0]` string the same way the per-card error renders elsewhere in the scan flow.
-
-Repro steps: open the latest Vercel preview, sign in, scan a med, set Specific Days cadence, claim all 7 days in group 2 BEFORE adding times to group 1, then add times to group 1, then tap Save schedule. Inspect Network panel — should see the RPC return 400 with a Zod message, but the UI doesn't show it.
+Repro on Vercel preview: sign in, scan a med, pick Specific Days, claim all 7 days in group 2 BEFORE adding times to group 1, then add times to group 1, tap Save schedule. Network panel should show the RPC return with a Zod message; the UI shows nothing.
 
 ## Required reading (in order)
 
