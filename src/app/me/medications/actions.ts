@@ -84,6 +84,13 @@ const MedicationPayloadSchema = z
     scheduleTimes: z.array(z.string().regex(HH_MM, 'Times must be HH:MM')).nullable(),
     startedAt: z.string().optional(), // YYYY-MM-DD or empty
     notes: z.string().trim().max(1000).optional().or(z.literal('')),
+    // Scan-flow only — NDC and the RxNorm fields it resolves to. Wizard
+    // path leaves them undefined; insertOneMedication writes NULL when
+    // either undefined or null is passed.
+    ndc: z.string().nullable().optional(),
+    rxcui: z.string().nullable().optional(),
+    ingredient: z.string().nullable().optional(),
+    form: z.string().nullable().optional(),
   })
   .refine(
     (v) =>
@@ -152,6 +159,10 @@ async function insertOneMedication(
       allowed_strengths: classification.allowedStrengths
         ? (classification.allowedStrengths as unknown as never)
         : null,
+      ndc: v.ndc ?? null,
+      rxcui: v.rxcui ?? null,
+      ingredient: v.ingredient ?? null,
+      form: v.form ?? null,
     })
     .select('id')
     .single();
