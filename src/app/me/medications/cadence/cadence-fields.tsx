@@ -435,31 +435,55 @@ function DurationCard({
       <p className="text-sm font-medium text-foreground mb-2">Duration</p>
       <div className="rounded-2xl bg-card shadow-card p-4">
         <div className="grid grid-cols-2 gap-3">
-          <label className="block space-y-1.5">
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-              Start date
-            </span>
-            <input
-              type="date"
-              value={draft.startedAt}
-              onChange={(e) => onChange({ ...draft, startedAt: e.target.value })}
-              className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-              End date
-            </span>
-            <input
-              type="date"
-              value={draft.endedAt}
-              onChange={(e) => onChange({ ...draft, endedAt: e.target.value })}
-              className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
+          <DateField
+            label="Start date"
+            value={draft.startedAt}
+            onChange={(v) => onChange({ ...draft, startedAt: v })}
+          />
+          <DateField
+            label="End date"
+            value={draft.endedAt}
+            onChange={(v) => onChange({ ...draft, endedAt: v })}
+          />
         </div>
       </div>
     </div>
+  );
+}
+
+// Date pill with a "—" overlay when empty, since `<input type="date">`
+// has no portable placeholder. The overlay sits on top with
+// `pointer-events-none` so taps fall through to the input and trigger
+// the native iOS picker. Once a date is picked, the overlay is no
+// longer rendered.
+function DateField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
+        {label}
+      </span>
+      <span className="relative inline-block">
+        <input
+          type="date"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        {!value && (
+          <span className="absolute inset-0 flex items-center justify-start pl-3 pointer-events-none rounded-full bg-muted/50 text-base font-medium text-muted-foreground">
+            —
+          </span>
+        )}
+      </span>
+    </label>
   );
 }
 

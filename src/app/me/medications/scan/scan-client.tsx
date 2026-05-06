@@ -200,14 +200,19 @@ export function ScanClient() {
         })),
       };
       // Belt-and-suspenders: convert thrown server-action exceptions
-      // (network blip, classifier rejection, etc.) into a returned
-      // `{ ok: false }` so the cadence flow's error banner renders the
-      // failure instead of letting it propagate to React's error boundary.
+      // (network blip, classifier rejection, missing migration, etc.)
+      // into a returned `{ ok: false }` so the cadence flow's error
+      // banner renders the failure instead of letting it propagate to
+      // React's error boundary. Surface the underlying error message
+      // so missing-migration and similar diagnostic cases are visible
+      // in the UI rather than swallowed behind a generic toast.
       let result: Awaited<ReturnType<typeof addExtractedMedications>>;
       try {
         result = await addExtractedMedications([payload]);
-      } catch {
-        return { ok: false, error: 'Could not save schedule. Try again.' };
+      } catch (err) {
+        console.error('saveHeadWithCadence threw', err);
+        const detail = err instanceof Error ? err.message : 'unknown error';
+        return { ok: false, error: `Could not save schedule: ${detail}` };
       }
       if (result.failedIndexes.length === 0) {
         if (draft.kind !== 'as_needed') {
