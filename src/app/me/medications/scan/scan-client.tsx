@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Camera as CameraIcon, Image as ImageIcon, AlertTriangle } from 'lucide-react';
-import type { ExtractedMed } from '@/lib/medications/scan/schema';
+import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import { ScanReviewCard } from './scan-review-card';
 import { addExtractedMedications, type MedicationPayload } from '../actions';
 import { extractedMedToPayload } from './extracted-to-payload';
@@ -38,7 +38,7 @@ type State =
   | { kind: 'processing' }
   | {
       kind: 'review';
-      medications: ExtractedMed[];
+      medications: ResolvedMed[];
       addAllSummary: string | null;
       truncated: boolean;
     }
@@ -121,7 +121,7 @@ export function ScanClient() {
         return;
       }
       const data = (await resp.json()) as {
-        medications: ExtractedMed[];
+        medications: ResolvedMed[];
         truncated?: boolean;
       };
       if (data.medications.length === 0) {
