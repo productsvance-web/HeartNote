@@ -36,16 +36,19 @@ export const IndexConceptSchema = z.object({
 
 export type IndexConcept = z.infer<typeof IndexConceptSchema>;
 
-interface IndexFile {
-  fetchedAt: string;
-  concepts: IndexConcept[];
-}
+const IndexFileSchema = z.object({
+  fetchedAt: z.string(),
+  concepts: z.array(IndexConceptSchema),
+});
 
 const QuerySchema = z.string().trim().min(MIN_QUERY_LEN).max(MAX_QUERY_LEN);
 
-// Module-scope import is parsed once per function instance (Node module cache).
-// The cast is safe because validate-rxnorm-index.ts gates the build.
-const INDEX = indexJson as IndexFile;
+// Module-scope parse runs once per function instance (Node module cache).
+// Throws on a malformed index — surfaces as a server-action rejection, the
+// client's existing .catch() shows the "Couldn't load suggestions" UI.
+// Prebuild validation catches this earlier, but parsing here too means a
+// truncated-mid-deploy file fails fast rather than producing garbage.
+const INDEX = IndexFileSchema.parse(indexJson);
 
 // Server-action entry point. Handles the two boundaries the action needs
 // to enforce: authentication and input validation. Pure in its inputs so

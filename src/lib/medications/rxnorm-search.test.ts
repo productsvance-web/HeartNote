@@ -72,6 +72,28 @@ describe('searchByIndex — "bum" (regression for /approximateTerm bug)', () => 
     );
     assert.deepEqual(offenders, [], 'unexpected consumer brand contamination');
   });
+
+  it('orders tiers correctly: prefix → word-boundary → substring', () => {
+    // Z-Bum is tier-2 (word boundary at the hyphen); Nabumetone is
+    // tier-3 (substring match, no preceding word boundary). When both
+    // appear, Z-Bum must rank above Nabumetone.
+    const zBumIdx = results.findIndex((r) => r.name === 'Z-Bum');
+    const nabumetoneIdx = results.findIndex((r) => r.name === 'Nabumetone');
+    if (zBumIdx >= 0 && nabumetoneIdx >= 0) {
+      assert.ok(
+        zBumIdx < nabumetoneIdx,
+        `Z-Bum (tier 2, idx ${zBumIdx}) should rank above Nabumetone (tier 3, idx ${nabumetoneIdx})`
+      );
+    }
+    // Tier-1 entries (prefix) must precede any tier-3 entry.
+    const bumetanideIdx = results.findIndex((r) => r.name === 'Bumetanide');
+    if (bumetanideIdx >= 0 && nabumetoneIdx >= 0) {
+      assert.ok(
+        bumetanideIdx < nabumetoneIdx,
+        `Bumetanide (tier 1) should rank above Nabumetone (tier 3)`
+      );
+    }
+  });
 });
 
 describe('searchByIndex — full-word ingredient', () => {

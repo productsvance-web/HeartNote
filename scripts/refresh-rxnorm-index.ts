@@ -156,11 +156,6 @@ async function main() {
   const bnCount = concepts.filter((c) => c.tty === 'BN').length;
   console.log(`Got ${concepts.length} concepts (${inCount} IN, ${bnCount} BN)`);
 
-  const inByRxcui = new Map<string, { name: string; rxcui: string }>();
-  for (const c of concepts) {
-    if (c.tty === 'IN') inByRxcui.set(c.rxcui, { name: c.name, rxcui: c.rxcui });
-  }
-
   // Fan out BN→IN lookups. Most BNs have a single IN; some (combinations
   // marketed under one brand) have multiple — we take the first.
   const brands = concepts.filter((c) => c.tty === 'BN');
@@ -170,11 +165,6 @@ async function main() {
     brands,
     MAX_PARALLEL,
     async (b) => {
-      // Local IN lookup short-circuit: if the brand's name matches an IN
-      // exactly (rare but happens), skip the network call.
-      const localMatch = inByRxcui.get(b.rxcui);
-      if (localMatch) return { name: localMatch.name, rxcui: localMatch.rxcui };
-
       const raw = await fetchJsonWithRetry(RELATED_URL(b.rxcui));
       const related = RelatedResponse.safeParse(raw);
       if (!related.success) return null;
