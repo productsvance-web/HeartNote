@@ -307,8 +307,9 @@ interface RelatedResponse {
 // Run `fn` over `items` with at most `limit` promises in flight. Used to
 // stay polite against NLM's 20 rps RxNav rate limit when fanning out TTY
 // or ingredient lookups across search results. Worker-pool pattern —
-// preserves input order in the result array.
-async function mapWithConcurrency<T, R>(
+// preserves input order in the result array. Exported for reuse by
+// scan/extract.ts so the NDC fan-out shares the same concurrency cap.
+export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>
