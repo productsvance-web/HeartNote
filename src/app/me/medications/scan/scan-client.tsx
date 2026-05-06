@@ -56,6 +56,14 @@ export function ScanClient() {
   const [addAllPending, setAddAllPending] = useState(false);
   const searchParams = useSearchParams();
   const autoTriggeredRef = useRef(false);
+  // Signaled by the active card when the caregiver has entered Step 2
+  // inputs that would be lost on Take-another. The ref holds the
+  // bottle's primary name so the discard prompt can echo the target
+  // (per .claude/rules/destructive-actions.md).
+  const dirtyHeadRef = useRef<{ dirty: boolean; primary: string }>({
+    dirty: false,
+    primary: '',
+  });
 
   // Auto-trigger the picker once on mount when entered with ?source=camera
   // or ?source=photos — caregiver tapped Scan or Upload from the previous
@@ -148,13 +156,27 @@ export function ScanClient() {
   }
 
   function reset() {
+    if (dirtyHeadRef.current.dirty) {
+      const ok = window.confirm(
+        `Discard the schedule you entered for ${dirtyHeadRef.current.primary}?`
+      );
+      if (!ok) return;
+    }
+    dirtyHeadRef.current = { dirty: false, primary: '' };
     setState({ kind: 'capture' });
+  }
+
+  function handleDirtyChange(dirty: boolean, primary: string) {
+    dirtyHeadRef.current = { dirty, primary };
   }
 
   // Pop the head of the review queue. Called by both the per-card
   // success path (onAdded) and the per-card skip path. When the queue
   // empties, return to capture so the caregiver can scan again.
   function advanceHead() {
+    // The head card is leaving — its dirty signal is no longer
+    // applicable. Clear the ref so the next card starts clean.
+    dirtyHeadRef.current = { dirty: false, primary: '' };
     setState((s) => {
       if (s.kind !== 'review') return s;
       const next = s.medications.slice(1);
@@ -198,7 +220,7 @@ export function ScanClient() {
         );
         const summary =
           result.failedIndexes.length === 0
-            ? `${result.added} added. Set times in Medications when ready.`
+            ? `${result.added} added. Set reminder times in Medications when ready.`
             : `${result.added} added, ${result.failedIndexes.length} need a fix.`;
         if (next.length === 0) {
           return { kind: 'capture' };
@@ -396,6 +418,7 @@ export function ScanClient() {
         disabled={addAllPending}
         position={state.totalAtScan > 1 ? position : null}
         totalCount={state.totalAtScan}
+        onDirtyChange={handleDirtyChange}
       />
 
       {/* Empathetic note: navigation away drops scan state. */}

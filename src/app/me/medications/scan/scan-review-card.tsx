@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Plus, Trash2 } from 'lucide-react';
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import { normalizeForm } from '@/lib/medications/rxnorm';
@@ -26,9 +26,21 @@ interface Props {
   // time. Null when only one med was detected (no progress indicator).
   position: number | null;
   totalCount: number;
+  // Reports whether the caregiver has entered Step 2 inputs that would
+  // be lost on Take-another / unmount. Parent uses this to gate a
+  // discard-confirm prompt — destructive-actions rule: name the target.
+  onDirtyChange?: (dirty: boolean, primaryName: string) => void;
 }
 
-export function ScanReviewCard({ med, onSkip, onAdded, disabled, position, totalCount }: Props) {
+export function ScanReviewCard({
+  med,
+  onSkip,
+  onAdded,
+  disabled,
+  position,
+  totalCount,
+  onDirtyChange,
+}: Props) {
   if (med.is_dose_change) {
     return (
       <DoseChangeNotice
@@ -47,6 +59,7 @@ export function ScanReviewCard({ med, onSkip, onAdded, disabled, position, total
       disabled={disabled}
       position={position}
       totalCount={totalCount}
+      onDirtyChange={onDirtyChange}
     />
   );
 }
@@ -103,6 +116,7 @@ function TwoStepCard({
   disabled,
   position,
   totalCount,
+  onDirtyChange,
 }: {
   med: ResolvedMed;
   onSkip: () => void;
@@ -110,6 +124,7 @@ function TwoStepCard({
   disabled?: boolean;
   position: number | null;
   totalCount: number;
+  onDirtyChange?: (dirty: boolean, primaryName: string) => void;
 }) {
   const [step, setStep] = useState<'review' | 'schedule'>('review');
   const [times, setTimes] = useState<string[]>([]);
@@ -128,6 +143,15 @@ function TwoStepCard({
     ingredientName.toLowerCase() !== ocrName.toLowerCase()
       ? toTitleCase(ingredientName)
       : null;
+
+  // Tell the parent when the caregiver has entered a schedule that would
+  // be discarded by Take-another. "Dirty" = on Step 2 with at least one
+  // time entered. Cleared when stepping back to review or saving.
+  const dirty = step === 'schedule' && times.length > 0;
+  useEffect(() => {
+    onDirtyChange?.(dirty, primary);
+    return () => onDirtyChange?.(false, primary);
+  }, [dirty, primary, onDirtyChange]);
 
   // Strength / form display. The strength fallback chain matches
   // resolveDose() in extracted-to-payload.ts so what's shown on Step 1
