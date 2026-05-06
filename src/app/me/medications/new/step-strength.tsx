@@ -43,15 +43,19 @@ export function StepStrength({
   );
 
   // Pre-fill the lowest available strength for the chosen form so the
-  // step opens with a sensible default (e.g., albuterol MDI → "0.09
-  // mg/actuat"). Only fires when the parent has no strength set, so a
+  // step opens with a sensible default (e.g., albuterol MDI → "90
+  // mcg/actuat"). Only fires when the parent has no strength set, so a
   // user navigating back to step 3 with a previously-typed value isn't
-  // overwritten.
+  // overwritten. `onChange` is excluded from deps deliberately — the
+  // wizard parent passes an inline arrow whose identity changes each
+  // render, which would re-run this effect every render. The guard is
+  // strength-driven, not callback-driven.
   useEffect(() => {
     if (strength.length === 0 && formStrengths.length > 0) {
       onChange(formatChipForDose(formStrengths[0]));
     }
-  }, [strength, formStrengths, onChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strength, formStrengths]);
 
   const drugName = selection?.kind === 'rxnorm' || selection?.kind === 'custom'
     ? selection.name
@@ -134,9 +138,12 @@ export function StepStrength({
   );
 }
 
-// Manual number + unit field. Splits the formatted dose string on the
-// space between value and unit so the controls re-hydrate when a user
-// goes back to step 3 or toggles in from a chip.
+// Manual number + unit field. Fully controlled — value+unit are derived
+// from the parent's `strength` prop on every render. Internal state
+// mirroring the prop hid the auto-prefill on first paint (the prefill
+// fired post-mount but useState initializers had already captured the
+// empty value). Splitting on each render is cheap and removes the
+// prop-vs-state divergence class entirely.
 function ManualStrength({
   strength,
   onChange,
@@ -149,16 +156,13 @@ function ManualStrength({
   // strength, pills are `mg`.
   fallback: boolean;
 }) {
-  const initialValue = strength.trim().split(/\s+/)[0] ?? '';
-  const initialUnit =
-    strength.trim().split(/\s+/).slice(1).join(' ').toLowerCase() ||
+  const trimmed = strength.trim();
+  const value = trimmed.split(/\s+/)[0] ?? '';
+  const unit =
+    trimmed.split(/\s+/).slice(1).join(' ').toLowerCase() ||
     (fallback ? '%' : 'mg');
-  const [value, setValue] = useState(initialValue);
-  const [unit, setUnit] = useState(initialUnit);
 
   function emit(nextValue: string, nextUnit: string) {
-    setValue(nextValue);
-    setUnit(nextUnit);
     onChange(nextValue.trim() ? `${nextValue.trim()} ${nextUnit}` : '');
   }
 
@@ -214,8 +218,13 @@ function formatChipForDose(strength: string): string {
     (match, num) => {
       const value = parseFloat(num);
       if (!Number.isFinite(value) || value >= 1) return match;
-      const mcg = Math.round(value * 1000);
-      return `${mcg} MCG`;
+      // Preserve one decimal so half-mcg strengths (levothyroxine 12.5
+      // mcg = 0.0125 MG) survive the conversion. Round-half-up at the
+      // 0.1-mcg place; trim a trailing ".0" so "90.0 MCG" reads as "90
+      // MCG".
+      const mcg = Math.round(value * 10000) / 10;
+      const display = Number.isInteger(mcg) ? String(mcg) : mcg.toFixed(1);
+      return `${display} MCG`;
     }
   );
   return promoted.replace(/\b(MG|MCG|G|ML|L|MEQ)\b/g, (m) => m.toLowerCase());
