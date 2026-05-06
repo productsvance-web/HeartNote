@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MinusCircle, PlusCircle, Check } from 'lucide-react';
+import { Minus, Plus, Check } from 'lucide-react';
 import {
   CADENCE_KINDS,
   DOW_ALL,
@@ -361,7 +361,9 @@ function AtWhatTimeCard({
           }
           className="flex items-center gap-2 text-sm font-semibold text-foreground"
         >
-          <PlusCircle size={20} className="text-status-good" />
+          <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
+            <Plus size={14} strokeWidth={3} className="text-white" />
+          </span>
           Add a Time
         </button>
       </div>
@@ -594,7 +596,9 @@ function SpecificDaysGroups({
                   onClick={() => addRowToGroup(g.bitmap)}
                   className="flex items-center gap-2 text-sm font-semibold text-foreground"
                 >
-                  <PlusCircle size={20} className="text-status-good" />
+                  <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
+                    <Plus size={14} strokeWidth={3} className="text-white" />
+                  </span>
                   Add a Time
                 </button>
               )}
@@ -664,10 +668,10 @@ function DoseTimeRow({
           <button
             type="button"
             onClick={onRemove}
-            className="text-destructive shrink-0"
+            className="shrink-0 inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-destructive"
             aria-label="Remove time"
           >
-            <MinusCircle size={22} />
+            <Minus size={14} strokeWidth={3} className="text-white" />
           </button>
         ) : (
           // Reserve the leading slot so the time pill stays in the same
@@ -689,7 +693,7 @@ function DoseTimeRow({
               // ignore
             }
           }}
-          className="flex-1 rounded-full border border-border bg-background px-4 py-2.5 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
         {editingQty ? (
           <input
@@ -710,7 +714,7 @@ function DoseTimeRow({
                 setEditingQty(false);
               }
             }}
-            className="w-20 rounded-full border border-border bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="ml-auto w-20 rounded-full bg-muted/50 px-3 py-1.5 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         ) : (
           <button
@@ -719,7 +723,7 @@ function DoseTimeRow({
               setQtyDraft(String(value.quantity));
               setEditingQty(true);
             }}
-            className="text-sm font-semibold text-foreground underline underline-offset-2 whitespace-nowrap"
+            className="ml-auto text-sm font-semibold text-foreground underline underline-offset-2 whitespace-nowrap"
           >
             {formatQuantity(value.quantity, noun)}
           </button>
@@ -790,10 +794,15 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
   };
   if (kind === 'as_needed') return base;
   if (kind === 'cyclical') {
-    base.cycleOnDays = prior?.cycleOnDays ?? null;
-    base.cycleOffDays = prior?.cycleOffDays ?? null;
+    // Apple Health's defaults for a fresh cyclical schedule. Standard
+    // 21-on / 7-off cadence (e.g., hormonal contraceptive cycle). Carries
+    // forward when the user is editing an existing draft.
+    base.cycleOnDays = prior?.cycleOnDays ?? 21;
+    base.cycleOffDays = prior?.cycleOffDays ?? 7;
   } else if (kind === 'every_few_days') {
-    base.intervalDays = prior?.intervalDays ?? null;
+    // Default to "Every Other Day" (interval=2) so the picker isn't
+    // empty on first land.
+    base.intervalDays = prior?.intervalDays ?? 2;
   }
   if (kind === 'specific_days') {
     if (prior?.kind === 'specific_days' && prior.doseTimes.length > 0) {
