@@ -80,6 +80,7 @@ export function extractedMedToPayload(med: ResolvedMed): MedicationPayload {
     intervalDays: null,
     doseTimes: [],
     startedAt: '',
+    endedAt: '',
     notes: '',
     ndc: med.ndc,
     rxcui: med.rxcui,

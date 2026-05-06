@@ -465,6 +465,7 @@ export type Database = {
           dose: string | null
           drug_class: Database["public"]["Enums"]["med_class"]
           drug_name: string
+          ended_at: string | null
           form: string | null
           id: string
           ingredient: string | null
@@ -486,6 +487,7 @@ export type Database = {
           dose?: string | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name: string
+          ended_at?: string | null
           form?: string | null
           id?: string
           ingredient?: string | null
@@ -507,6 +509,7 @@ export type Database = {
           dose?: string | null
           drug_class?: Database["public"]["Enums"]["med_class"]
           drug_name?: string
+          ended_at?: string | null
           form?: string | null
           id?: string
           ingredient?: string | null

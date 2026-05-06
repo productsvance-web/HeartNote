@@ -24,6 +24,7 @@ export interface CadenceDraft {
   cycleUnit: 'day' | 'week';
   intervalDays: number | null;
   startedAt: string; // YYYY-MM-DD or ''
+  endedAt: string;   // YYYY-MM-DD or ''
   doseTimes: DraftDoseTime[];
   // For specific_days, dose-times are partitioned into "groups" by their
   // bitmap. Group identity = the bitmap of the group's dose-times. We keep
@@ -121,26 +122,68 @@ export function CadenceFields({
 
       <div>
         <p className="text-sm font-medium text-foreground mb-2">When will you take this?</p>
-        <div className="rounded-2xl bg-card shadow-card px-4 py-3 flex items-center justify-between gap-3">
-          <p className="text-base text-foreground flex-1 min-w-0">
-            {KIND_TITLES[draft.kind]}
-          </p>
-          <button
-            type="button"
-            onClick={() => setSheetOpen(true)}
-            className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
-          >
-            Change
-          </button>
+        <div className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-3">
+            <p className="text-base text-foreground flex-1 min-w-0">
+              {KIND_TITLES[draft.kind]}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSheetOpen(true)}
+              className="text-sm font-semibold text-foreground underline underline-offset-2 shrink-0"
+            >
+              Change
+            </button>
+          </div>
+          {draft.kind === 'cyclical' && (
+            <div className="px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-base text-foreground">Every</p>
+              <select
+                value={draft.cycleUnit}
+                onChange={(e) =>
+                  onChange({ ...draft, cycleUnit: e.target.value as 'day' | 'week' })
+                }
+                className="bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
+              >
+                <option value="day">Day</option>
+                <option value="week">Week</option>
+              </select>
+            </div>
+          )}
+          {draft.kind === 'every_few_days' && (
+            <div className="px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-base text-foreground">Interval</p>
+              <select
+                value={draft.intervalDays ?? ''}
+                onChange={(e) =>
+                  onChange({
+                    ...draft,
+                    intervalDays: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+                className="bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
+              >
+                <option value="">Pick…</option>
+                {Array.from({ length: 29 }, (_, i) => i + 2).map((n) => (
+                  <option key={n} value={n}>
+                    Every {n === 2 ? 'other day' : `${n} days`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
-      {draft.kind === 'cyclical' && <CyclicalFields draft={draft} onChange={onChange} />}
-      {draft.kind === 'every_few_days' && <IntervalFields draft={draft} onChange={onChange} />}
-
-      {draft.kind !== 'as_needed' && (
-        <DoseTimesField kind={draft.kind} draft={draft} onChange={onChange} noun={noun} />
+      {draft.kind === 'specific_days' && (
+        <SpecificDaysGroups draft={draft} onChange={onChange} noun={noun} />
       )}
+
+      {draft.kind !== 'as_needed' && draft.kind !== 'specific_days' && (
+        <AtWhatTimeCard draft={draft} onChange={onChange} noun={noun} />
+      )}
+
+      {draft.kind === 'cyclical' && <CycleCard draft={draft} onChange={onChange} />}
 
       {draft.kind !== 'as_needed' && !showReminderDenied && (
         <p className="text-xs text-muted-foreground text-center px-4">
@@ -148,15 +191,8 @@ export function CadenceFields({
         </p>
       )}
 
-      {(draft.kind === 'cyclical' || draft.kind === 'every_few_days') && (
-        <Field label="Start date">
-          <input
-            type="date"
-            className={inputClass}
-            value={draft.startedAt}
-            onChange={(e) => onChange({ ...draft, startedAt: e.target.value })}
-          />
-        </Field>
+      {draft.kind !== 'as_needed' && (
+        <DurationCard draft={draft} onChange={onChange} />
       )}
 
       {error && (
@@ -279,94 +315,22 @@ function KindSheet({
   );
 }
 
-function CyclicalFields({ draft, onChange }: { draft: CadenceDraft; onChange: (d: CadenceDraft) => void }) {
-  const unitLabel = draft.cycleUnit === 'week' ? 'weeks' : 'days';
-  const factor = draft.cycleUnit === 'week' ? 7 : 1;
-  const onValue = draft.cycleOnDays != null ? Math.round(draft.cycleOnDays / factor) : '';
-  const offValue = draft.cycleOffDays != null ? Math.round(draft.cycleOffDays / factor) : '';
-  return (
-    <div className="space-y-3">
-      <Field label="Every">
-        <select
-          className={inputClass}
-          value={draft.cycleUnit}
-          onChange={(e) => onChange({ ...draft, cycleUnit: e.target.value as 'day' | 'week' })}
-        >
-          <option value="day">Day</option>
-          <option value="week">Week</option>
-        </select>
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label={`Use for (${unitLabel})`}>
-          <input
-            type="number"
-            min={1}
-            max={draft.cycleUnit === 'week' ? 52 : 365}
-            className={inputClass}
-            value={onValue}
-            onChange={(e) => {
-              const n = e.target.value === '' ? null : Number(e.target.value);
-              onChange({ ...draft, cycleOnDays: n == null ? null : n * factor });
-            }}
-          />
-        </Field>
-        <Field label={`Pause for (${unitLabel})`}>
-          <input
-            type="number"
-            min={1}
-            max={draft.cycleUnit === 'week' ? 52 : 365}
-            className={inputClass}
-            value={offValue}
-            onChange={(e) => {
-              const n = e.target.value === '' ? null : Number(e.target.value);
-              onChange({ ...draft, cycleOffDays: n == null ? null : n * factor });
-            }}
-          />
-        </Field>
-      </div>
-    </div>
-  );
-}
-
-function IntervalFields({ draft, onChange }: { draft: CadenceDraft; onChange: (d: CadenceDraft) => void }) {
-  return (
-    <Field label="Interval (days)" hint="Fires every N days from the start date.">
-      <select
-        className={inputClass}
-        value={draft.intervalDays ?? ''}
-        onChange={(e) => onChange({ ...draft, intervalDays: e.target.value === '' ? null : Number(e.target.value) })}
-      >
-        <option value="">Pick an interval…</option>
-        {Array.from({ length: 29 }, (_, i) => i + 2).map((n) => (
-          <option key={n} value={n}>
-            Every {n === 2 ? 'other day' : `${n} days`}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-}
-
-function DoseTimesField({
-  kind,
+function AtWhatTimeCard({
   draft,
   onChange,
   noun,
 }: {
-  kind: CadenceKind;
   draft: CadenceDraft;
   onChange: (d: CadenceDraft) => void;
   noun: QtyNoun | null;
 }) {
-  if (kind === 'specific_days') {
-    return <SpecificDaysGroups draft={draft} onChange={onChange} noun={noun} />;
-  }
-  // every_day, cyclical, every_few_days — flat list of (time, quantity) rows.
-  // appliesToDow is null for these kinds.
+  // Flat list of (time, quantity) rows for every_day / cyclical /
+  // every_few_days. specific_days gets its own per-group cards via
+  // SpecificDaysGroups. appliesToDow is null for these kinds.
   return (
-    <div className="space-y-2">
-      <p className="block text-sm font-medium text-foreground">Times</p>
-      <div className="space-y-2">
+    <div>
+      <p className="text-sm font-medium text-foreground mb-2">At what time?</p>
+      <div className="rounded-2xl bg-card shadow-card p-4 space-y-3">
         {draft.doseTimes.map((dt, i) => (
           <DoseTimeRow
             key={i}
@@ -384,20 +348,112 @@ function DoseTimesField({
             }
           />
         ))}
+        <button
+          type="button"
+          onClick={() =>
+            onChange({
+              ...draft,
+              doseTimes: [
+                ...draft.doseTimes,
+                { timeOfDay: currentHhMm(), quantity: 1, appliesToDow: null },
+              ],
+            })
+          }
+          className="flex items-center gap-2 text-sm font-semibold text-foreground"
+        >
+          <PlusCircle size={20} className="text-status-good" />
+          Add a Time
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={() =>
-          onChange({
-            ...draft,
-            doseTimes: [...draft.doseTimes, { timeOfDay: '', quantity: 1, appliesToDow: null }],
-          })
-        }
-        className="flex items-center gap-2 text-sm font-semibold text-foreground"
-      >
-        <PlusCircle size={20} />
-        Add a Time
-      </button>
+    </div>
+  );
+}
+
+function CycleCard({ draft, onChange }: { draft: CadenceDraft; onChange: (d: CadenceDraft) => void }) {
+  const unitLabel = draft.cycleUnit === 'week' ? 'weeks' : 'days';
+  const factor = draft.cycleUnit === 'week' ? 7 : 1;
+  const onValue = draft.cycleOnDays != null ? Math.round(draft.cycleOnDays / factor) : '';
+  const offValue = draft.cycleOffDays != null ? Math.round(draft.cycleOffDays / factor) : '';
+  const max = draft.cycleUnit === 'week' ? 52 : 365;
+  return (
+    <div>
+      <p className="text-sm font-medium text-foreground mb-2">What is the cycle?</p>
+      <div className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
+        <div className="px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-base text-foreground">Use for</p>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min={1}
+              max={max}
+              value={onValue}
+              onChange={(e) => {
+                const n = e.target.value === '' ? null : Number(e.target.value);
+                onChange({ ...draft, cycleOnDays: n == null ? null : n * factor });
+              }}
+              className="w-14 bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
+            />
+            <span className="text-base font-semibold text-foreground">{unitLabel}</span>
+          </div>
+        </div>
+        <div className="px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-base text-foreground">Pause for</p>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min={1}
+              max={max}
+              value={offValue}
+              onChange={(e) => {
+                const n = e.target.value === '' ? null : Number(e.target.value);
+                onChange({ ...draft, cycleOffDays: n == null ? null : n * factor });
+              }}
+              className="w-14 bg-transparent text-base font-semibold text-foreground text-right focus:outline-none"
+            />
+            <span className="text-base font-semibold text-foreground">{unitLabel}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DurationCard({
+  draft,
+  onChange,
+}: {
+  draft: CadenceDraft;
+  onChange: (d: CadenceDraft) => void;
+}) {
+  return (
+    <div>
+      <p className="text-sm font-medium text-foreground mb-2">Duration</p>
+      <div className="rounded-2xl bg-card shadow-card p-4">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">
+              Start date
+            </span>
+            <input
+              type="date"
+              value={draft.startedAt}
+              onChange={(e) => onChange({ ...draft, startedAt: e.target.value })}
+              className="w-full bg-transparent text-base font-semibold text-foreground focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1">
+              End date
+            </span>
+            <input
+              type="date"
+              value={draft.endedAt}
+              onChange={(e) => onChange({ ...draft, endedAt: e.target.value })}
+              className="w-full bg-transparent text-base font-semibold text-foreground focus:outline-none"
+            />
+          </label>
+        </div>
+      </div>
     </div>
   );
 }
@@ -468,7 +524,7 @@ function SpecificDaysGroups({
       ...draft,
       doseTimes: [
         ...draft.doseTimes,
-        { timeOfDay: '', quantity: 1, appliesToDow: bm },
+        { timeOfDay: currentHhMm(), quantity: 1, appliesToDow: bm },
       ],
     });
   }
@@ -538,7 +594,7 @@ function SpecificDaysGroups({
                   onClick={() => addRowToGroup(g.bitmap)}
                   className="flex items-center gap-2 text-sm font-semibold text-foreground"
                 >
-                  <PlusCircle size={20} />
+                  <PlusCircle size={20} className="text-status-good" />
                   Add a Time
                 </button>
               )}
@@ -676,6 +732,24 @@ function DoseTimeRow({
   );
 }
 
+// Local-time HH:MM for default dose-time values. The native time input
+// expects 24-hour format and renders in the user's locale. Apple's pattern:
+// "Add a Time" inserts a row prefilled with the current time, so the user
+// sees a meaningful default instead of a blank --:-- placeholder they'd
+// have to tap to fix.
+function currentHhMm(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+// Local-time YYYY-MM-DD for the Duration card's start-date default.
+// `Date.toISOString` would shift to UTC and return yesterday for users west
+// of GMT after midnight local time.
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function formatQuantity(n: number, noun: QtyNoun | null): string {
   const display = Number.isInteger(n)
     ? String(n)
@@ -684,27 +758,6 @@ function formatQuantity(n: number, noun: QtyNoun | null): string {
     return n === 1 ? `1 ${noun.single}` : `${display} ${noun.plural}`;
   }
   return n === 1 ? '1 dose' : `${display} doses`;
-}
-
-const inputClass =
-  'w-full rounded-xl border border-border bg-background px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-sm font-medium text-foreground mb-1.5">{label}</span>
-      {hint && <span className="block text-xs text-muted-foreground mb-1.5">{hint}</span>}
-      {children}
-    </label>
-  );
 }
 
 // Build a fresh draft for a given cadence kind. `startedAt` and
@@ -718,7 +771,11 @@ function Field({
 // Dropping rather than synthesizing keeps the broken-state class
 // (group bitmap=0 with dose-times) unreachable.
 export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft {
-  const startedAt = prior?.startedAt ?? '';
+  // Default startedAt to today for fresh drafts so the Duration card
+  // shows a real date instead of an empty placeholder. Carries forward
+  // from prior on kind-switch.
+  const startedAt = prior?.startedAt ?? todayYmd();
+  const endedAt = prior?.endedAt ?? '';
   const cycleUnit = prior?.cycleUnit ?? 'day';
   const base: CadenceDraft = {
     kind,
@@ -727,6 +784,7 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
     cycleUnit,
     intervalDays: null,
     startedAt,
+    endedAt,
     doseTimes: [],
     groups: [],
   };
@@ -758,7 +816,7 @@ export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft 
   ) {
     base.doseTimes = prior.doseTimes.map((dt) => ({ ...dt, appliesToDow: null }));
   } else {
-    base.doseTimes = [{ timeOfDay: '', quantity: 1, appliesToDow: null }];
+    base.doseTimes = [{ timeOfDay: currentHhMm(), quantity: 1, appliesToDow: null }];
   }
   return base;
 }

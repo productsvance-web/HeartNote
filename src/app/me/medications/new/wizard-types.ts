@@ -49,6 +49,7 @@ const INITIAL_CADENCE: CadenceDraft = {
   cycleUnit: 'day',
   intervalDays: null,
   startedAt: '',
+  endedAt: '',
   doseTimes: [],
   groups: [],
 };

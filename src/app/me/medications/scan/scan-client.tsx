@@ -190,10 +190,8 @@ export function ScanClient() {
         cycleOnDays: draft.cycleOnDays,
         cycleOffDays: draft.cycleOffDays,
         intervalDays: draft.intervalDays,
-        startedAt:
-          draft.kind === 'cyclical' || draft.kind === 'every_few_days'
-            ? draft.startedAt
-            : '',
+        startedAt: draft.kind === 'as_needed' ? '' : draft.startedAt,
+        endedAt: draft.kind === 'as_needed' ? '' : draft.endedAt,
         doseTimes: draft.doseTimes.map((dt, i) => ({
           timeOfDay: dt.timeOfDay,
           quantity: dt.quantity,

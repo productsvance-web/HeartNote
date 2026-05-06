@@ -40,6 +40,7 @@ interface FormInitial {
   cycleOffDays?: number | null;
   intervalDays?: number | null;
   startedAt?: string;
+  endedAt?: string;
   notes?: string;
   isStopped?: boolean;
   allowedStrengths?: AllowedStrengths | null;
@@ -100,6 +101,7 @@ function buildInitialDraft(initial: FormInitial | undefined): CadenceDraft {
     cycleUnit,
     intervalDays: initial?.intervalDays ?? null,
     startedAt: initial?.startedAt ?? '',
+    endedAt: initial?.endedAt ?? '',
     doseTimes,
     groups,
   };
@@ -158,9 +160,8 @@ export function MedicationForm({
       cycleOnDays: forDraft.cycleOnDays,
       cycleOffDays: forDraft.cycleOffDays,
       intervalDays: forDraft.intervalDays,
-      startedAt: forDraft.kind === 'cyclical' || forDraft.kind === 'every_few_days'
-        ? forDraft.startedAt
-        : startedAt,
+      startedAt: forDraft.kind === 'as_needed' ? '' : forDraft.startedAt || startedAt,
+      endedAt: forDraft.kind === 'as_needed' ? '' : forDraft.endedAt,
       notes,
       doseTimes: forDraft.doseTimes.map((dt, i) => ({
         timeOfDay: dt.timeOfDay,
