@@ -56,14 +56,6 @@ export function ScanClient() {
   const [addAllPending, setAddAllPending] = useState(false);
   const searchParams = useSearchParams();
   const autoTriggeredRef = useRef(false);
-  // Signaled by the active card when the caregiver has entered Step 2
-  // inputs that would be lost on Take-another. The ref holds the
-  // bottle's primary name so the discard prompt can echo the target
-  // (per .claude/rules/destructive-actions.md).
-  const dirtyHeadRef = useRef<{ dirty: boolean; primary: string }>({
-    dirty: false,
-    primary: '',
-  });
 
   // Auto-trigger the picker once on mount when entered with ?source=camera
   // or ?source=photos — caregiver tapped Scan or Upload from the previous
@@ -156,27 +148,13 @@ export function ScanClient() {
   }
 
   function reset() {
-    if (dirtyHeadRef.current.dirty) {
-      const ok = window.confirm(
-        `Discard the schedule you entered for ${dirtyHeadRef.current.primary}?`
-      );
-      if (!ok) return;
-    }
-    dirtyHeadRef.current = { dirty: false, primary: '' };
     setState({ kind: 'capture' });
-  }
-
-  function handleDirtyChange(dirty: boolean, primary: string) {
-    dirtyHeadRef.current = { dirty, primary };
   }
 
   // Pop the head of the review queue. Called by both the per-card
   // success path (onAdded) and the per-card skip path. When the queue
   // empties, return to capture so the caregiver can scan again.
   function advanceHead() {
-    // The head card is leaving — its dirty signal is no longer
-    // applicable. Clear the ref so the next card starts clean.
-    dirtyHeadRef.current = { dirty: false, primary: '' };
     setState((s) => {
       if (s.kind !== 'review') return s;
       const next = s.medications.slice(1);
@@ -194,16 +172,11 @@ export function ScanClient() {
     const candidateOrigIndexes: number[] = [];
     state.medications.forEach((med, i) => {
       if (med.is_dose_change) return;
-      // AddAll bypasses the per-card schedule step. Each med saves with
-      // empty schedule (PRN, no clock times); caregiver edits dates and
-      // times later from /me/medications.
-      candidatePayloads.push(
-        extractedMedToPayload(med, {
-          dosesPerDay: null,
-          scheduleTimes: null,
-          startedAt: '',
-        })
-      );
+      // AddAll and per-card save produce identical payloads now that
+      // schedule is no longer collected at scan time — both default
+      // to PRN with no clock times. Caregiver sets reminders later
+      // from /me/medications when reminders feature ships.
+      candidatePayloads.push(extractedMedToPayload(med));
       candidateOrigIndexes.push(i);
     });
     if (candidatePayloads.length === 0) return;
@@ -398,7 +371,7 @@ export function ScanClient() {
           >
             {addAllPending
               ? 'Adding…'
-              : `Add all ${state.medications.filter((m) => !m.is_dose_change).length} without schedules`}
+              : `Add all ${state.medications.filter((m) => !m.is_dose_change).length}`}
           </button>
           <button
             type="button"
@@ -418,7 +391,6 @@ export function ScanClient() {
         disabled={addAllPending}
         position={state.totalAtScan > 1 ? position : null}
         totalCount={state.totalAtScan}
-        onDirtyChange={handleDirtyChange}
       />
 
       {/* Empathetic note: navigation away drops scan state. */}

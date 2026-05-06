@@ -137,23 +137,12 @@ describe('extractedMedToPayload — drug-name composition (B5)', () => {
   });
 });
 
-describe('extractedMedToPayload — schedule pass-through', () => {
-  it('defaults to PRN with no schedule when caller omits schedule arg', () => {
+describe('extractedMedToPayload — schedule defaults', () => {
+  it('always saves as PRN with no clock times (schedule UI deferred to reminders PR)', () => {
     const p = extractedMedToPayload(med());
     assert.equal(p.dosesPerDay, null);
     assert.equal(p.scheduleTimes, null);
     assert.equal(p.startedAt, '');
-  });
-
-  it('passes through caller-supplied schedule', () => {
-    const p = extractedMedToPayload(med(), {
-      dosesPerDay: 3,
-      scheduleTimes: ['08:00', '14:00', '20:00'],
-      startedAt: '2026-05-05',
-    });
-    assert.equal(p.dosesPerDay, 3);
-    assert.deepEqual(p.scheduleTimes, ['08:00', '14:00', '20:00']);
-    assert.equal(p.startedAt, '2026-05-05');
   });
 
   it('always hardcodes pillsPerDose to 1 (out-of-scope per plan)', () => {

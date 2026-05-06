@@ -3,23 +3,13 @@
 // (a single `dose: string` matching DOSE_FORMAT). Architectural decision
 // #17 in the plan.
 //
-// Frequency is no longer extracted from the label — caregiver fills it
-// on the schedule step of the review card. Caller passes the chosen
-// schedule (or null/empty for AddAll batch saves) via the `schedule`
-// parameter.
+// Frequency, schedule times, and start date are no longer collected at
+// scan time. Every saved med starts as PRN with no clock times — the
+// caregiver edits these later from /me/medications, and the reminders
+// PR will replace this with a proper schedule UI.
 
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import type { MedicationPayload } from '../actions';
-
-export interface ChosenSchedule {
-  // null = PRN (caregiver chose "as needed" or skipped Step 2 in AddAll).
-  dosesPerDay: number | null;
-  // null = no clock times. When dosesPerDay > 0, length must equal it
-  // (validated by MedicationPayloadSchema in actions.ts).
-  scheduleTimes: string[] | null;
-  // YYYY-MM-DD or '' (empty = "no start date set").
-  startedAt: string;
-}
 
 // Drug-name composition for the payload's drugName field.
 // Persists the OCR'd label text as the primary record — the bottle's
@@ -80,19 +70,17 @@ function parseStrengthFromCanonicalTail(name: string): string | null {
   return `${m[1]} ${m[2].toLowerCase()}`;
 }
 
-export function extractedMedToPayload(
-  med: ResolvedMed,
-  schedule: ChosenSchedule = { dosesPerDay: null, scheduleTimes: null, startedAt: '' }
-): MedicationPayload {
+export function extractedMedToPayload(med: ResolvedMed): MedicationPayload {
   return {
     drugName: chooseDrugName(med),
     dose: resolveDose(med),
-    // Photo-scan currently does not parse pills-per-dose from the
-    // bottle. Default 1; user can adjust later from /me/medications.
+    // Photo-scan does not parse pills-per-dose from the bottle.
+    // Default 1; caregiver can adjust later from /me/medications.
     pillsPerDose: 1,
-    dosesPerDay: schedule.dosesPerDay,
-    scheduleTimes: schedule.scheduleTimes,
-    startedAt: schedule.startedAt,
+    // PRN with no clock times — schedule UI deferred to the reminders PR.
+    dosesPerDay: null,
+    scheduleTimes: null,
+    startedAt: '',
     notes: '',
     ndc: med.ndc,
     rxcui: med.rxcui,
