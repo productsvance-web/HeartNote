@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/infrastructure-audit.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/infrastructure-audit.py"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/block-push-to-main.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/block-push-to-main.py"
           }
         ]
       },
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/claude-md-budget.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/claude-md-budget.py"
           }
         ]
       },
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/forbidden-clinical-patterns.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/forbidden-clinical-patterns.py"
           }
         ]
       }
@@ -46,11 +46,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/auto-merge-reminder.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/auto-merge-reminder.py"
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post-merge-verify.py"
+            "command": "python3 $CLAUDE_PROJECT_DIR/.claude/hooks/post-merge-verify.py"
           }
         ]
       }
