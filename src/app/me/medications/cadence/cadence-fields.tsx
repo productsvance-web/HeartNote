@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Plus, Check } from 'lucide-react';
+import { Minus, Plus, Check, X } from 'lucide-react';
 import {
   CADENCE_KINDS,
   DOW_ALL,
@@ -433,30 +433,27 @@ function DurationCard({
   return (
     <div>
       <p className="text-sm font-medium text-foreground mb-2">Duration</p>
-      <div className="rounded-2xl bg-card shadow-card p-4">
-        <div className="grid grid-cols-2 gap-3">
-          <DateField
-            label="Start date"
-            value={draft.startedAt}
-            onChange={(v) => onChange({ ...draft, startedAt: v })}
-          />
-          <DateField
-            label="End date"
-            value={draft.endedAt}
-            onChange={(v) => onChange({ ...draft, endedAt: v })}
-          />
-        </div>
+      <div className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
+        <DateRow
+          label="Start date"
+          value={draft.startedAt}
+          onChange={(v) => onChange({ ...draft, startedAt: v })}
+        />
+        <DateRow
+          label="End date"
+          value={draft.endedAt}
+          onChange={(v) => onChange({ ...draft, endedAt: v })}
+        />
       </div>
     </div>
   );
 }
 
-// Date pill with a "—" overlay when empty, since `<input type="date">`
-// has no portable placeholder. The overlay sits on top with
-// `pointer-events-none` so taps fall through to the input and trigger
-// the native iOS picker. Once a date is picked, the overlay is no
-// longer rendered.
-function DateField({
+// Single Duration row: label on the left, date pill on the right, plus
+// a circular X button to clear the value. The date pill overlays a "—"
+// span (pointer-events-none) when empty since <input type="date"> has
+// no portable placeholder; taps fall through to the native iOS picker.
+function DateRow({
   label,
   value,
   onChange,
@@ -466,24 +463,34 @@ function DateField({
   onChange: (next: string) => void;
 }) {
   return (
-    <label className="block space-y-1.5">
-      <span className="block text-[10px] uppercase tracking-wide text-muted-foreground/70">
-        {label}
-      </span>
-      <span className="relative inline-block">
-        <input
-          type="date"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        {!value && (
-          <span className="absolute inset-0 flex items-center justify-start pl-3 pointer-events-none rounded-full bg-muted/50 text-base font-medium text-muted-foreground">
-            —
-          </span>
+    <div className="px-4 py-3 flex items-center justify-between gap-3">
+      <p className="text-base text-foreground">{label}</p>
+      <div className="flex items-center gap-2">
+        <span className="relative inline-block">
+          <input
+            type="date"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="rounded-full bg-muted/50 px-3 py-1.5 text-base font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          {!value && (
+            <span className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-full bg-muted/50 text-base font-medium text-muted-foreground">
+              —
+            </span>
+          )}
+        </span>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+            aria-label={`Clear ${label.toLowerCase()}`}
+          >
+            <X size={12} strokeWidth={3} />
+          </button>
         )}
-      </span>
-    </label>
+      </div>
+    </div>
   );
 }
 

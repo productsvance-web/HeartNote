@@ -33,7 +33,7 @@ export function DayPills({ bitmap, claimedByOthers, onChange }: Props) {
             disabled={disabled}
             aria-pressed={isOn}
             aria-label={dow.long}
-            className={`flex-1 h-10 rounded-full text-xs font-semibold transition-colors ${
+            className={`flex-1 aspect-square rounded-full text-xs font-semibold transition-colors ${
               isOn
                 ? 'bg-foreground text-background'
                 : disabled
