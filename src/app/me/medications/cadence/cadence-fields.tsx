@@ -685,14 +685,14 @@ function Field({
   );
 }
 
-// Build a fresh draft for a given cadence kind. Carries forward kind-
-// agnostic state (start date, cycle unit) and like-shaped dose-times
-// across kinds in the same "shape family":
+// Build a fresh draft for a given cadence kind. `startedAt` and
+// `cycleUnit` always carry from prior (kind-agnostic). Dose-times carry
+// only across like-shaped families:
 //   - flat (every_day | cyclical | every_few_days) ↔ flat: carry, drop bitmaps
 //   - specific_days ↔ specific_days: carry doseTimes + groups verbatim
 //   - flat → specific_days: drop doseTimes (no synthesizable bitmaps)
 //   - specific_days → flat: drop doseTimes (bitmap context is gone)
-//   - as_needed → anything: fresh
+//   - as_needed → anything: empty doseTimes (no times to carry)
 // Dropping rather than synthesizing keeps the broken-state class
 // (group bitmap=0 with dose-times) unreachable.
 export function newDraft(kind: CadenceKind, prior?: CadenceDraft): CadenceDraft {
