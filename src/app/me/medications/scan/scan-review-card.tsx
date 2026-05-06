@@ -1,26 +1,21 @@
 'use client';
 
-import { useState } from 'react';
 import { AlertTriangle, Check } from 'lucide-react';
 import type { ResolvedMed } from '@/lib/medications/scan/schema';
 import { normalizeForm } from '@/lib/medications/rxnorm';
-import { addExtractedMedications, type MedicationPayload } from '../actions';
-import { extractedMedToPayload, toTitleCase } from './extracted-to-payload';
+import { toTitleCase } from './extracted-to-payload';
 
-// Single-step product review. Caregiver confirms what was scanned;
-// schedule (frequency + clock times + duration) is set later from
-// /me/medications when the reminders feature ships. Save persists the
-// med as PRN with no clock times — matches the AddAll path's payload.
-//
-// is_dose_change short-circuits before save renders. Build convention
-// #6: dose-change labels never ingest, only direct to the prescriber.
+// Single-step product review. Caregiver confirms what was scanned; the
+// scan-client owns the next step (cadence picker) and the actual save.
+// is_dose_change short-circuits — build convention #6: dose-change labels
+// never ingest, only direct to the prescriber.
 
 interface Props {
   med: ResolvedMed;
   onSkip: () => void;
-  onAdded: () => void;
+  onAccept: () => void;
   // Disabled while the parent's "Add all" batch is in flight, to prevent
-  // races with the per-card insert.
+  // races with the per-card progression.
   disabled?: boolean;
   // 1-indexed position within the multi-med scan, total fixed at scan
   // time. Null when only one med was detected (no progress indicator).
@@ -28,7 +23,7 @@ interface Props {
   totalCount: number;
 }
 
-export function ScanReviewCard({ med, onSkip, onAdded, disabled, position, totalCount }: Props) {
+export function ScanReviewCard({ med, onSkip, onAccept, disabled, position, totalCount }: Props) {
   if (med.is_dose_change) {
     return (
       <DoseChangeNotice
@@ -43,7 +38,7 @@ export function ScanReviewCard({ med, onSkip, onAdded, disabled, position, total
     <ProductReviewCard
       med={med}
       onSkip={onSkip}
-      onAdded={onAdded}
+      onAccept={onAccept}
       disabled={disabled}
       position={position}
       totalCount={totalCount}
@@ -99,24 +94,18 @@ function DoseChangeNotice({
 function ProductReviewCard({
   med,
   onSkip,
-  onAdded,
+  onAccept,
   disabled,
   position,
   totalCount,
 }: {
   med: ResolvedMed;
   onSkip: () => void;
-  onAdded: () => void;
+  onAccept: () => void;
   disabled?: boolean;
   position: number | null;
   totalCount: number;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Drug-name composition. OCR'd bottle text is the primary record (B5);
-  // RxNorm ingredient becomes a secondary line ONLY when it differs from
-  // the bottle. Title Case for display.
   const ocrName = med.drug_name.trim();
   const ingredientName = (med.ingredient ?? '').trim();
   const primary = toTitleCase(ocrName.length > 0 ? ocrName : (med.canonicalName ?? '').trim());
@@ -127,26 +116,9 @@ function ProductReviewCard({
       ? toTitleCase(ingredientName)
       : null;
 
-  // Strength / form display. The strength fallback chain matches
-  // resolveDose() in extracted-to-payload.ts so what's shown equals
-  // what gets saved.
   const displayDose = displayStrength(med);
   const displayForm = normalizeForm(med.form);
   const verified = !!med.canonicalName;
-
-  async function save() {
-    if (saving) return;
-    setSaving(true);
-    setError(null);
-    const payload: MedicationPayload = extractedMedToPayload(med);
-    const result = await addExtractedMedications([payload]);
-    setSaving(false);
-    if (result.failedIndexes.length === 0) {
-      onAdded();
-      return;
-    }
-    setError(result.errors[0] ?? 'Could not save.');
-  }
 
   return (
     <div className="rounded-2xl bg-card shadow-card p-4">
@@ -181,28 +153,18 @@ function ProductReviewCard({
         />
       </dl>
 
-      {error && (
-        <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 mt-4">
-          {error}
-        </p>
-      )}
-
-      <p className="text-[11px] text-muted-foreground mt-4">
-        Set reminder times later from Medications.
-      </p>
-
       <button
         type="button"
-        onClick={save}
-        disabled={saving || disabled}
-        className="mt-3 w-full rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
+        onClick={onAccept}
+        disabled={disabled}
+        className="mt-4 w-full rounded-full bg-foreground text-background px-4 py-3 text-sm font-semibold disabled:opacity-50"
       >
-        {saving ? 'Adding…' : 'Add to my list'}
+        Set schedule
       </button>
       <button
         type="button"
         onClick={onSkip}
-        disabled={saving || disabled}
+        disabled={disabled}
         className="mt-2 w-full text-center text-xs text-muted-foreground underline"
       >
         Skip

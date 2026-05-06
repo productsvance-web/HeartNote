@@ -11,16 +11,38 @@ import {
 import type { MedicationPayload } from './actions';
 import type { AllowedStrengths } from '@/lib/medications/classify';
 import { UNIT_OPTIONS as ALL_UNITS, unitLabel } from '@/lib/medications/units';
+import { CadenceFlow, type CadenceDraft } from './cadence/cadence-flow';
+import {
+  formatCadenceSummary,
+  type CadenceKind,
+} from '@/lib/medications/cadence';
 
 type Mode = 'new' | 'edit';
+
+interface InitialDoseTime {
+  timeOfDay: string;
+  quantity: number;
+  appliesToDow: number | null;
+}
+
+interface FormInitial {
+  drugName?: string;
+  dose?: string;
+  cadenceKind?: CadenceKind;
+  cycleOnDays?: number | null;
+  cycleOffDays?: number | null;
+  intervalDays?: number | null;
+  startedAt?: string;
+  notes?: string;
+  isStopped?: boolean;
+  allowedStrengths?: AllowedStrengths | null;
+  doseTimes?: InitialDoseTime[];
+}
 
 interface Props {
   mode: Mode;
   medicationId?: string;
-  initial?: Partial<MedicationPayload> & {
-    isStopped?: boolean;
-    allowedStrengths?: AllowedStrengths | null;
-  };
+  initial?: FormInitial;
   // When provided, the form calls submitAction INSTEAD of addMedication /
   // updateMedication, and onSaved fires on success. Used by the scan flow
   // so saving stays within /me/medications/scan instead of redirecting.
@@ -30,24 +52,48 @@ interface Props {
   submitLabel?: string;
 }
 
-const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/;
+const DOSE_PARSE = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z/]+)\s*$/;
 
 function parseDose(dose: string | undefined): { value: string; unit: string } {
   if (!dose) return { value: '', unit: 'mg' };
   const m = DOSE_PARSE.exec(dose);
   if (!m) return { value: '', unit: 'mg' };
-  return { value: m[1], unit: m[2] };
+  return { value: m[1], unit: m[2].toLowerCase() };
 }
 
-const blank: MedicationPayload = {
-  drugName: '',
-  dose: '',
-  pillsPerDose: 1,
-  dosesPerDay: 1,
-  scheduleTimes: null,
-  startedAt: '',
-  notes: '',
-};
+function buildInitialDraft(initial: FormInitial | undefined): CadenceDraft {
+  const kind = (initial?.cadenceKind ?? 'as_needed') as CadenceKind;
+  const doseTimes = (initial?.doseTimes ?? []).map((dt) => ({
+    timeOfDay: dt.timeOfDay,
+    quantity: dt.quantity,
+    appliesToDow: dt.appliesToDow,
+  }));
+  // Reconstruct groups for specific_days from the distinct bitmaps.
+  const groups =
+    kind === 'specific_days'
+      ? Array.from(new Set(doseTimes.map((dt) => dt.appliesToDow ?? 0)))
+      : [];
+  // Heuristic: if cycleOnDays is a multiple of 7 and >= 7, present the
+  // cyclical UI in 'week' units. Otherwise 'day'.
+  const cycleUnit: 'day' | 'week' =
+    kind === 'cyclical' &&
+    initial?.cycleOnDays != null &&
+    initial.cycleOnDays >= 7 &&
+    initial.cycleOnDays % 7 === 0 &&
+    (initial.cycleOffDays ?? 0) % 7 === 0
+      ? 'week'
+      : 'day';
+  return {
+    kind,
+    cycleOnDays: initial?.cycleOnDays ?? null,
+    cycleOffDays: initial?.cycleOffDays ?? null,
+    cycleUnit,
+    intervalDays: initial?.intervalDays ?? null,
+    startedAt: initial?.startedAt ?? '',
+    doseTimes,
+    groups,
+  };
+}
 
 export function MedicationForm({
   mode,
@@ -57,11 +103,14 @@ export function MedicationForm({
   onSaved,
   submitLabel,
 }: Props) {
-  const initialDoses = initial?.dosesPerDay ?? blank.dosesPerDay;
   const initialDose = parseDose(initial?.dose);
-  const [form, setForm] = useState<MedicationPayload>({ ...blank, ...initial });
+  const [drugName, setDrugName] = useState(initial?.drugName ?? '');
   const [doseValue, setDoseValue] = useState<string>(initialDose.value);
   const [doseUnit, setDoseUnit] = useState<string>(initialDose.unit);
+  const [notes, setNotes] = useState<string>(initial?.notes ?? '');
+  const [startedAt, setStartedAt] = useState<string>(initial?.startedAt ?? '');
+  const [draft, setDraft] = useState<CadenceDraft>(() => buildInitialDraft(initial));
+  const [editingCadence, setEditingCadence] = useState(false);
   const [allowedStrengths, setAllowedStrengths] = useState<AllowedStrengths | null>(
     initial?.allowedStrengths ?? null
   );
@@ -70,96 +119,74 @@ export function MedicationForm({
   const [isPending, startTransition] = useTransition();
   const lastLookedUpRef = useRef<string | null>(null);
 
-  const dosesPerDayChanged = mode === 'edit' && form.dosesPerDay !== initialDoses;
-  const willClearSchedule =
-    dosesPerDayChanged && (initial?.scheduleTimes?.length ?? 0) > 0;
-
-  // When allowedStrengths changes (drug classified), reconcile doseUnit.
-  // If user's current unit isn't in the allowed list, snap to the allowed one.
   useEffect(() => {
-    if (allowedStrengths) {
-      const allowed = allowedStrengths.unit.toLowerCase();
-      if (doseUnit.toLowerCase() !== allowed) {
-        setDoseUnit(allowed);
-      }
-    }
-  }, [allowedStrengths, doseUnit]);
-
-  // Debounced lookup as the caregiver types — fires 500ms after they stop.
-  // Skips repeat lookups of the same name. The trim().length >= 3 guard
-  // mirrors lookupDrugStrengths server-side so we don't burn requests on
-  // single-letter typing. Same call powers both the dose-unit constraint
-  // and the spell-correction chip.
-  useEffect(() => {
-    const name = form.drugName.trim();
+    const name = drugName.trim();
     if (name.length < 3 || name === lastLookedUpRef.current) return;
     const timer = setTimeout(() => {
       lastLookedUpRef.current = name;
       void lookupDrugStrengths(name).then((r) => {
         setAllowedStrengths(r.allowedStrengths);
         setSuggestedName(r.suggestedName);
+        // Snap doseUnit to the allowed value when classification arrives.
+        // Keeps the (locked) unit chip in sync with the strength constraint
+        // even if the user typed a unit before the lookup completed.
+        if (r.allowedStrengths) {
+          setDoseUnit(r.allowedStrengths.unit.toLowerCase());
+        }
       });
     }, 500);
     return () => clearTimeout(timer);
-  }, [form.drugName]);
+  }, [drugName]);
 
-  function setDosesPerDay(n: number | null) {
-    setForm((f) => {
-      let nextSchedule: string[] | null = null;
-      if (n !== null && f.scheduleTimes !== null) {
-        const truncated = f.scheduleTimes.slice(0, n);
-        const padded = [...truncated, ...Array(Math.max(0, n - truncated.length)).fill('')];
-        nextSchedule = padded;
-      }
-      return { ...f, dosesPerDay: n, scheduleTimes: nextSchedule };
-    });
-  }
-
-  function addScheduleTime() {
-    setForm((f) => {
-      if (f.dosesPerDay === null) return f;
-      return { ...f, scheduleTimes: Array(f.dosesPerDay).fill('') };
-    });
-  }
-
-  function setTimeAt(index: number, value: string) {
-    setForm((f) => {
-      if (f.dosesPerDay === null) return f;
-      const start = f.scheduleTimes ?? Array(f.dosesPerDay).fill('');
-      const next = [...start];
-      next[index] = value;
-      return { ...f, scheduleTimes: next };
-    });
-  }
-
-  function clearAllTimes() {
-    setForm((f) => ({ ...f, scheduleTimes: null }));
-  }
-
-  function submit() {
-    setError(null);
-    const cleanedTimes =
-      form.scheduleTimes && form.scheduleTimes.every((t) => t.trim().length > 0)
-        ? form.scheduleTimes
-        : null;
+  function buildPayload(forDraft: CadenceDraft): MedicationPayload {
     const dose = doseValue.trim() ? `${doseValue.trim()} ${doseUnit}` : '';
-    const payload: MedicationPayload = { ...form, dose, scheduleTimes: cleanedTimes };
+    return {
+      drugName,
+      dose,
+      cadenceKind: forDraft.kind,
+      cycleOnDays: forDraft.cycleOnDays,
+      cycleOffDays: forDraft.cycleOffDays,
+      intervalDays: forDraft.intervalDays,
+      startedAt: forDraft.kind === 'cyclical' || forDraft.kind === 'every_few_days'
+        ? forDraft.startedAt
+        : startedAt,
+      notes,
+      doseTimes: forDraft.doseTimes.map((dt, i) => ({
+        timeOfDay: dt.timeOfDay,
+        quantity: dt.quantity,
+        ordinal: i,
+        appliesToDow: dt.appliesToDow,
+      })),
+    };
+  }
 
-    startTransition(async () => {
-      if (submitAction) {
-        const result = await submitAction(payload);
-        if (!result.ok) {
-          setError(result.error ?? 'Save failed');
-        } else {
-          onSaved?.();
+  function submit(forDraft: CadenceDraft = draft): Promise<{ ok: true } | { ok: false; error: string }> {
+    setError(null);
+    return new Promise((resolve) => {
+      startTransition(async () => {
+        const payload = buildPayload(forDraft);
+        if (submitAction) {
+          const result = await submitAction(payload);
+          if (!result.ok) {
+            setError(result.error ?? 'Save failed');
+            resolve({ ok: false, error: result.error ?? 'Save failed' });
+          } else {
+            onSaved?.();
+            resolve({ ok: true });
+          }
+          return;
         }
-        return;
-      }
-      const result =
-        mode === 'new'
-          ? await addMedication(payload)
-          : await updateMedication(medicationId!, payload, dosesPerDayChanged);
-      if (!result.ok) setError(result.error);
+        const result =
+          mode === 'new'
+            ? await addMedication(payload)
+            : await updateMedication(medicationId!, payload);
+        if (!result.ok) {
+          setError(result.error);
+          resolve({ ok: false, error: result.error });
+        } else {
+          resolve({ ok: true });
+        }
+      });
     });
   }
 
@@ -185,13 +212,29 @@ export function MedicationForm({
     .map((v) => `${v} ${allowedStrengths.unit.toLowerCase()}`)
     .join(', ');
 
-  // RxNorm's approximate-match returns a corrected name when the typed
-  // name is close-but-not-exact. Render a one-tap chip; if the caregiver
-  // dismisses (just keeps typing), the insert still classifies correctly
-  // server-side because the corrected RxCUI is what reaches RxClass.
   const showSuggestion =
-    !!suggestedName &&
-    suggestedName.toLowerCase() !== form.drugName.trim().toLowerCase();
+    !!suggestedName && suggestedName.toLowerCase() !== drugName.trim().toLowerCase();
+
+  if (editingCadence) {
+    return (
+      <CadenceFlow
+        drugLabel={drugName.trim() || 'this medication'}
+        initial={draft}
+        confirmReplace={mode === 'edit' && (initial?.doseTimes?.length ?? 0) > 0}
+        onCancel={() => setEditingCadence(false)}
+        onSave={async (next) => {
+          const result = await submit(next);
+          if (result.ok) {
+            setDraft(next);
+            setEditingCadence(false);
+            return { ok: true };
+          }
+          return result;
+        }}
+        saving={isPending}
+      />
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -199,14 +242,14 @@ export function MedicationForm({
         <input
           autoFocus={mode === 'new'}
           className={inputClass}
-          value={form.drugName}
-          onChange={(e) => setForm({ ...form, drugName: e.target.value })}
+          value={drugName}
+          onChange={(e) => setDrugName(e.target.value)}
           placeholder="Lasix"
         />
         {showSuggestion && (
           <button
             type="button"
-            onClick={() => setForm((f) => ({ ...f, drugName: suggestedName! }))}
+            onClick={() => setDrugName(suggestedName!)}
             className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs text-foreground active:bg-muted/70"
           >
             Did you mean <span className="font-semibold">{suggestedName}</span>?
@@ -215,35 +258,8 @@ export function MedicationForm({
       </Field>
 
       <div>
-        <span className="block text-sm font-medium text-foreground mb-1.5">Dose</span>
-        {/* Combined dose pill: count chip · × · number · unit chip.
-            Reads "2 × 500 mg" — two pills of five-hundred milligrams.
-            Both count and unit are white chips bookending the dark pill;
-            count uses rounded-l, unit uses rounded-r so the seam reads as
-            one unit. The count select stays unitless ("1, 2, 3 ...") so
-            the same control works for tablets, puffs, drops, sprays —
-            the dose unit on the right side carries the form factor. */}
+        <span className="block text-sm font-medium text-foreground mb-1.5">Strength</span>
         <div className="flex items-stretch rounded-xl border border-border bg-background p-1 focus-within:ring-2 focus-within:ring-ring">
-          <select
-            value={String(form.pillsPerDose)}
-            onChange={(e) =>
-              setForm({ ...form, pillsPerDose: Number(e.target.value) })
-            }
-            aria-label="Pills per dose"
-            className="w-[60px] rounded-r-none rounded-l-lg bg-white border border-border text-base font-bold text-foreground text-center cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring appearance-none [&::-ms-expand]:hidden"
-          >
-            {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-          <span
-            aria-hidden="true"
-            className="flex items-center px-2 text-base font-medium text-muted-foreground"
-          >
-            ×
-          </span>
           <input
             type="number"
             inputMode="decimal"
@@ -277,73 +293,39 @@ export function MedicationForm({
         </div>
         <p className="text-xs text-muted-foreground mt-1.5">
           {knownStrengths
-            ? `Comes in ${knownStrengths}. e.g. 2 × 500 mg = two pills of 500 mg each.`
-            : 'e.g. 2 × 500 mg = two pills of 500 mg each.'}
+            ? `Comes in ${knownStrengths}.`
+            : 'Strength of one tablet, capsule, or unit dose.'}
         </p>
       </div>
 
-      <Field label="Doses per day">
-        <select
-          className={inputClass}
-          value={form.dosesPerDay === null ? 'prn' : String(form.dosesPerDay)}
-          onChange={(e) =>
-            setDosesPerDay(e.target.value === 'prn' ? null : Number(e.target.value))
-          }
+      <Field label="Schedule">
+        <button
+          type="button"
+          onClick={() => setEditingCadence(true)}
+          className="w-full text-left rounded-xl border border-border bg-background px-4 py-3"
         >
-          <option value="prn">As needed (PRN)</option>
-          {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
-            <option key={n} value={n}>
-              {n}× per day
-            </option>
-          ))}
-        </select>
+          <p className="text-sm text-foreground">
+            {formatCadenceSummary({
+              cadenceKind: draft.kind,
+              cycleOnDays: draft.cycleOnDays,
+              cycleOffDays: draft.cycleOffDays,
+              intervalDays: draft.intervalDays,
+              doseTimes: draft.doseTimes.map((dt) => ({
+                timeOfDay: dt.timeOfDay,
+                appliesToDow: dt.appliesToDow,
+              })),
+            })}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">Tap to change</p>
+        </button>
       </Field>
-
-      {willClearSchedule && (
-        <p className="text-xs text-muted-foreground bg-muted/60 rounded-lg px-3 py-2">
-          Heads up: changing doses-per-day will clear the existing time schedule.
-        </p>
-      )}
-
-      {form.dosesPerDay !== null && (
-        <Field label="Times (optional)" hint="Leave blank if you don't track exact times.">
-          {form.scheduleTimes === null ? (
-            <button
-              type="button"
-              className="text-sm text-foreground underline underline-offset-2"
-              onClick={addScheduleTime}
-            >
-              Add times
-            </button>
-          ) : (
-            <div className="space-y-2">
-              {Array.from({ length: form.dosesPerDay }, (_, i) => (
-                <input
-                  key={i}
-                  type="time"
-                  className={inputClass}
-                  value={form.scheduleTimes?.[i] ?? ''}
-                  onChange={(e) => setTimeAt(i, e.target.value)}
-                />
-              ))}
-              <button
-                type="button"
-                className="text-xs text-muted-foreground underline"
-                onClick={clearAllTimes}
-              >
-                Remove time schedule
-              </button>
-            </div>
-          )}
-        </Field>
-      )}
 
       <Field label="Started" hint="Optional">
         <input
           type="date"
           className={inputClass}
-          value={form.startedAt ?? ''}
-          onChange={(e) => setForm({ ...form, startedAt: e.target.value })}
+          value={startedAt}
+          onChange={(e) => setStartedAt(e.target.value)}
         />
       </Field>
 
@@ -351,8 +333,8 @@ export function MedicationForm({
         <textarea
           className={inputClass}
           rows={3}
-          value={form.notes ?? ''}
-          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
         />
       </Field>
 
@@ -363,8 +345,8 @@ export function MedicationForm({
       <div className="flex gap-3">
         <button
           type="button"
-          onClick={submit}
-          disabled={isPending || !form.drugName.trim()}
+          onClick={() => void submit()}
+          disabled={isPending || !drugName.trim()}
           className="flex-1 rounded-full bg-foreground text-background px-6 py-3 text-sm font-semibold disabled:opacity-50"
         >
           {isPending

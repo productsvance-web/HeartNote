@@ -28,13 +28,19 @@ export default async function EditMedicationPage({ params }: PageProps) {
   const { data: med } = await supabase
     .from('medications')
     .select(
-      'id, drug_name, drug_class, dose, pills_per_dose, doses_per_day, schedule_times, started_at, notes, stopped_at, allowed_strengths'
+      'id, drug_name, drug_class, dose, started_at, notes, stopped_at, allowed_strengths, cadence_kind, cycle_on_days, cycle_off_days, interval_days'
     )
     .eq('id', id)
     .eq('patient_id', patient.id)
     .single();
 
   if (!med) notFound();
+
+  const { data: doseTimes } = await supabase
+    .from('medication_dose_times')
+    .select('time_of_day, quantity, ordinal, applies_to_dow')
+    .eq('medication_id', id)
+    .order('ordinal', { ascending: true });
 
   return (
     <PhoneShell>
@@ -55,13 +61,19 @@ export default async function EditMedicationPage({ params }: PageProps) {
           initial={{
             drugName: med.drug_name,
             dose: med.dose ?? '',
-            pillsPerDose: med.pills_per_dose,
-            dosesPerDay: med.doses_per_day,
-            scheduleTimes: med.schedule_times,
+            cadenceKind: med.cadence_kind as never,
+            cycleOnDays: med.cycle_on_days,
+            cycleOffDays: med.cycle_off_days,
+            intervalDays: med.interval_days,
             startedAt: med.started_at ?? '',
             notes: med.notes ?? '',
             isStopped: med.stopped_at !== null,
             allowedStrengths: med.allowed_strengths as never,
+            doseTimes: (doseTimes ?? []).map((d) => ({
+              timeOfDay: d.time_of_day,
+              quantity: Number(d.quantity),
+              appliesToDow: d.applies_to_dow,
+            })),
           }}
         />
       </section>

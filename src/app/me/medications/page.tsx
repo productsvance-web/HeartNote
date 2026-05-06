@@ -32,12 +32,17 @@ export default async function MedicationsPage({ searchParams }: PageProps) {
   // together (see src/lib/medications/classes.ts).
   const { data: meds } = await supabase
     .from('medications')
-    .select('id, drug_name, drug_class, dose, pills_per_dose, doses_per_day, schedule_times, stopped_at')
+    .select(
+      'id, drug_name, drug_class, dose, stopped_at, cadence_kind, cycle_on_days, cycle_off_days, interval_days, dose_times:medication_dose_times(time_of_day, applies_to_dow, ordinal)'
+    )
     .eq('patient_id', patient.id)
     .order('drug_class', { ascending: true })
     .order('drug_name', { ascending: true });
 
-  const rows = (meds ?? []) as MedSummary[];
+  const rows = (meds ?? []).map((m) => ({
+    ...m,
+    dose_times: (m.dose_times ?? []).slice().sort((a, b) => a.ordinal - b.ordinal),
+  })) as MedSummary[];
   const active = rows.filter((m) => m.stopped_at === null);
   const stopped = rows.filter((m) => m.stopped_at !== null);
 

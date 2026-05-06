@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Camera, ChevronRight, Pill, Plus, Upload } from 'lucide-react';
 import { MED_CLASS_LABEL } from '@/lib/medications/classes';
+import { formatCadenceSummary, type CadenceKind } from '@/lib/medications/cadence';
 import {
   deleteMedications,
   stopMedications,
@@ -73,10 +74,12 @@ export interface MedSummary {
   drug_name: string;
   drug_class: MedClass;
   dose: string | null;
-  pills_per_dose: number;
-  doses_per_day: number | null;
-  schedule_times: string[] | null;
   stopped_at: string | null;
+  cadence_kind: string;
+  cycle_on_days: number | null;
+  cycle_off_days: number | null;
+  interval_days: number | null;
+  dose_times: Array<{ time_of_day: string; applies_to_dow: number | null; ordinal: number }>;
 }
 
 interface Props {
@@ -313,8 +316,20 @@ interface RowProps {
 }
 
 function formatDose(med: MedSummary): string {
-  if (!med.dose) return '';
-  return med.pills_per_dose > 1 ? `${med.pills_per_dose} × ${med.dose}` : med.dose;
+  return med.dose ?? '';
+}
+
+function formatSchedule(med: MedSummary): string {
+  return formatCadenceSummary({
+    cadenceKind: med.cadence_kind as CadenceKind,
+    cycleOnDays: med.cycle_on_days,
+    cycleOffDays: med.cycle_off_days,
+    intervalDays: med.interval_days,
+    doseTimes: med.dose_times.map((dt) => ({
+      timeOfDay: dt.time_of_day,
+      appliesToDow: dt.applies_to_dow,
+    })),
+  });
 }
 
 function ActiveRow({
@@ -333,9 +348,7 @@ function ActiveRow({
         {med.drug_name}
         {dose ? ` · ${dose}` : ''}
       </p>
-      <p className="text-xs text-muted-foreground mt-0.5 truncate">
-        {med.doses_per_day === null ? 'as needed' : `${med.doses_per_day}× per day`}
-      </p>
+      <p className="text-xs text-muted-foreground mt-0.5 truncate">{formatSchedule(med)}</p>
       {isJustAdded && (
         <p className="text-xs mt-2 inline-block rounded-full bg-muted px-2.5 py-1 text-foreground">
           Classed as {MED_CLASS_LABEL[med.drug_class]} — tap to change
