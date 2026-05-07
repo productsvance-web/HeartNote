@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { type DrugDetails } from '@/lib/medications/rxnorm';
-import { UNIT_OPTIONS, unitLabel } from '@/lib/medications/units';
 import { MedFlowChrome } from './MedFlowChrome';
 import type { DrugSelection } from './flow-types';
 
@@ -35,10 +34,13 @@ interface Props {
   onClose: () => void;
 }
 
-// Units offered in the manual-input branch. % isn't in UNIT_OPTIONS (it's
-// a percent strength, not a quantity unit) but Apple's list includes it
-// for topical-class meds.
-const MANUAL_UNITS: readonly string[] = [...UNIT_OPTIONS, '%'];
+// Units offered in the manual-input branch. Hand-listed (not derived from
+// UNIT_OPTIONS) because UNIT_OPTIONS includes quantity nouns (tablet,
+// capsule, puff, drop, tsp, tbsp) that are nonsensical as strength units
+// — "40 tablet" is meaningless. Apple Health's manual screen shows only
+// mass / volume / percent units, which is what makes physical sense for
+// a concentration or unit-dose strength.
+const MANUAL_UNITS: readonly string[] = ['mg', 'mcg', 'g', 'mL', '%'];
 
 export function StrengthStep({
   selection,
@@ -54,11 +56,20 @@ export function StrengthStep({
   const hasList = formStrengths.length > 0;
   const matchedRow =
     hasList && formStrengths.some((s) => formatStrengthForDose(s) === strength);
-  const [customMode, setCustomMode] = useState(
-    !hasList || (strength.length > 0 && !matchedRow)
-  );
 
-  const inManual = !hasList || customMode;
+  // Tri-state so the manual/list decision stays reactive to drugDetails
+  // arriving post-mount. 'auto' is the default — manual when there's no
+  // list yet OR the existing strength doesn't match a row; list mode
+  // otherwise. The user can override by tapping "Add Custom" → 'custom',
+  // or "Use a listed strength" → 'list'. A single useState(boolean) here
+  // would latch at mount-time and keep a fast user stuck in manual when
+  // RxNorm responds late.
+  const [customToggle, setCustomToggle] = useState<'auto' | 'custom' | 'list'>(
+    'auto'
+  );
+  const inManual =
+    customToggle === 'custom' ||
+    (customToggle === 'auto' && (!hasList || (strength.length > 0 && !matchedRow)));
   const titleText = inManual
     ? 'Add the medication strength.'
     : 'Choose the medication strength.';
@@ -102,7 +113,7 @@ export function StrengthStep({
       <div className="space-y-5">
         <h1 className="font-display text-2xl text-foreground">{titleText}</h1>
 
-        {hasList && !customMode && (
+        {hasList && !inManual && (
           <>
             <ul className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
               {formStrengths.map((s) => {
@@ -130,7 +141,7 @@ export function StrengthStep({
               <button
                 type="button"
                 onClick={() => {
-                  setCustomMode(true);
+                  setCustomToggle('custom');
                   onChange('');
                 }}
                 className="text-sm font-semibold text-primary"
@@ -169,7 +180,7 @@ export function StrengthStep({
                         onClick={() => emitManual(manualValue, lower)}
                         className="w-full text-left px-4 py-3.5 text-base text-foreground flex items-center justify-between gap-3"
                       >
-                        <span>{unitLabel(u)}</span>
+                        <span>{u}</span>
                         {selected && <Check size={18} className="text-foreground" />}
                       </button>
                     </li>
@@ -180,10 +191,13 @@ export function StrengthStep({
           </>
         )}
 
-        {hasList && customMode && (
+        {hasList && inManual && (
           <button
             type="button"
-            onClick={() => setCustomMode(false)}
+            onClick={() => {
+              setCustomToggle('list');
+              onChange('');
+            }}
             className="text-xs text-muted-foreground underline"
           >
             Use a listed strength
