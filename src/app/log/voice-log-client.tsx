@@ -1127,7 +1127,7 @@ export function VoiceLogClient({
             <div className="flex items-start gap-3">
               <AlertCircle size={20} className="shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold">A few you didn’t mention today</p>
+                <p className="text-sm font-semibold">The five that matter most</p>
                 <p className="text-xs leading-relaxed mt-1.5 opacity-90">
                   These five matter most for spotting changes early:{' '}
                   <span className="font-medium">
