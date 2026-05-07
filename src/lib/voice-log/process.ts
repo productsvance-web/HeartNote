@@ -16,6 +16,7 @@ import { createClient } from '@/lib/supabase/server';
 import { extractWithClaude } from '@/lib/voice-log/extract';
 import { matchMedByDrugName } from '@/lib/medications/match';
 import type { UnmatchedChip } from '@/lib/voice-log/chip';
+import { evaluateAlertTier } from '@/lib/alerts/evaluate';
 
 const ReadingSchema = z.object({
   field: z.enum(['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp']),
@@ -56,6 +57,7 @@ const SymptomEventSchema = z.object({
   sputum_color: z.enum(['clear', 'white', 'pink_frothy', 'white_frothy']).optional(),
   chest_pain_character: z.string().min(1).max(240).optional(),
   resolves_overnight: z.boolean().optional(),
+  postural: z.boolean().optional(),
 });
 
 const DayLevelSchema = z.object({
@@ -154,6 +156,12 @@ export async function processVoiceLog(
             `stripped resolves_overnight from non-swelling event (symptom=${data.symptom})`
           );
         }
+        if (data.symptom !== 'dizziness' && data.postural !== undefined) {
+          delete data.postural;
+          validationWarnings.push(
+            `stripped postural from non-dizziness event (symptom=${data.symptom})`
+          );
+        }
         return [data];
       });
 
@@ -238,6 +246,44 @@ export async function processVoiceLog(
       for (const phrase of extraction.medMatchFailures) {
         const trimmed = phrase.trim();
         if (trimmed) unmatchedChips.push({ type: 'pick_med', phrase: trimmed });
+      }
+
+      // 5. Phase 1 alert engine — re-evaluate this patient/day with the
+      //    new dictation's data folded in. Wrapped in its own try/catch:
+      //    an evaluation failure must never block the dictation from
+      //    completing, since the transcript and structured rows are
+      //    already persisted.
+      try {
+        const startMs = Date.now();
+        const assessment = await evaluateAlertTier(supabase, log.patient_id, log.log_date);
+        const durationMs = Date.now() - startMs;
+        if (durationMs > 5000) {
+          validationWarnings.push(`alert evaluation took ${durationMs}ms (>5s budget)`);
+        }
+        const { error: assessmentError } = await supabase
+          .from('daily_assessments')
+          .upsert(
+            {
+              patient_id: log.patient_id,
+              log_date: log.log_date,
+              tier: assessment.tier,
+              // Triggers are JSON-serializable {rule_id, label, evidence}.
+              // Cast through unknown — the Trigger type's `evidence:
+              // Record<string, unknown>` is structurally compatible but too
+              // loose for Supabase's Json constraint.
+              triggers: JSON.parse(JSON.stringify(assessment.triggers)),
+              cold_start: assessment.coldStart,
+              source_log_id: logId,
+              evaluated_at: new Date().toISOString(),
+            },
+            { onConflict: 'patient_id,log_date' }
+          );
+        if (assessmentError) {
+          validationWarnings.push(`assessment upsert failed: ${assessmentError.message}`);
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'alert evaluation failed';
+        validationWarnings.push(`alert evaluation threw: ${message}`);
       }
 
       await supabase

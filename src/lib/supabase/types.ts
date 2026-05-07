@@ -149,6 +149,54 @@ export type Database = {
           },
         ]
       }
+      daily_assessments: {
+        Row: {
+          cold_start: boolean
+          evaluated_at: string
+          id: string
+          log_date: string
+          patient_id: string
+          source_log_id: string | null
+          tier: Database["public"]["Enums"]["alert_tier"]
+          triggers: Json
+        }
+        Insert: {
+          cold_start: boolean
+          evaluated_at?: string
+          id?: string
+          log_date: string
+          patient_id: string
+          source_log_id?: string | null
+          tier: Database["public"]["Enums"]["alert_tier"]
+          triggers?: Json
+        }
+        Update: {
+          cold_start?: boolean
+          evaluated_at?: string
+          id?: string
+          log_date?: string
+          patient_id?: string
+          source_log_id?: string | null
+          tier?: Database["public"]["Enums"]["alert_tier"]
+          triggers?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_assessments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_assessments_source_log_id_fkey"
+            columns: ["source_log_id"]
+            isOneToOne: false
+            referencedRelation: "daily_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_log_readings: {
         Row: {
           created_at: string
@@ -206,8 +254,10 @@ export type Database = {
           log_date: string
           nocturnal: boolean | null
           patient_id: string
+          postural: boolean | null
           present: boolean
           recorded_at: string
+          resolves_overnight: boolean | null
           severity: number | null
           source_log_id: string | null
           sputum_color: string | null
@@ -221,8 +271,10 @@ export type Database = {
           log_date: string
           nocturnal?: boolean | null
           patient_id: string
+          postural?: boolean | null
           present: boolean
           recorded_at?: string
+          resolves_overnight?: boolean | null
           severity?: number | null
           source_log_id?: string | null
           sputum_color?: string | null
@@ -236,8 +288,10 @@ export type Database = {
           log_date?: string
           nocturnal?: boolean | null
           patient_id?: string
+          postural?: boolean | null
           present?: boolean
           recorded_at?: string
+          resolves_overnight?: boolean | null
           severity?: number | null
           source_log_id?: string | null
           sputum_color?: string | null
@@ -262,6 +316,7 @@ export type Database = {
       }
       daily_logs: {
         Row: {
+          activity_step_change: string | null
           activity_tolerance_change: string | null
           ai_processed_at: string | null
           appetite_change: string | null
@@ -279,6 +334,7 @@ export type Database = {
           urine_output_change: string | null
         }
         Insert: {
+          activity_step_change?: string | null
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
@@ -296,6 +352,7 @@ export type Database = {
           urine_output_change?: string | null
         }
         Update: {
+          activity_step_change?: string | null
           activity_tolerance_change?: string | null
           ai_processed_at?: string | null
           appetite_change?: string | null
