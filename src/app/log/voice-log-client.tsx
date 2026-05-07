@@ -97,11 +97,13 @@ const TILE_ORDER: TileKey[] = [
 ];
 
 // `important` flags the daily-track core: the 5 signals that matter most for
-// CHF baseline + decompensation detection per research/chf-source-of-truth.md.
-// Used to surface a "missing today" nudge banner if any of these go unfilled.
-// BP/HR/O2 are conditional vitals (caregiver may not have a cuff/oximeter)
-// and Cough/Appetite are signal-bearing but lower urgency, so they don't
-// trigger the nudge.
+// CHF baseline + decompensation detection per research/chf-source-of-truth.md
+// §5 (weight → edema → dyspnea → orthopnea → cough). Used to surface a
+// "missing today" nudge banner and the amber priority outline on tiles.
+// BP/HR/O2 are conditional vitals (caregiver may not have a cuff/oximeter).
+// Energy and Appetite still render when dictated, but are tier-3 signals
+// and don't trigger the nudge — `activity_step_change` already captures
+// functional change separately.
 const TILE_META: Record<
   TileKey,
   { label: string; Icon: typeof Scale; emptyHint: string; important: boolean }
@@ -112,11 +114,16 @@ const TILE_META: Record<
   oxygen: { label: 'Oxygen', Icon: Droplets, emptyHint: 'Tap if measured', important: false },
   breathing: { label: 'Breathing', Icon: Wind, emptyHint: 'Mention to log', important: true },
   swelling: { label: 'Swelling', Icon: Footprints, emptyHint: 'Mention to log', important: true },
-  energy: { label: 'Energy', Icon: Battery, emptyHint: 'Mention to log', important: true },
-  sleep: { label: 'Sleep', Icon: Moon, emptyHint: 'Mention to log', important: true },
-  cough: { label: 'Cough', Icon: Volume2, emptyHint: 'Mention to log', important: false },
+  energy: { label: 'Energy', Icon: Battery, emptyHint: 'Mention to log', important: false },
+  sleep: { label: 'Pillows', Icon: Moon, emptyHint: 'Mention to log', important: true },
+  cough: { label: 'Cough', Icon: Volume2, emptyHint: 'Mention to log', important: true },
   appetite: { label: 'Appetite', Icon: Soup, emptyHint: 'Mention to log', important: false },
 };
+
+// Display order for the "matters most" nudge body. Independent of TILE_ORDER
+// (which drives the visual grid). Order follows the decompensation cascade
+// per research/chf-source-of-truth.md §5.
+const PRIORITY_TILES: TileKey[] = ['weight', 'swelling', 'breathing', 'sleep', 'cough'];
 
 function formatDyspnea(level: number | null): string | null {
   if (level == null) return null;
@@ -1124,7 +1131,7 @@ export function VoiceLogClient({
                 <p className="text-xs leading-relaxed mt-1.5 opacity-90">
                   These five matter most for spotting changes early:{' '}
                   <span className="font-medium">
-                    {missingImportantTiles.map((k) => TILE_META[k].label).join(', ')}
+                    {PRIORITY_TILES.map((k) => TILE_META[k].label).join(', ')}
                   </span>
                   . Try to mention them in tomorrow’s log so we can build a stable
                   baseline.
