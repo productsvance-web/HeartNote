@@ -445,6 +445,12 @@ export function VoiceLogClient({
   const lastFinalAtRef = useRef<number>(0);
   const voiceStopTimerRef = useRef<number | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  // Screen Wake Lock — keeps the screen on for the duration of the
+  // recording so the OS doesn't background the page mid-dictation. iOS
+  // Safari 16.4+ supports it; older browsers fall through silently. The
+  // OS auto-releases when the page becomes hidden, so we re-acquire on
+  // visibilitychange if the user comes back while still recording.
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Latest finals for synchronous reads (avoids the setFinals-callback hack
   // in stopRecording, which was fragile under React 19 StrictMode).
   const finalsRef = useRef<string[]>(existingTranscript ? [existingTranscript] : []);
@@ -593,15 +599,63 @@ export function VoiceLogClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finals, status]);
 
-  // Cleanup on unmount: close the WS, stop the mic stream, clear timers.
+  // Cleanup on unmount: close the WS, stop the mic stream, clear timers,
+  // release the wake lock.
   useEffect(() => {
     return () => {
       dgClientRef.current?.close();
       streamRef.current?.getTracks().forEach((t) => t.stop());
       if (timerRef.current) window.clearInterval(timerRef.current);
       if (voiceStopTimerRef.current) window.clearTimeout(voiceStopTimerRef.current);
+      void releaseWakeLock();
     };
   }, []);
+
+  // While recording, watch for the page going hidden (manual screen lock,
+  // app switch). The browser will pause our main thread and Deepgram's
+  // socket will time out — better to gracefully stop and save what we
+  // have than leave a row stuck in 'pending'. If the page comes back
+  // while still recording (rare — user toggled briefly), re-acquire the
+  // wake lock since the OS auto-released it.
+  useEffect(() => {
+    if (status !== 'recording') return;
+    function onVisibilityChange() {
+      if (document.hidden) {
+        // Use a ref-based check inside stopRecording to skip the no-op path.
+        if (streamRef.current) {
+          stopRecording('Screen turned off — saving what you said.');
+        }
+      } else {
+        void acquireWakeLock();
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  async function acquireWakeLock() {
+    if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+    } catch {
+      // User may have denied, battery may be low, browser may have its own
+      // policy. Not fatal — recording still works; the visibilitychange
+      // handler will catch a screen-lock gracefully.
+    }
+  }
+
+  async function releaseWakeLock() {
+    const sentinel = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (sentinel) {
+      try {
+        await sentinel.release();
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   async function startRecording() {
     setError(null);
@@ -676,8 +730,10 @@ export function VoiceLogClient({
     const opened = await openSession(stream);
     if (!opened) return; // openSession surfaced its own error state
 
-    // 5. Start the timer
+    // 5. Start the timer + request the wake lock so the screen stays on
+    //    for the 30-second dictation. Wake lock failure is non-fatal.
     setStatus('recording');
+    void acquireWakeLock();
     timerRef.current = window.setInterval(() => {
       setSeconds((s) => {
         const next = s + 1;
@@ -782,6 +838,7 @@ export function VoiceLogClient({
     dgClientRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    void releaseWakeLock();
 
     setStopReason(reasonNote ?? null);
 
