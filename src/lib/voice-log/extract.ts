@@ -117,6 +117,11 @@ const LOG_OBSERVATION_TOOL: Anthropic.Tool = {
               description:
                 'For SWELLING events ONLY. true = swelling was there last night (or in the evening) and gone by morning. Caregiver phrases that map here: "her ankles were puffy last night but normal this morning" / "swelling resolves overnight" / "puffy in the evening, looks fine in the morning." This is the tier-3 evening-only-swelling trigger (research §2 Tier 3: "Mild swelling that resolves with elevation overnight"). OMIT for any non-swelling event — the DB enforces swelling-only via CHECK constraint, so other rows will be rejected.',
             },
+            postural: {
+              type: 'boolean',
+              description:
+                'For DIZZINESS events ONLY. true = on standing / when she stood up / brief on getting up. false = persistent / has been dizzy a while / not specifically on-standing. OMIT when the caregiver gave no postural cue at all. Caregiver phrases that map to true: "she felt dizzy when she stood up" / "got up too fast and felt lightheaded" / "head spun for a second when she got out of the chair." Phrases that map to false: "she\'s been dizzy all afternoon" / "she\'s been lightheaded since lunch" / "feels off-balance most of the day." Used to distinguish tier-3 orthostatic dizziness (research §2 Tier 3: "Brief orthostatic dizziness <1 min, no fall") from tier-2 persistent dizziness with low SBP (research §2 Tier 2: "SBP <90 with dizziness/confusion/cool clammy"). DB enforces dizziness-only via CHECK constraint.',
+            },
             chest_pain_character: {
               type: 'string',
               description:
@@ -252,6 +257,9 @@ const SYSTEM_PROMPT_HEADER = `You are HeartNote's clinical extraction assistant.
 - "she's been nauseous since dinner" / "she said she felt sick to her stomach" → { symptom: "nausea", present: true }
 - "white foamy stuff she coughed up" / "white bubbly mucus" → { symptom: "cough", present: true, sputum_color: "white_frothy" } (TIER-1 pulmonary edema — same urgency as pink frothy)
 - "her ankles were puffy last night, normal this morning" → { symptom: "swelling", present: true, severity: 1, resolves_overnight: true } (TIER-3 evening-only-swelling)
+- "she got dizzy when she stood up" → { symptom: "dizziness", present: true, postural: true } (TIER-3 orthostatic)
+- "she's been dizzy all afternoon" → { symptom: "dizziness", present: true, postural: false } (compounds with low SBP for TIER-2)
+- "she felt dizzy" with NO standing-vs-persistent cue → { symptom: "dizziness", present: true } (postural OMITTED)
 - "she was tired today" / "she was wiped out" → { symptom: "fatigue", present: true } (NEVER include severity for fatigue — DB rejects it; fatigue is binary by design)
 - Symptoms with severity scales: dyspnea, swelling, cognition_change. ALL OTHERS are boolean — fill present, omit severity (cough, chest_pain, pnd, syncope, extremities_cold_clammy, cyanosis, early_satiety, fatigue, pulse_irregular, dizziness, nausea).
 - Caregiver said nothing about a symptom → DO NOT include it. Empty array is correct when nothing was said.
@@ -342,6 +350,7 @@ export type SymptomEventExtraction = {
   sputum_color?: 'clear' | 'white' | 'pink_frothy' | 'white_frothy';
   chest_pain_character?: string;
   resolves_overnight?: boolean;
+  postural?: boolean;
 };
 
 export type DayLevelExtraction = {

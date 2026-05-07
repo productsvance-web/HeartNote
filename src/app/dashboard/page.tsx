@@ -1,11 +1,14 @@
 import { redirect } from 'next/navigation';
-import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2 } from 'lucide-react';
+import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2, Phone, AlertTriangle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { StatusRing } from '@/components/heartnote/StatusRing';
 import { TodaysMedsCard } from '@/components/heartnote/TodaysMedsCard';
+import { COLD_START_MIN_LOG_DAYS } from '@/lib/clinical/thresholds';
 import Link from 'next/link';
+
+type TriggerRow = { rule_id: string; label: string; evidence: Record<string, unknown> };
 
 function greet() {
   const h = new Date().getHours();
@@ -28,7 +31,7 @@ export default async function DashboardPage() {
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name')
+    .select('id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name, cardiologist_phone')
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -36,30 +39,58 @@ export default async function DashboardPage() {
 
   const patientName = patient?.display_name ?? 'them';
   const cardiologist = patient?.cardiologist_name;
+  const cardiologistPhone = patient?.cardiologist_phone;
 
-  // Caregiver-local calendar day; UTC would mis-bucket evening / early-morning
-  // logs. See src/lib/dates/today.ts.
   const today = getTodayInTimezone(profile.timezone);
-  const { data: todaysLog } = patient
+
+  // Multiple daily_logs rows can exist for one (patient, log_date) since the
+  // multi-readings migration. Pull the most recent for processing-status.
+  const { data: todaysLogs } = patient
     ? await supabase
         .from('daily_logs')
-        .select('id, processing_status, transcribed_text, created_at')
+        .select('id, processing_status, created_at')
+        .eq('patient_id', patient.id)
+        .eq('log_date', today)
+        .order('created_at', { ascending: false })
+        .limit(1)
+    : { data: null };
+  const todaysLog = todaysLogs?.[0] ?? null;
+
+  // Phase 1 alert engine writes one row per (patient, log_date). Read it
+  // straight — never recompute (per code-quality.md rule #3).
+  const { data: assessment } = patient
+    ? await supabase
+        .from('daily_assessments')
+        .select('tier, triggers, cold_start, evaluated_at')
         .eq('patient_id', patient.id)
         .eq('log_date', today)
         .maybeSingle()
     : { data: null };
 
-  // Until we wire alert logic, derive a simple display status from the log state.
-  // 'pending' here means a row exists from a record-attempt that never submitted
-  // a transcript — same as no log at all from the caregiver's perspective.
-  // No log yet / pending → empty (no ring). Analyzing → loading visual.
-  // Complete → 'good' (placeholder until tier-detection is wired).
+  // Cold-start "N of 7 days logged" copy needs the count of distinct prior log days.
+  let priorLogDayCount = 0;
+  if (patient && assessment?.cold_start) {
+    const lookback = new Date();
+    lookback.setUTCDate(lookback.getUTCDate() - 14);
+    const { data: priorRows } = await supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patient.id)
+      .gte('log_date', lookback.toISOString().slice(0, 10))
+      .lt('log_date', today);
+    priorLogDayCount = new Set((priorRows ?? []).map((r) => r.log_date)).size;
+  }
+
   const logStatus: 'none' | 'processing' | 'complete' =
     !todaysLog || todaysLog.processing_status === 'pending'
       ? 'none'
       : todaysLog.processing_status === 'complete'
         ? 'complete'
         : 'processing';
+
+  const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
+  const tier = assessment?.tier ?? null;
+  const coldStart = assessment?.cold_start === true;
 
   const tiles = [
     { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
@@ -78,8 +109,6 @@ export default async function DashboardPage() {
       </header>
 
       <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
-        {logStatus === 'complete' && <StatusRing status="good" />}
-
         {logStatus === 'processing' && (
           <div className="flex flex-col items-center gap-3 py-6">
             <div
@@ -90,6 +119,72 @@ export default async function DashboardPage() {
             </div>
             <p className="font-display text-lg">Listening to today&apos;s log…</p>
             <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
+          </div>
+        )}
+
+        {logStatus === 'complete' && tier === 'tier_1_911' && (
+          <AlertBlock
+            tone="alert"
+            heading="Call 911 now"
+            sub="Severe sign logged today"
+            triggers={triggers}
+            phoneCta={{ label: 'Call 911', href: 'tel:911' }}
+          />
+        )}
+
+        {logStatus === 'complete' && tier === 'tier_2_today' && (
+          <AlertBlock
+            tone="alert"
+            heading="Call cardiologist today"
+            sub="Pattern worth a phone call"
+            triggers={triggers}
+            phoneCta={
+              cardiologistPhone
+                ? { label: `Call ${cardiologist ?? 'cardiologist'}`, href: `tel:${cardiologistPhone}` }
+                : null
+            }
+          />
+        )}
+
+        {logStatus === 'complete' && tier === 'tier_3_48hr' && (
+          <AlertBlock
+            tone="watch"
+            heading="Call cardiologist within 48 hours"
+            sub="Worth flagging at the next call"
+            triggers={triggers}
+            phoneCta={
+              cardiologistPhone
+                ? { label: `Call ${cardiologist ?? 'cardiologist'}`, href: `tel:${cardiologistPhone}` }
+                : null
+            }
+          />
+        )}
+
+        {logStatus === 'complete' && tier === 'tier_4_log' && coldStart && (
+          <div className="flex flex-col items-center text-center py-4">
+            <div
+              className="h-16 w-16 rounded-full flex items-center justify-center"
+              style={{ background: 'var(--secondary)', color: 'var(--bluegray)' }}
+            >
+              <Heart size={26} />
+            </div>
+            <p className="font-display text-2xl mt-3">Building baseline</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {priorLogDayCount + 1} of {COLD_START_MIN_LOG_DAYS} days logged. Patterns become
+              visible after about a week.
+            </p>
+          </div>
+        )}
+
+        {logStatus === 'complete' && tier === 'tier_4_log' && !coldStart && (
+          <StatusRing status="good" />
+        )}
+
+        {logStatus === 'complete' && tier === null && (
+          <div className="text-center py-2">
+            <p className="text-sm text-muted-foreground">
+              Log saved. Today&apos;s pattern read isn&apos;t available — tap below to add another note.
+            </p>
           </div>
         )}
 
@@ -198,5 +293,61 @@ export default async function DashboardPage() {
         for caregivers
       </footer>
     </PhoneShell>
+  );
+}
+
+function AlertBlock({
+  tone,
+  heading,
+  sub,
+  triggers,
+  phoneCta,
+}: {
+  tone: 'alert' | 'watch';
+  heading: string;
+  sub: string;
+  triggers: TriggerRow[];
+  phoneCta: { label: string; href: string } | null;
+}) {
+  const ringVar = tone === 'alert' ? 'var(--status-alert)' : 'var(--status-watch)';
+  const softVar = tone === 'alert' ? 'var(--status-alert-soft)' : 'var(--status-watch-soft)';
+  const fgVar = tone === 'alert' ? 'var(--status-alert-foreground)' : 'var(--status-watch-foreground)';
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <div
+          className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
+          style={{ background: softVar, color: fgVar }}
+        >
+          <AlertTriangle size={22} />
+        </div>
+        <div className="min-w-0">
+          <p className="font-display text-xl text-foreground leading-tight">{heading}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>
+        </div>
+      </div>
+
+      {triggers.length > 0 && (
+        <ul className="rounded-2xl px-4 py-3 space-y-1.5" style={{ background: softVar }}>
+          {triggers.map((t) => (
+            <li key={t.rule_id} className="text-sm" style={{ color: fgVar }}>
+              • {t.label}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {phoneCta && (
+        <a
+          href={phoneCta.href}
+          className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-4 text-white font-semibold shadow-soft active:scale-[0.98] transition"
+          style={{ background: ringVar }}
+        >
+          <Phone size={18} />
+          {phoneCta.label}
+        </a>
+      )}
+    </div>
   );
 }
