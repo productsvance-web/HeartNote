@@ -118,6 +118,12 @@ export function StrengthStep({
   );
 }
 
+// Manual number + unit field. Fully controlled — value+unit are derived
+// from the parent's `strength` prop on every render. Internal state
+// mirroring the prop class hid the OCR-sourced strength on first paint
+// (prefill fires post-mount, but useState initializers had already
+// captured the empty value). Splitting on each render is cheap and
+// removes the prop-vs-state divergence class entirely.
 function ManualStrength({
   strength,
   onChange,
@@ -127,16 +133,13 @@ function ManualStrength({
   onChange: (next: string) => void;
   fallback: boolean;
 }) {
-  const initialValue = strength.trim().split(/\s+/)[0] ?? '';
-  const initialUnit =
-    strength.trim().split(/\s+/).slice(1).join(' ').toLowerCase() ||
+  const trimmed = strength.trim();
+  const value = trimmed.split(/\s+/)[0] ?? '';
+  const unit =
+    trimmed.split(/\s+/).slice(1).join(' ').toLowerCase() ||
     (fallback ? '%' : 'mg');
-  const [value, setValue] = useState(initialValue);
-  const [unit, setUnit] = useState(initialUnit);
 
   function emit(nextValue: string, nextUnit: string) {
-    setValue(nextValue);
-    setUnit(nextUnit);
     onChange(nextValue.trim() ? `${nextValue.trim()} ${nextUnit}` : '');
   }
 
@@ -187,8 +190,13 @@ function formatChipForDose(strength: string): string {
     (match, num) => {
       const value = parseFloat(num);
       if (!Number.isFinite(value) || value >= 1) return match;
-      const mcg = Math.round(value * 1000);
-      return `${mcg} MCG`;
+      // Preserve one decimal so half-mcg strengths (levothyroxine 12.5
+      // mcg = 0.0125 MG) survive the conversion. Round-half-up at the
+      // 0.1-mcg place; trim a trailing ".0" so "90.0 MCG" reads as "90
+      // MCG".
+      const mcg = Math.round(value * 10000) / 10;
+      const display = Number.isInteger(mcg) ? String(mcg) : mcg.toFixed(1);
+      return `${display} MCG`;
     }
   );
   return promoted.replace(/\b(MG|MCG|G|ML|L|MEQ)\b/g, (m) => m.toLowerCase());

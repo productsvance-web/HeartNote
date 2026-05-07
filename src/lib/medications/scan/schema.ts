@@ -9,8 +9,8 @@
 // (`dose: string` matching DOSE_FORMAT, e.g. "40 mg"), this one models
 // what the MODEL produces (separate dose_value + dose_unit, since
 // structured-output models combine them less reliably than emitting them
-// as discrete fields). The boundary between them is the scan-review-card
-// — when the caregiver confirms a card, we combine `${dose_value} ${dose_unit}`
+// as discrete fields). The boundary between them is extracted-to-payload —
+// when the caregiver confirms a card, we combine `${dose_value} ${dose_unit}`
 // into the form payload string. Architectural decision #17.
 
 import { z } from 'zod';

@@ -1,8 +1,8 @@
 // Unit tests for the strength fallback chain and drug-name composition
-// in extracted-to-payload.ts. The display-side mirror in
-// scan-review-card.tsx (displayStrength) MUST produce the same value
-// for the same input — drift means the user sees one strength on Step
-// 1 and a different one gets saved.
+// in extracted-to-payload.ts. The display-side mirror in scan-client.tsx
+// (PendingMedSummary's displayStrength) MUST produce the same value for
+// the same input — drift means the user sees one strength on the
+// pending-med summary and a different one gets saved.
 //
 // Run from repo root:
 //   node --test --experimental-strip-types src/app/me/medications/scan/extracted-to-payload.test.ts

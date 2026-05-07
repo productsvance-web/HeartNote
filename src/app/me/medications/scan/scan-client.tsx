@@ -14,6 +14,7 @@ import {
   type MedicationPayload,
 } from '../actions';
 import { extractedMedToPayload, toTitleCase } from './extracted-to-payload';
+import { normalizeForm } from '@/lib/medications/rxnorm';
 import {
   rescheduleAll,
   requestNotificationPermission,
@@ -439,9 +440,9 @@ export function ScanClient() {
   );
 }
 
-// Compact per-med entry card. Replaces ScanReviewCard's verification view —
-// the unified flow's Type/Strength subtitle now handles confirmation
-// inline on the schedule screen.
+// Per-med entry card for the multi-card scan view. Shows the OCR'd drug
+// name + resolved strength and form so the caregiver can verify against
+// the bottle before tapping "Set schedule" to enter the unified flow.
 function PendingMedSummary({
   med,
   onSetSchedule,
@@ -461,6 +462,9 @@ function PendingMedSummary({
   const primary = toTitleCase(
     ocrName.length > 0 ? ocrName : (med.canonicalName ?? '').trim()
   );
+  const displayDose = displayStrength(med);
+  const displayForm = normalizeForm(med.form);
+
   return (
     <div className="rounded-2xl bg-card shadow-card p-4">
       {position !== null && totalCount > 1 && (
@@ -469,6 +473,18 @@ function PendingMedSummary({
         </p>
       )}
       <p className="text-base font-semibold text-foreground">{primary}</p>
+
+      <dl className="mt-3 space-y-1.5 text-sm">
+        <Row
+          label="Strength"
+          value={displayDose || <span className="text-muted-foreground">Not on label</span>}
+        />
+        <Row
+          label="Form"
+          value={displayForm ?? <span className="text-muted-foreground">Not on label</span>}
+        />
+      </dl>
+
       <button
         type="button"
         onClick={onSetSchedule}
@@ -487,6 +503,29 @@ function PendingMedSummary({
       </button>
     </div>
   );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-xs uppercase tracking-wide text-muted-foreground/70">{label}</dt>
+      <dd className="text-sm text-foreground text-right">{value}</dd>
+    </div>
+  );
+}
+
+// Mirrors the chain in extracted-to-payload's resolveDose so the
+// summary card never displays a different strength than what saves.
+function displayStrength(med: ResolvedMed): string {
+  if (med.strength) return med.strength.toLowerCase().trim();
+  if (med.canonicalName && !med.canonicalName.includes(' / ')) {
+    const m = /(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:\/[A-Za-z]+)?)/.exec(med.canonicalName);
+    if (m) return `${m[1]} ${m[2].toLowerCase()}`;
+  }
+  if (med.dose_value !== null && med.dose_unit && med.dose_unit.trim().length > 0) {
+    return `${med.dose_value} ${med.dose_unit.toLowerCase().trim()}`;
+  }
+  return '';
 }
 
 // Dose-change short-circuit per build conv #6: labels with dose-change

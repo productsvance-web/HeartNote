@@ -97,7 +97,9 @@ export function NewMedicationFlow() {
 
   function pickType(form: string) {
     // Changing the picked type clears strength so the StrengthStep
-    // re-derives chips for the new form. Mirrors today's wizard semantics.
+    // re-derives chips for the new form. Strength chips are form-scoped
+    // (drugDetails.forms[i].strengths) and a stale value would surface a
+    // chip selection that doesn't match the new form's options.
     setState((s) => ({ ...s, form, strength: '' }));
   }
 

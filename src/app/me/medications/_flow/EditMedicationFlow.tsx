@@ -11,9 +11,6 @@ import {
 } from '../actions';
 import { type CadenceDraft } from '../cadence/cadence-fields';
 import {
-  type CadenceKind,
-} from '@/lib/medications/cadence';
-import {
   rescheduleAll,
   requestNotificationPermission,
   checkPermissionState,
@@ -124,7 +121,7 @@ export function EditMedicationFlow({ initial }: Props) {
     return {
       drugName: sel.name,
       dose: state.strength,
-      cadenceKind: d.kind as CadenceKind,
+      cadenceKind: d.kind,
       cycleOnDays: d.cycleOnDays,
       cycleOffDays: d.cycleOffDays,
       intervalDays: d.intervalDays,
@@ -145,6 +142,11 @@ export function EditMedicationFlow({ initial }: Props) {
 
   function save() {
     if (!state.selection) return;
+    // Schedule replacement on an active med wipes existing dose-time rows
+    // and reschedules notifications. Class-B destructive op per
+    // .claude/rules/destructive-actions.md — echo the drug name so the
+    // caregiver can verify they're operating on the right entity.
+    if (!window.confirm(`Replace the schedule for ${initial.drugName}?`)) return;
     const payload = buildPayload(draft, state.selection);
     setError(null);
     startTransition(async () => {

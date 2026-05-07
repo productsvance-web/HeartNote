@@ -11,27 +11,6 @@ import {
 } from '@/lib/medications/classify';
 import { CADENCE_KINDS, HH_MM_REGEX, type CadenceKind } from '@/lib/medications/cadence';
 
-// Form-side strength lookup for inline unit constraints AND the
-// "did you mean" spell-correction chip. Both fields ride the same
-// classifyDrugByName round-trip — no additional network calls. Skips
-// entirely for short strings so the form doesn't fire on every keystroke.
-export async function lookupDrugStrengths(
-  drugName: string
-): Promise<{
-  allowedStrengths: AllowedStrengths | null;
-  suggestedName: string | null;
-}> {
-  const trimmed = drugName.trim();
-  if (trimmed.length < 3) {
-    return { allowedStrengths: null, suggestedName: null };
-  }
-  const result = await classifyDrugByName(trimmed);
-  return {
-    allowedStrengths: result.allowedStrengths ?? null,
-    suggestedName: result.suggestedName ?? null,
-  };
-}
-
 // `<number> <unit>` with the unit drawn from a closed list of forms a
 // caregiver might reasonably enter. Catches "lots", "10x", "small dose"
 // at the format layer; semantic checks (is the unit class right for this

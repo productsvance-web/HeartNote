@@ -49,9 +49,9 @@ export default async function EditMedicationPage({ params }: PageProps) {
     appliesToDow: d.applies_to_dow,
   }));
 
-  // Reconstruct CadenceDraft from stored columns. Mirrors the
-  // buildInitialDraft heuristic in the prior medications-form: cycleUnit
-  // promotes to weeks when cycleOnDays is a multiple of 7 and >= 7.
+  // Reconstruct CadenceDraft from stored columns. cycleUnit promotes to
+  // weeks when cycleOnDays is a multiple of 7 and >= 7 — keeps the picker
+  // in week-units when the schedule was saved that way.
   const kind = (med.cadence_kind ?? 'as_needed') as CadenceKind;
   const groups =
     kind === 'specific_days'
