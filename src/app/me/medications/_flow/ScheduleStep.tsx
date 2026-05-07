@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { CadenceFields, type CadenceDraft } from '../cadence/cadence-fields';
-import { normalizeForm } from '@/lib/medications/rxnorm';
 import { MedFlowChrome } from './MedFlowChrome';
 
 // Canonical end-screen for the unified medication flow. Wraps CadenceFields
@@ -150,17 +149,13 @@ export function ScheduleStep({
 }
 
 // Build the appended-selections subtitle, mirroring Apple Health's pattern:
-// "Tablet" → "Tablet, 40 mg" → "Sublingual Spray, 400 mcg". Returns null
-// when neither field is known (e.g., custom path with no strength yet).
+// "Tablet" → "Tablet, 40 mg" → "Sublingual Spray, 400 mcg". Form is the
+// verbatim RxNorm name (already title-case). Returns null when neither
+// field is known (e.g., custom path with no strength yet).
 function buildSubtitle(form: string | null, strength: string): string | null {
-  const formLabel = form ? (normalizeForm(form) ?? form) : null;
   const strengthLabel = strength.trim().length > 0 ? strength.trim() : null;
-  if (formLabel && strengthLabel) return `${capitalize(formLabel)}, ${strengthLabel}`;
-  if (formLabel) return capitalize(formLabel);
+  if (form && strengthLabel) return `${form}, ${strengthLabel}`;
+  if (form) return form;
   if (strengthLabel) return strengthLabel;
   return null;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }

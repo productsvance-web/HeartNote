@@ -1,13 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  FORM_COUNT_NOUN,
-  type DrugDetails,
-} from '@/lib/medications/rxnorm';
+import { Check } from 'lucide-react';
+import { type DrugDetails } from '@/lib/medications/rxnorm';
 import { UNIT_OPTIONS, unitLabel } from '@/lib/medications/units';
 import { MedFlowChrome } from './MedFlowChrome';
 import type { DrugSelection } from './flow-types';
+
+// Apple Health's pattern for the strength screen: one full-width row per
+// available strength, single column inside a card, checkmark on the right
+// when selected. "Add Custom" is a tertiary link below the list — opens
+// a number+unit input. Falls back to the input directly when there's no
+// list to show (custom-name drug, fetch failure, no strengths for the
+// chosen form).
 
 interface Props {
   selection: DrugSelection;
@@ -20,8 +25,6 @@ interface Props {
   onClose: () => void;
 }
 
-const PILL_NOUNS = new Set(['tablet', 'capsule']);
-
 export function StrengthStep({
   selection,
   form,
@@ -33,18 +36,14 @@ export function StrengthStep({
   onClose,
 }: Props) {
   const formStrengths = matchingStrengths(drugDetails, form);
-  const isPillForm = !!form && PILL_NOUNS.has(FORM_COUNT_NOUN[form]?.single ?? '');
-  const showChips = isPillForm && formStrengths.length > 0;
-  const matchedChip = showChips
-    ? formStrengths.some((s) => formatChipForDose(s) === strength)
-    : false;
-  const [manualMode, setManualMode] = useState(
-    !showChips || (strength.length > 0 && !matchedChip)
+  const hasList = formStrengths.length > 0;
+  const matchedRow =
+    hasList && formStrengths.some((s) => formatStrengthForDose(s) === strength);
+  // Custom mode: caregiver tapped "Add Custom" or there's no list to show.
+  // Initialized once at mount; toggling between modes is explicit.
+  const [customMode, setCustomMode] = useState(
+    !hasList || (strength.length > 0 && !matchedRow)
   );
-
-  // No auto-prefill on manual entry — user explicitly opts into a strength
-  // (per the unification plan; mirrors Apple Health's behavior). Scan flow
-  // bypasses this step entirely when OCR resolved a strength.
 
   return (
     <MedFlowChrome
@@ -57,61 +56,63 @@ export function StrengthStep({
       onPrimary={onContinue}
     >
       <div className="space-y-4">
-        <h1 className="font-display text-2xl text-foreground">Add the medication strength.</h1>
+        <h1 className="font-display text-2xl text-foreground">Choose the medication strength.</h1>
 
-        {showChips && !manualMode && (
-          <div className="space-y-3">
-            <ul className="grid grid-cols-3 gap-2">
-              {formStrengths.map((s) => (
+        {hasList && !customMode && (
+          <ul className="rounded-2xl bg-card shadow-card divide-y divide-border overflow-hidden">
+            {formStrengths.map((s) => {
+              const formatted = formatStrengthForDose(s);
+              const selected = strength === formatted;
+              return (
                 <li key={s}>
                   <button
                     type="button"
-                    onClick={() => onChange(formatChipForDose(s))}
-                    className={`w-full rounded-full border px-3 py-2.5 text-sm ${
-                      strength === formatChipForDose(s)
-                        ? 'border-foreground bg-foreground/5 text-foreground'
-                        : 'border-border bg-card text-foreground'
-                    }`}
+                    onClick={() => onChange(formatted)}
+                    className="w-full text-left px-4 py-3.5 text-base text-foreground flex items-center justify-between gap-3"
                   >
-                    {formatChipForDose(s)}
+                    <span>{formatted}</span>
+                    {selected && <Check size={18} className="text-foreground" />}
                   </button>
                 </li>
-              ))}
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setManualMode(true)}
-                  className="w-full rounded-full border border-dashed border-border bg-card px-3 py-2.5 text-sm text-foreground"
-                >
-                  Custom
-                </button>
-              </li>
-            </ul>
+              );
+            })}
+          </ul>
+        )}
+
+        {hasList && !customMode && (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              You can add a custom medication if strength is not available.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomMode(true);
+                onChange('');
+              }}
+              className="text-sm font-semibold text-primary"
+            >
+              Add Custom
+            </button>
           </div>
         )}
 
-        {(!showChips || manualMode) && (
+        {(!hasList || customMode) && (
           <ManualStrength
             strength={strength}
             onChange={onChange}
-            fallback={!showChips}
+            fallback={!hasList}
           />
         )}
 
-        {showChips && manualMode && (
+        {hasList && customMode && (
           <button
             type="button"
-            onClick={() => setManualMode(false)}
+            onClick={() => setCustomMode(false)}
             className="text-xs text-muted-foreground underline"
           >
             Use a listed strength
           </button>
-        )}
-
-        {!showChips && drugDetails && drugDetails.forms.length > 0 && (
-          <p className="text-xs text-muted-foreground">
-            Strength options unavailable; enter manually.
-          </p>
         )}
       </div>
     </MedFlowChrome>
@@ -119,11 +120,8 @@ export function StrengthStep({
 }
 
 // Manual number + unit field. Fully controlled — value+unit are derived
-// from the parent's `strength` prop on every render. Internal state
-// mirroring the prop class hid the OCR-sourced strength on first paint
-// (prefill fires post-mount, but useState initializers had already
-// captured the empty value). Splitting on each render is cheap and
-// removes the prop-vs-state divergence class entirely.
+// from the parent's `strength` prop on every render so OCR-sourced
+// values arriving post-mount are visible without internal-state drift.
 function ManualStrength({
   strength,
   onChange,
@@ -184,7 +182,7 @@ function matchingStrengths(drugDetails: DrugDetails | null, form: string | null)
 // doses in caregiver-readable case ("40 mg") — match that. Sub-1-mg
 // leading values get rewritten to micrograms ("0.09 MG/ACTUAT" →
 // "90 mcg/actuat") because that's how the inhaler label reads.
-function formatChipForDose(strength: string): string {
+function formatStrengthForDose(strength: string): string {
   const promoted = strength.replace(
     /^(\d+(?:\.\d+)?)\s+MG\b/i,
     (match, num) => {
