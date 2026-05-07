@@ -128,7 +128,7 @@ export default async function DashboardPage() {
             heading="Call 911 now"
             sub="Severe sign logged today"
             triggers={triggers}
-            phoneCta={{ label: 'Call 911', href: 'tel:911' }}
+            phoneCta={{ label: 'Call 911', href: 'tel:911', intent: 'call' }}
           />
         )}
 
@@ -138,11 +138,7 @@ export default async function DashboardPage() {
             heading="Call cardiologist today"
             sub="Pattern worth a phone call"
             triggers={triggers}
-            phoneCta={
-              cardiologistPhone
-                ? { label: `Call ${cardiologist ?? 'cardiologist'}`, href: `tel:${cardiologistPhone}` }
-                : null
-            }
+            phoneCta={cardiologistCta(cardiologist, cardiologistPhone)}
           />
         )}
 
@@ -152,11 +148,7 @@ export default async function DashboardPage() {
             heading="Call cardiologist within 48 hours"
             sub="Worth flagging at the next call"
             triggers={triggers}
-            phoneCta={
-              cardiologistPhone
-                ? { label: `Call ${cardiologist ?? 'cardiologist'}`, href: `tel:${cardiologistPhone}` }
-                : null
-            }
+            phoneCta={cardiologistCta(cardiologist, cardiologistPhone)}
           />
         )}
 
@@ -296,6 +288,15 @@ export default async function DashboardPage() {
   );
 }
 
+type PhoneCta = { label: string; href: string; intent: 'call' | 'fallback' };
+
+function cardiologistCta(name: string | null | undefined, phone: string | null | undefined): PhoneCta {
+  if (phone) {
+    return { label: `Call ${name ?? 'cardiologist'}`, href: `tel:${phone}`, intent: 'call' };
+  }
+  return { label: 'Add cardiologist phone in Settings', href: '/me', intent: 'fallback' };
+}
+
 function AlertBlock({
   tone,
   heading,
@@ -307,7 +308,7 @@ function AlertBlock({
   heading: string;
   sub: string;
   triggers: TriggerRow[];
-  phoneCta: { label: string; href: string } | null;
+  phoneCta: PhoneCta | null;
 }) {
   const ringVar = tone === 'alert' ? 'var(--status-alert)' : 'var(--status-watch)';
   const softVar = tone === 'alert' ? 'var(--status-alert-soft)' : 'var(--status-watch-soft)';
@@ -338,7 +339,7 @@ function AlertBlock({
         </ul>
       )}
 
-      {phoneCta && (
+      {phoneCta && phoneCta.intent === 'call' && (
         <a
           href={phoneCta.href}
           className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-4 text-white font-semibold shadow-soft active:scale-[0.98] transition"
@@ -347,6 +348,16 @@ function AlertBlock({
           <Phone size={18} />
           {phoneCta.label}
         </a>
+      )}
+      {phoneCta && phoneCta.intent === 'fallback' && (
+        <Link
+          href={phoneCta.href}
+          className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-4 font-semibold border active:scale-[0.98] transition"
+          style={{ borderColor: ringVar, color: fgVar }}
+        >
+          <Phone size={18} />
+          {phoneCta.label}
+        </Link>
       )}
     </div>
   );

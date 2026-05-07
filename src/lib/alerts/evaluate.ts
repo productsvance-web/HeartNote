@@ -43,7 +43,28 @@ import {
   SPO2_FRESHNESS_HOURS,
   COLD_START_MIN_LOG_DAYS,
   COLD_START_LOOKBACK_DAYS,
+  ROLLING_BASELINE_DAYS,
+  READING_FRESHNESS_HOURS,
+  PND_LOOKBACK_HOURS,
 } from '@/lib/clinical/thresholds';
+
+// ─── Deferred rules (research §2 vs Phase 1 v0) ─────────────────────────────
+//
+// Knowingly NOT implemented in v0. Each is traceable to a research §2 line.
+// Listed here so the next pass doesn't re-discover them as gaps.
+//
+// - §2 Tier 2 "Step-change worsening of dyspnea on exertion (NYHA creep)":
+//   needs cross-day comparison of dyspnea severity. Schema supports it
+//   (severity 0–4 on dyspnea events); engine doesn't yet compute the trend.
+// - §2 Tier 2 "New nausea / early satiety persisting >24 hr": nausea fires
+//   T2.12 on a single same-day event (over-fires); early_satiety has no
+//   rule. Both need a multi-event rolling-window check.
+// - §2 Tier 2 "Mild new confusion or lethargy": confusion is covered by
+//   T2.13 (cognition_change severity 1/2). "Lethargy" is not its own
+//   symptom; the closest fit is fatigue + activity_step_change=mild_slowdown
+//   (currently fires T3.2). Defer until we decide whether lethargy → its
+//   own symptom or stays mapped to fatigue+functional change.
+// - Fatigue frequency-vs-baseline: needs a multi-day baseline window.
 
 export type AlertTier = Database['public']['Enums']['alert_tier'];
 
@@ -113,7 +134,14 @@ export async function evaluateAlertTier(
   const coldStart = distinctPriorLogDays < COLD_START_MIN_LOG_DAYS;
 
   const todayEvents = symptomEvents.filter((e) => e.log_date === logDate);
-  const last48hEvents = symptomEvents; // already bounded to 48h on load
+
+  // Tighten the 48h window from "now" rather than "end-of-(logDate-2 UTC)".
+  // The DB query loads everything in the broader window for cheap; we
+  // re-filter here so an early-morning dictation doesn't pull a 70h-old PND.
+  const fortyEightHoursAgoMs = Date.now() - PND_LOOKBACK_HOURS * 3600_000;
+  const last48hEvents = symptomEvents.filter(
+    (e) => new Date(e.recorded_at).getTime() >= fortyEightHoursAgoMs
+  );
 
   const hits: RuleHit[] = [];
 
@@ -177,7 +205,7 @@ export async function evaluateAlertTier(
   }
 
   // T1.7 — SpO2 thresholds. Use freshest spo2 reading within window.
-  const freshestSpo2 = freshestReading(readings, 'spo2', SPO2_FRESHNESS_HOURS);
+  const freshestSpo2 = freshestReading(readings, 'spo2', SPO2_FRESHNESS_HOURS, logDate);
   if (freshestSpo2 && freshestSpo2.value < SPO2_TIER_1_911) {
     hits.push({
       tier: 'tier_1_911',
@@ -190,19 +218,30 @@ export async function evaluateAlertTier(
     freshestSpo2.value < SPO2_TIER_1_WITH_DYSPNEA &&
     todayEvents.some((e) => e.symptom === 'dyspnea' && e.present)
   ) {
-    hits.push({
-      tier: 'tier_1_911',
-      rule_id: 'T1.7b',
-      label: `Oxygen ${freshestSpo2.value}% with shortness of breath — 911`,
-      evidence: { spo2: freshestSpo2.value, recorded_at: freshestSpo2.recorded_at },
-    });
+    // Research §2 Tier 1 says "<90% with NEW dyspnea" — gate on the absence
+    // of dyspnea events in the prior 7 days so chronic NYHA-III dyspnea
+    // doesn't trip 911 every morning the spo2 cuff reads 89.
+    const priorDyspnea = await dyspneaEventsInPriorDays(
+      supabase,
+      patientId,
+      logDate,
+      ROLLING_BASELINE_DAYS
+    );
+    if (priorDyspnea === 0) {
+      hits.push({
+        tier: 'tier_1_911',
+        rule_id: 'T1.7b',
+        label: `Oxygen ${freshestSpo2.value}% with new shortness of breath — 911`,
+        evidence: { spo2: freshestSpo2.value, recorded_at: freshestSpo2.recorded_at },
+      });
+    }
   }
 
   // T1.8 — fast irregular pulse with chest pain or dizziness. Schema doesn't
   // capture "fast" on the symptom event itself, so we compound with a recent
   // resting_hr > HR_TIER_2_HIGH (100). Without a fast HR reading the
   // pulse_irregular event still drives the symptom-only fall-throughs below.
-  const freshestHr = freshestReading(readings, 'resting_hr', 24);
+  const freshestHr = freshestReading(readings, 'resting_hr', READING_FRESHNESS_HOURS, logDate);
   const irregularToday = todayEvents.find((e) => e.symptom === 'pulse_irregular' && e.present);
   const hasChestPainToday = todayEvents.some((e) => e.symptom === 'chest_pain' && e.present);
   const hasDizzinessToday = todayEvents.some((e) => e.symptom === 'dizziness' && e.present);
@@ -280,7 +319,12 @@ export async function evaluateAlertTier(
   // (or above the onboarding baseline if no recent data). Fires at-or-above
   // baseline+1 to capture "needs more pillows than usual."
   if (dayLevel.pillow_count !== null) {
-    const recentMax = await maxPillowCountInPriorDays(supabase, patientId, logDate, 7);
+    const recentMax = await maxPillowCountInPriorDays(
+      supabase,
+      patientId,
+      logDate,
+      ROLLING_BASELINE_DAYS
+    );
     const baseline = patient.normal_pillow_count ?? 1;
     const reference = Math.max(recentMax ?? baseline, baseline);
     if (dayLevel.pillow_count > reference) {
@@ -304,9 +348,11 @@ export async function evaluateAlertTier(
     break; // one is enough; multiple PND episodes don't multiply the alert
   }
 
-  // T2.6 — new or worsened swelling that does NOT resolve overnight. Skip
-  // when cold-start (no baseline yet); also exclude evening-only swelling
-  // (T3.3 handles that lower tier).
+  // T2.6 — new or worsened swelling that does NOT resolve overnight.
+  // Excludes evening-only swelling (T3.3 handles that lower tier). "New"
+  // means no prior swelling in the rolling baseline window OR today's
+  // severity exceeds the recent max — this works on day-1 (priorMax=null
+  // → "new") and on history alike, so cold-start does NOT gate this rule.
   const swellingToday = todayEvents.find(
     (e) =>
       e.symptom === 'swelling' &&
@@ -315,29 +361,23 @@ export async function evaluateAlertTier(
       e.resolves_overnight !== true
   );
   if (swellingToday) {
-    if (coldStart) {
-      // Acute swelling on day-1: still mention but as tier-3 watch (no
-      // baseline to call this "new or worsened" against).
+    const priorMax = await maxSwellingSeverityInPriorDays(
+      supabase,
+      patientId,
+      logDate,
+      ROLLING_BASELINE_DAYS
+    );
+    if (priorMax === null || (swellingToday.severity ?? 0) > priorMax) {
       hits.push({
-        tier: 'tier_3_48hr',
-        rule_id: 'T2.6c',
-        label: 'New swelling logged — building baseline; call within 48 hrs',
-        evidence: { severity: swellingToday.severity, recorded_at: swellingToday.recorded_at },
+        tier: 'tier_2_today',
+        rule_id: 'T2.6',
+        label: 'New or worsened swelling — call cardiologist today',
+        evidence: {
+          severity: swellingToday.severity,
+          prior_7d_max_severity: priorMax,
+          recorded_at: swellingToday.recorded_at,
+        },
       });
-    } else {
-      const priorMax = await maxSwellingSeverityInPriorDays(supabase, patientId, logDate, 7);
-      if (priorMax === null || (swellingToday.severity ?? 0) > priorMax) {
-        hits.push({
-          tier: 'tier_2_today',
-          rule_id: 'T2.6',
-          label: 'New or worsened swelling — call cardiologist today',
-          evidence: {
-            severity: swellingToday.severity,
-            prior_7d_max_severity: priorMax,
-            recorded_at: swellingToday.recorded_at,
-          },
-        });
-      }
     }
   }
 
@@ -363,7 +403,12 @@ export async function evaluateAlertTier(
         e.sputum_color !== 'white_frothy'
     );
     if (nocturnalCoughToday) {
-      const priorCough = await coughEventsInPriorDays(supabase, patientId, logDate, 7);
+      const priorCough = await coughEventsInPriorDays(
+        supabase,
+        patientId,
+        logDate,
+        ROLLING_BASELINE_DAYS
+      );
       if (priorCough === 0) {
         hits.push({
           tier: 'tier_2_today',
@@ -388,7 +433,7 @@ export async function evaluateAlertTier(
   // T2.10 — low SBP compounded with persistent dizziness, confusion, or
   // cool/clammy extremities. Persistent dizziness = postural=false; postural
   // dizziness alone is T3.4.
-  const freshestSbp = freshestReading(readings, 'systolic_bp', 24);
+  const freshestSbp = freshestReading(readings, 'systolic_bp', READING_FRESHNESS_HOURS, logDate);
   if (freshestSbp && freshestSbp.value < SBP_TIER_2_LOW) {
     const persistentDizziness = todayEvents.find(
       (e) => e.symptom === 'dizziness' && e.present && e.postural === false
@@ -415,6 +460,9 @@ export async function evaluateAlertTier(
   }
 
   // T2.11 — heart rate rules.
+  // Research-drift note: §2 Tier 2 says "Resting HR persistently >100 OR
+  // <50 with symptoms". v0 fires on a single freshest reading (no
+  // "persistently" check). Multi-reading persistence is deferred.
   if (freshestHr) {
     if (freshestHr.value > HR_TIER_2_VERY_HIGH) {
       hits.push({
@@ -763,6 +811,24 @@ async function maxSwellingSeverityInPriorDays(
   const severities = data.map((r) => r.severity as number | null).filter((v): v is number => v !== null);
   if (severities.length === 0) return null;
   return Math.max(...severities);
+}
+
+async function dyspneaEventsInPriorDays(
+  supabase: SupabaseClient<Database>,
+  patientId: string,
+  logDate: string,
+  days: number
+): Promise<number> {
+  const start = isoDateOffset(logDate, -days);
+  const { count } = await supabase
+    .from('daily_log_symptom_events')
+    .select('id', { count: 'exact', head: true })
+    .eq('patient_id', patientId)
+    .eq('symptom', 'dyspnea')
+    .eq('present', true)
+    .gte('log_date', start)
+    .lt('log_date', logDate);
+  return count ?? 0;
 }
 
 async function coughEventsInPriorDays(

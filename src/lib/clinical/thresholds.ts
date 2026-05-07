@@ -58,12 +58,27 @@ export const SPO2_TIER_1_WITH_DYSPNEA = 90;
 // 5 days ago shouldn't fire today's tier-1.
 export const SPO2_FRESHNESS_HOURS = 24;
 
-// ─── Cold-start (engine-internal, not in the research file) ──────────────────
+// ─── Engine-internal (not in the research file) ──────────────────────────────
 
-// A patient's rolling baseline only stabilizes after enough days of data.
-// Rules that depend on baseline (weight trends, "new" cough frequency) are
-// suppressed until the patient has at least this many distinct logged days
-// in the prior LOOKBACK window. Acute single-event rules (Tier 1, symptom-
-// only Tier 2/3) still fire on day 1.
+// Cold-start: a patient's rolling baseline only stabilizes after enough days
+// of data. Rules that depend on baseline (weight trends, "new" cough
+// frequency) are suppressed until the patient has at least this many
+// distinct logged days in the prior LOOKBACK window. Acute single-event
+// rules (Tier 1, symptom-only Tier 2/3) still fire on day 1.
 export const COLD_START_MIN_LOG_DAYS = 7;
 export const COLD_START_LOOKBACK_DAYS = 14;
+
+// Rolling-baseline window for "new or worsened" rules (orthopnea, swelling,
+// nocturnal cough). 7 days matches the §2 Tier 2 orthopnea language ("more
+// pillows than last week").
+export const ROLLING_BASELINE_DAYS = 7;
+
+// How fresh a vitals reading must be to drive an alert. A blood pressure
+// from 5 days ago shouldn't decide today's tier.
+export const READING_FRESHNESS_HOURS = 24;
+
+// Persistence window for symptoms research §2 Tier 2 calls out as
+// "persisting >24 hr" (nausea, early satiety). Phase 1 implements a
+// stricter "at least one event in last 48h" gate for PND only; the
+// "persisting" qualifier on nausea / early satiety is deferred.
+export const PND_LOOKBACK_HOURS = 48;
