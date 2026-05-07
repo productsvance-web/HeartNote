@@ -1,8 +1,9 @@
 import { notFound, redirect } from 'next/navigation';
-import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
-import { MedicationForm } from '../medications-form';
+import { EditMedicationFlow, type EditInitial } from '../_flow/EditMedicationFlow';
+import type { CadenceDraft } from '../cadence/cadence-fields';
+import type { CadenceKind } from '@/lib/medications/cadence';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -28,7 +29,7 @@ export default async function EditMedicationPage({ params }: PageProps) {
   const { data: med } = await supabase
     .from('medications')
     .select(
-      'id, drug_name, drug_class, dose, started_at, ended_at, notes, stopped_at, allowed_strengths, cadence_kind, cycle_on_days, cycle_off_days, interval_days, form'
+      'id, drug_name, dose, started_at, ended_at, notes, stopped_at, cadence_kind, cycle_on_days, cycle_off_days, interval_days, form, rxcui, ingredient'
     )
     .eq('id', id)
     .eq('patient_id', patient.id)
@@ -42,43 +43,56 @@ export default async function EditMedicationPage({ params }: PageProps) {
     .eq('medication_id', id)
     .order('ordinal', { ascending: true });
 
-  return (
-    <PhoneShell>
-      <header className="px-6 pt-8">
-        <Link href="/me/medications" className="text-sm text-muted-foreground">
-          ← Medications
-        </Link>
-        <h1 className="font-display text-3xl text-foreground mt-2">{med.drug_name}</h1>
-        {med.stopped_at && (
-          <p className="text-xs text-muted-foreground mt-1">Stopped {med.stopped_at}</p>
-        )}
-      </header>
+  const dts = (doseTimes ?? []).map((d) => ({
+    timeOfDay: d.time_of_day,
+    quantity: Number(d.quantity),
+    appliesToDow: d.applies_to_dow,
+  }));
 
-      <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6">
-        <MedicationForm
-          mode="edit"
-          medicationId={med.id}
-          initial={{
-            drugName: med.drug_name,
-            dose: med.dose ?? '',
-            cadenceKind: med.cadence_kind as never,
-            cycleOnDays: med.cycle_on_days,
-            cycleOffDays: med.cycle_off_days,
-            intervalDays: med.interval_days,
-            startedAt: med.started_at ?? '',
-            endedAt: med.ended_at ?? '',
-            notes: med.notes ?? '',
-            isStopped: med.stopped_at !== null,
-            allowedStrengths: med.allowed_strengths as never,
-            form: med.form,
-            doseTimes: (doseTimes ?? []).map((d) => ({
-              timeOfDay: d.time_of_day,
-              quantity: Number(d.quantity),
-              appliesToDow: d.applies_to_dow,
-            })),
-          }}
-        />
-      </section>
+  // Reconstruct CadenceDraft from stored columns. cycleUnit promotes to
+  // weeks when cycleOnDays is a multiple of 7 and >= 7 — keeps the picker
+  // in week-units when the schedule was saved that way.
+  const kind = (med.cadence_kind ?? 'as_needed') as CadenceKind;
+  const groups =
+    kind === 'specific_days'
+      ? Array.from(new Set(dts.map((dt) => dt.appliesToDow ?? 0)))
+      : [];
+  const cycleUnit: 'day' | 'week' =
+    kind === 'cyclical' &&
+    med.cycle_on_days != null &&
+    med.cycle_on_days >= 7 &&
+    med.cycle_on_days % 7 === 0 &&
+    (med.cycle_off_days ?? 0) % 7 === 0
+      ? 'week'
+      : 'day';
+
+  const draft: CadenceDraft = {
+    kind,
+    cycleOnDays: med.cycle_on_days,
+    cycleOffDays: med.cycle_off_days,
+    cycleUnit,
+    intervalDays: med.interval_days,
+    startedAt: med.started_at ?? '',
+    endedAt: med.ended_at ?? '',
+    doseTimes: dts,
+    groups,
+  };
+
+  const initial: EditInitial = {
+    id: med.id,
+    drugName: med.drug_name,
+    rxcui: med.rxcui,
+    ingredient: med.ingredient,
+    form: med.form,
+    dose: med.dose ?? '',
+    notes: med.notes ?? '',
+    isStopped: med.stopped_at !== null,
+    draft,
+  };
+
+  return (
+    <PhoneShell hideNav>
+      <EditMedicationFlow initial={initial} />
     </PhoneShell>
   );
 }
