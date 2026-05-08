@@ -16,6 +16,13 @@ import type { CoughCell } from '@/components/heartnote/CoughHeatmap';
 
 const TRENDS_LOOKBACK_DAYS = 14;
 
+export type CoughEventRow = {
+  log_date: string;
+  recorded_at: string | null;
+  nocturnal: boolean | null;
+};
+export type LoggedDayRow = { log_date: string };
+
 export async function getCoughHeatmapCells(
   supabase: SupabaseClient,
   patientId: string,
@@ -40,9 +47,25 @@ export async function getCoughHeatmapCells(
       .lte('log_date', today),
   ]);
 
-  const loggedDates = new Set(
-    (logsQ.data ?? []).map((r) => r.log_date as string),
-  );
+  return coughCellsFromRows({
+    events: (eventsQ.data ?? []) as CoughEventRow[],
+    loggedDays: (logsQ.data ?? []) as LoggedDayRow[],
+    today,
+    tz,
+  });
+}
+
+// Pure aggregation. Tested in cough-buckets.test.ts.
+export function coughCellsFromRows(inputs: {
+  events: CoughEventRow[];
+  loggedDays: LoggedDayRow[];
+  today: string;
+  tz: string;
+}): CoughCell[] {
+  const { events, loggedDays, today, tz } = inputs;
+  const start = isoDateOffset(today, -(TRENDS_LOOKBACK_DAYS - 1));
+
+  const loggedDates = new Set(loggedDays.map((r) => r.log_date));
 
   // Initialize an empty cell per day in the window. `logged` reflects the
   // actual daily_logs presence so the renderer can paint unlogged days
@@ -61,11 +84,7 @@ export async function getCoughHeatmapCells(
   }
   const byDate = new Map<string, CoughCell>(cells.map((c) => [c.date, c]));
 
-  for (const ev of (eventsQ.data ?? []) as {
-    log_date: string;
-    recorded_at: string | null;
-    nocturnal: boolean | null;
-  }[]) {
+  for (const ev of events) {
     const cell = byDate.get(ev.log_date);
     if (!cell) continue;
 

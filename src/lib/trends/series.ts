@@ -15,6 +15,20 @@ export type TrendSeries = {
   loadError: boolean;
 };
 
+export type WeightRow = { log_date: string; value: number | string; recorded_at: string };
+export type PillowRow = { log_date: string; pillow_count: number };
+export type CoughNightRow = { log_date: string };
+export type SymptomRow = { symptom: string; log_date: string; present: boolean };
+
+export type SeriesInputs = {
+  weightRows: WeightRow[];
+  pillowRows: PillowRow[];
+  coughRows: CoughNightRow[];
+  symptomRows: SymptomRow[];
+  normalPillowCount: number | null;
+  today: string;
+};
+
 export async function getTrendSeries(
   supabase: SupabaseClient,
   patientId: string,
@@ -22,7 +36,6 @@ export async function getTrendSeries(
 ): Promise<TrendSeries> {
   const start14 = isoDateOffset(today, -14);
   const start7 = isoDateOffset(today, -7);
-  const start7Baseline = isoDateOffset(today, -7);
 
   try {
     const [weightRows, pillowRows, coughRows, symptomRows, patientRow] = await Promise.all([
@@ -74,51 +87,67 @@ export async function getTrendSeries(
       return emptySeries(true);
     }
 
-    // Collapse weight to one point per day (most recent).
-    const byDay = new Map<string, number>();
-    for (const r of weightRows.data ?? []) {
-      byDay.set(r.log_date as string, Number(r.value));
-    }
-    const weight14d: WeightPoint[] = Array.from(byDay.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([d, v]) => ({ d, v }));
-
-    const weight7dBaselineLb =
-      weight14d.find((p) => p.d <= start7Baseline)?.v ?? weight14d[0]?.v ?? null;
-
-    // Restless nights = nights where nocturnal cough OR pillow_count above
-    // patient's baseline.
-    const baseline = patientRow.data?.normal_pillow_count ?? 1;
-    const elevatedPillowDays = new Set(
-      (pillowRows.data ?? [])
-        .filter((r) => Number(r.pillow_count) > baseline)
-        .map((r) => r.log_date as string),
-    );
-    const coughNights = new Set((coughRows.data ?? []).map((r) => r.log_date as string));
-    const restlessNights = new Set([...elevatedPillowDays, ...coughNights]);
-
-    const symptomCounts = new Map<string, number>();
-    let symptomsTotal = 0;
-    for (const r of (symptomRows.data ?? []) as { symptom: string }[]) {
-      symptomCounts.set(r.symptom, (symptomCounts.get(r.symptom) ?? 0) + 1);
-      symptomsTotal += 1;
-    }
-    const topSymptoms7d = Array.from(symptomCounts.entries())
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 4)
-      .map(([symptom, count]) => ({ label: prettySymptom(symptom), count }));
-
-    return {
-      weight14d,
-      weight7dBaselineLb,
-      restlessNights14d: restlessNights.size,
-      symptomsTotal7d: symptomsTotal,
-      topSymptoms7d,
-      loadError: false,
-    };
+    return seriesFromRows({
+      weightRows: (weightRows.data ?? []) as WeightRow[],
+      pillowRows: (pillowRows.data ?? []) as PillowRow[],
+      coughRows: (coughRows.data ?? []) as CoughNightRow[],
+      symptomRows: (symptomRows.data ?? []) as SymptomRow[],
+      normalPillowCount: patientRow.data?.normal_pillow_count ?? null,
+      today,
+    });
   } catch {
     return emptySeries(true);
   }
+}
+
+// Pure roll-up function. Same inputs in → same trend series out, no DB.
+// Tested in series.test.ts.
+export function seriesFromRows(inputs: SeriesInputs): TrendSeries {
+  const { weightRows, pillowRows, coughRows, symptomRows, normalPillowCount, today } = inputs;
+  const start7Baseline = isoDateOffset(today, -7);
+
+  // Collapse weight to one point per day (latest recorded_at wins).
+  // Rows arrive ordered ascending by recorded_at, so later rows for a day
+  // overwrite earlier ones in the map insertion order.
+  const byDay = new Map<string, number>();
+  for (const r of weightRows) {
+    byDay.set(r.log_date, Number(r.value));
+  }
+  const weight14d: WeightPoint[] = Array.from(byDay.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([d, v]) => ({ d, v }));
+
+  const weight7dBaselineLb =
+    weight14d.find((p) => p.d <= start7Baseline)?.v ?? weight14d[0]?.v ?? null;
+
+  // Restless nights = nights where nocturnal cough OR pillow_count above
+  // patient's baseline.
+  const baseline = normalPillowCount ?? 1;
+  const elevatedPillowDays = new Set(
+    pillowRows.filter((r) => Number(r.pillow_count) > baseline).map((r) => r.log_date),
+  );
+  const coughNights = new Set(coughRows.map((r) => r.log_date));
+  const restlessNights = new Set([...elevatedPillowDays, ...coughNights]);
+
+  const symptomCounts = new Map<string, number>();
+  let symptomsTotal = 0;
+  for (const r of symptomRows) {
+    symptomCounts.set(r.symptom, (symptomCounts.get(r.symptom) ?? 0) + 1);
+    symptomsTotal += 1;
+  }
+  const topSymptoms7d = Array.from(symptomCounts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 4)
+    .map(([symptom, count]) => ({ label: prettySymptom(symptom), count }));
+
+  return {
+    weight14d,
+    weight7dBaselineLb,
+    restlessNights14d: restlessNights.size,
+    symptomsTotal7d: symptomsTotal,
+    topSymptoms7d,
+    loadError: false,
+  };
 }
 
 function emptySeries(loadError: boolean): TrendSeries {
