@@ -26,7 +26,7 @@
 //     unit tests can drive every rule from synthetic fixtures.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/lib/supabase/types';
+import type { Database } from '../supabase/types.ts';
 import {
   WEIGHT_GAIN_TIER_2_24H_LB,
   WEIGHT_GAIN_TIER_2_48H_LB,
@@ -52,7 +52,7 @@ import {
   ROLLING_BASELINE_DAYS,
   READING_FRESHNESS_HOURS,
   PND_LOOKBACK_HOURS,
-} from '@/lib/clinical/thresholds';
+} from '../clinical/thresholds.ts';
 
 // ─── Deferred rules (research §2 vs Phase 1 v0) ─────────────────────────────
 //
