@@ -1,14 +1,5 @@
 import { redirect } from 'next/navigation';
-import {
-  Mic,
-  TrendingUp,
-  Users,
-  CalendarHeart,
-  Settings,
-  Heart,
-  ChevronRight,
-  Loader2,
-} from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
@@ -16,6 +7,7 @@ import { TodaysMedsCard } from '@/components/heartnote/TodaysMedsCard';
 import { HeroAlertCard } from '@/components/heartnote/HeroAlertCard';
 import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
+import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
@@ -77,73 +69,10 @@ export default async function DashboardPage() {
         .maybeSingle()
     : { data: null };
 
-  let priorLogDayCount = 0;
-  if (patient && assessment?.cold_start) {
-    const lookback = new Date();
-    lookback.setUTCDate(lookback.getUTCDate() - 14);
-    const { data: priorRows } = await supabase
-      .from('daily_logs')
-      .select('log_date')
-      .eq('patient_id', patient.id)
-      .gte('log_date', lookback.toISOString().slice(0, 10))
-      .lt('log_date', today);
-    priorLogDayCount = new Set((priorRows ?? []).map((r) => r.log_date)).size;
-  }
-
-  // Cold-start "starts at" date — first daily_logs entry — drives the
-  // BaselineProgressCard's track labels. Only fetched when needed.
-  let baselineStartedAt: string | null = null;
-  if (patient && assessment?.cold_start) {
-    const { data: firstLog } = await supabase
-      .from('daily_logs')
-      .select('log_date')
-      .eq('patient_id', patient.id)
-      .order('log_date', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    baselineStartedAt = firstLog?.log_date ?? today;
-  }
-
-  // Weight series for HeroAlert spark — only fetched when an alert is
-  // actually rendering and the lead trigger is weight-related.
   const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
   const tier = assessment?.tier ?? null;
   const coldStart = assessment?.cold_start === true;
   const isAlertHeader = tier === 'tier_1_911' || tier === 'tier_2_today' || tier === 'tier_3_48hr';
-
-  let weightSeries14d: { d: string; v: number }[] | null = null;
-  let weightBaselineLb: number | null = null;
-  if (patient && isAlertHeader && triggers.length > 0) {
-    const lookback = new Date(`${today}T00:00:00Z`);
-    lookback.setUTCDate(lookback.getUTCDate() - 14);
-    const start = lookback.toISOString().slice(0, 10);
-    const { data: weightRows } = await supabase
-      .from('daily_log_readings')
-      .select('log_date, value, recorded_at')
-      .eq('patient_id', patient.id)
-      .eq('field', 'weight_lb')
-      .gte('log_date', start)
-      .order('recorded_at', { ascending: true });
-    if (weightRows && weightRows.length >= 2) {
-      // Collapse to one point per day (most recent reading wins).
-      const byDay = new Map<string, number>();
-      for (const r of weightRows) byDay.set(r.log_date as string, Number(r.value));
-      weightSeries14d = Array.from(byDay.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([d, v]) => ({ d, v }));
-      // Baseline: 7-day-ago value if present, else the earliest reading in window.
-      const sevenDaysAgo = isoDateOffset(today, -ROLLING_BASELINE_DAYS);
-      weightBaselineLb =
-        weightSeries14d.find((p) => p.d <= sevenDaysAgo)?.v ?? weightSeries14d[0].v;
-    }
-  }
-
-  // Cold-start collecting list — count of distinct days each vital was
-  // reported in the last 14 days. Empty on first day.
-  let collecting: { key: string; label: string; summary: string; count: number }[] = [];
-  if (patient && coldStart && baselineStartedAt) {
-    collecting = await getCollectingCounts(supabase, patient.id, today);
-  }
 
   const logStatus: 'none' | 'processing' | 'complete' =
     !todaysLog || todaysLog.processing_status === 'pending'
@@ -156,11 +85,55 @@ export default async function DashboardPage() {
     ? formatTime(todaysLog.created_at, profile.timezone)
     : null;
 
-  // Fetch today's snapshot + baseline once at the page level when we'll be
-  // rendering VitalsList. The snapshot's signalsReportedCount drives the
-  // subhead; classifyVitals consumes the same data inside VitalsListCard.
+  // Cold-start branch — distinct layout (matches design-system Baseline Setup
+  // page). No tier UI, no central card; just progress + collecting list.
+  // Whether we're in cold-start is decided by the engine's verdict on today's
+  // log. If today hasn't been logged yet, fall back to a heuristic based on
+  // how many distinct prior days exist in the last 14.
+  const priorLogDayCount = patient ? await countPriorLogDays(supabase, patient.id, today) : 0;
+  const inColdStart =
+    patient !== null &&
+    (coldStart === true ||
+      // No assessment yet today AND we have fewer than 7 prior log days.
+      (assessment === null && priorLogDayCount < 7));
+
+  if (patient && inColdStart) {
+    const baselineStartedAt = await getFirstLogDate(supabase, patient.id, today);
+    const collecting = await getCollectingCounts(supabase, patient.id, today);
+    const daysLogged = Math.min(priorLogDayCount + (logStatus === 'complete' ? 1 : 0), 7);
+    return (
+      <PhoneShell>
+        <header className="px-6 pt-8">
+          <p className="text-sm text-muted-foreground">
+            {greet()}, {profile?.display_name ?? 'there'}.
+          </p>
+          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight">
+            We&rsquo;re learning what normal looks like for{' '}
+            <span className="italic">{patientName}</span>.
+          </h1>
+          <p className="text-sm text-muted-foreground mt-2">
+            Days 1–7 are just data. After seven mornings, we can flag the day something feels
+            different.
+          </p>
+        </header>
+
+        <BaselineProgressCard
+          daysLogged={daysLogged === 0 ? 1 : daysLogged}
+          startedAt={baselineStartedAt ?? today}
+          collecting={collecting}
+        />
+
+        <BaselineLogPrompt
+          alreadyLoggedToday={logStatus === 'complete'}
+          processing={logStatus === 'processing'}
+        />
+      </PhoneShell>
+    );
+  }
+
+  // Non-cold-start branch.
   const willShowVitals =
-    patient !== null && logStatus === 'complete' && tier !== null && !coldStart;
+    patient !== null && logStatus === 'complete' && tier !== null;
   const snapshot = willShowVitals
     ? await getTodaySnapshot(supabase, patient!.id, today)
     : null;
@@ -175,16 +148,31 @@ export default async function DashboardPage() {
         )
       : null;
 
-  const tiles = [
-    { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
-    { to: '/family', label: 'Family', Icon: Users, tint: 'oklch(0.93 0.02 220)' },
-    { to: '/visits', label: 'Visit prep', Icon: CalendarHeart, tint: 'var(--status-watch-soft)' },
-    { to: '/me', label: 'Settings', Icon: Settings, tint: 'var(--accent)' },
-  ] as const;
+  // Weight series for HeroAlert spark — fetched only when alert is rendering.
+  let weightSeries14d: { d: string; v: number }[] | null = null;
+  let weightBaselineLb: number | null = null;
+  if (patient && isAlertHeader && triggers.length > 0) {
+    const lookback = isoDateOffset(today, -14);
+    const { data: weightRows } = await supabase
+      .from('daily_log_readings')
+      .select('log_date, value, recorded_at')
+      .eq('patient_id', patient.id)
+      .eq('field', 'weight_lb')
+      .gte('log_date', lookback)
+      .order('recorded_at', { ascending: true });
+    if (weightRows && weightRows.length >= 2) {
+      const byDay = new Map<string, number>();
+      for (const r of weightRows) byDay.set(r.log_date as string, Number(r.value));
+      weightSeries14d = Array.from(byDay.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([d, v]) => ({ d, v }));
+      const sevenDaysAgo = isoDateOffset(today, -ROLLING_BASELINE_DAYS);
+      weightBaselineLb =
+        weightSeries14d.find((p) => p.d <= sevenDaysAgo)?.v ?? weightSeries14d[0].v;
+    }
+  }
 
   const showVitals = willShowVitals && snapshot !== null && baseline !== null;
-  const showBaseline =
-    patient !== null && logStatus === 'complete' && tier === 'tier_4_log' && coldStart;
   const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
   const showSubhead = logStatus === 'complete' && (showVitals || showHero) && todaysLogTime !== null;
   const signalsCount = snapshot?.signalsReportedCount ?? 0;
@@ -208,21 +196,8 @@ export default async function DashboardPage() {
         )}
       </header>
 
-      <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
-        {logStatus === 'processing' && (
-          <div className="flex flex-col items-center gap-3 py-6">
-            <div
-              className="h-16 w-16 rounded-full flex items-center justify-center animate-pulse-ring"
-              style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
-            >
-              <Loader2 size={26} className="animate-spin" />
-            </div>
-            <p className="font-display text-lg">Listening to today&apos;s log…</p>
-            <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
-          </div>
-        )}
-
-        {showHero && (
+      {showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-5 animate-fade-up">
           <HeroAlertCard
             tone={tier === 'tier_3_48hr' ? 'watch' : 'alert'}
             triggers={triggers}
@@ -232,75 +207,45 @@ export default async function DashboardPage() {
             cardiologistPhone={cardiologistPhone ?? null}
             forceCall911={tier === 'tier_1_911'}
           />
-        )}
+        </section>
+      )}
 
-        {logStatus === 'complete' && tier === null && (
-          <div className="text-center py-2">
-            <p className="text-sm text-muted-foreground">
-              Log saved. Today&apos;s pattern read isn&apos;t available — tap below to add another note.
-            </p>
+      {logStatus === 'processing' && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
+          <div className="flex flex-col items-center gap-3 py-2">
+            <div
+              className="h-16 w-16 rounded-full flex items-center justify-center animate-pulse-ring"
+              style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
+            >
+              <Loader2 size={26} className="animate-spin" />
+            </div>
+            <p className="font-display text-lg">Listening to today&rsquo;s log…</p>
+            <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
           </div>
-        )}
+        </section>
+      )}
 
-        {logStatus === 'none' && (
-          <div className="text-center py-2">
-            <p className="text-sm text-muted-foreground">
-              No check-in for today yet. Tap below for a 30-second log — weight, breathing,
-              swelling, energy, or anything that feels off.
-            </p>
-          </div>
-        )}
+      {logStatus === 'none' && !showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
+          <p className="font-display text-2xl text-foreground">No check-in yet today.</p>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+            Tap the mic to dictate a 30-second update — sleep, weight, swelling, breath, or anything
+            that feels off.
+          </p>
+        </section>
+      )}
 
-        <div className="mt-6 flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
-          <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">
-              {patient?.relationship ?? 'Patient'}
-            </p>
-            <p className="text-lg font-semibold text-foreground">{patientName}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {logStatus === 'complete'
-                ? 'Logged today'
-                : logStatus === 'processing'
-                  ? "Processing today's log"
-                  : 'No log yet today'}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">
-              {patient?.dry_weight_lb ? 'Dry weight' : 'NYHA'}
-            </p>
-            <p className="text-lg font-semibold text-foreground">
-              {patient?.dry_weight_lb ? `${patient.dry_weight_lb} lb` : patient?.nyha_class ?? '—'}
-            </p>
-          </div>
-        </div>
-
-        {logStatus !== 'processing' && (
-          <Link
-            href="/log"
-            className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition"
-            style={{
-              background:
-                'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
-            }}
-          >
-            <Mic size={22} />
-            {logStatus === 'complete' ? 'Add to today’s log' : 'Start daily log'}
-            <span className="text-xs font-normal opacity-80">· 30 sec</span>
-          </Link>
-        )}
-      </section>
+      {logStatus === 'complete' && tier === null && !showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
+          <p className="text-sm text-muted-foreground">
+            Log saved. Today&rsquo;s pattern read isn&rsquo;t available — tap the mic to add another
+            note.
+          </p>
+        </section>
+      )}
 
       {showVitals && snapshot && baseline && (
         <VitalsListCard snapshot={snapshot} baseline={baseline} triggers={triggers} />
-      )}
-
-      {patient && showBaseline && baselineStartedAt && (
-        <BaselineProgressCard
-          daysLogged={Math.min(priorLogDayCount + 1, 7)}
-          startedAt={baselineStartedAt}
-          collecting={collecting}
-        />
       )}
 
       {patient && (
@@ -313,58 +258,51 @@ export default async function DashboardPage() {
       )}
 
       <Link
-        href="/me"
-        className="mx-4 mt-4 flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-card"
+        href="/trends"
+        className="mx-4 mt-5 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
       >
-        <div
-          className="h-10 w-10 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
-        >
-          <Heart size={18} />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-foreground">Welcome to HeartNote</p>
-          <p className="text-xs text-muted-foreground">
-            {cardiologist ? `${cardiologist} is on file. ` : ''}Voice log, alerts, and visit prep
-            unlock as we build them.
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground">See the last two weeks.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Weight, sleep, symptoms — patterns to bring to cardiology.
           </p>
         </div>
-        <ChevronRight size={18} className="text-muted-foreground" />
+        <span className="text-xs font-medium" style={{ color: 'var(--accent-foreground)' }}>
+          Trends →
+        </span>
       </Link>
-
-      <section className="mx-4 mt-5 grid grid-cols-2 gap-3">
-        {tiles.map(({ to, label, Icon, tint }) => (
-          <Link
-            key={to}
-            href={to}
-            className="rounded-2xl bg-card p-4 shadow-card flex flex-col gap-3 active:scale-[0.98] transition"
-          >
-            <div
-              className="h-11 w-11 rounded-xl flex items-center justify-center text-foreground"
-              style={{ background: tint }}
-            >
-              <Icon size={20} />
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">{label}</p>
-              <p className="text-xs text-muted-foreground">Coming soon</p>
-            </div>
-          </Link>
-        ))}
-      </section>
-
-      <footer className="mt-10 mb-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-1.5">
-        Built with{' '}
-        <Heart
-          size={12}
-          className="inline"
-          style={{ color: 'var(--status-alert)' }}
-          fill="currentColor"
-        />{' '}
-        for caregivers
-      </footer>
     </PhoneShell>
   );
+}
+
+async function countPriorLogDays(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+): Promise<number> {
+  const start = isoDateOffset(today, -14);
+  const { data } = await supabase
+    .from('daily_logs')
+    .select('log_date')
+    .eq('patient_id', patientId)
+    .gte('log_date', start)
+    .lt('log_date', today);
+  return new Set((data ?? []).map((r) => r.log_date)).size;
+}
+
+async function getFirstLogDate(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('daily_logs')
+    .select('log_date')
+    .eq('patient_id', patientId)
+    .order('log_date', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.log_date as string | undefined) ?? today;
 }
 
 async function getCollectingCounts(
@@ -407,31 +345,46 @@ async function getCollectingCounts(
     {
       key: 'weight',
       label: 'Weight',
-      summary: weightDays.size > 0 ? `${weightDays.size} reading${weightDays.size === 1 ? '' : 's'}` : 'no readings yet',
+      summary:
+        weightDays.size > 0
+          ? `${weightDays.size} reading${weightDays.size === 1 ? '' : 's'}`
+          : 'no readings yet',
       count: weightDays.size,
     },
     {
       key: 'swelling',
       label: 'Swelling',
-      summary: swellingDays.size > 0 ? `${swellingDays.size} day${swellingDays.size === 1 ? '' : 's'} reported` : 'not reported yet',
+      summary:
+        swellingDays.size > 0
+          ? `${swellingDays.size} day${swellingDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
       count: swellingDays.size,
     },
     {
       key: 'breathing',
       label: 'Breathing',
-      summary: dyspneaDays.size > 0 ? `${dyspneaDays.size} day${dyspneaDays.size === 1 ? '' : 's'} reported` : 'not reported yet',
+      summary:
+        dyspneaDays.size > 0
+          ? `${dyspneaDays.size} day${dyspneaDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
       count: dyspneaDays.size,
     },
     {
       key: 'pillows',
       label: 'Pillows',
-      summary: pillowDays.size > 0 ? `${pillowDays.size} night${pillowDays.size === 1 ? '' : 's'} logged` : 'not logged yet',
+      summary:
+        pillowDays.size > 0
+          ? `${pillowDays.size} night${pillowDays.size === 1 ? '' : 's'} logged`
+          : 'not logged yet',
       count: pillowDays.size,
     },
     {
       key: 'cough',
       label: 'Cough',
-      summary: coughDays.size > 0 ? `${coughDays.size} day${coughDays.size === 1 ? '' : 's'} reported` : 'not reported yet',
+      summary:
+        coughDays.size > 0
+          ? `${coughDays.size} day${coughDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
       count: coughDays.size,
     },
   ];
