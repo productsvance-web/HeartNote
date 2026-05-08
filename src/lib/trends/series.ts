@@ -126,11 +126,19 @@ export function seriesFromRows(inputs: SeriesInputs): TrendSeries {
     [...weight14d].reverse().find((p) => p.d <= start7Baseline)?.v ?? weight14d[0]?.v ?? null;
 
   // Restless nights = nights where nocturnal cough OR pillow_count above
-  // patient's baseline.
-  const baseline = normalPillowCount ?? 1;
-  const elevatedPillowDays = new Set(
-    pillowRows.filter((r) => Number(r.pillow_count) > baseline).map((r) => r.log_date),
-  );
+  // the patient's onboarded baseline. When normal_pillow_count is null
+  // (caregiver hasn't set it yet) we DON'T silently default to 1 — that
+  // would silently flag every night the patient logs ≥ 2 pillows, even
+  // though we have no evidence ≥2 is unusual for them. Cough nights still
+  // contribute regardless. Caregiver sets the baseline via /me/patient/edit.
+  const elevatedPillowDays =
+    normalPillowCount === null
+      ? new Set<string>()
+      : new Set(
+          pillowRows
+            .filter((r) => Number(r.pillow_count) > normalPillowCount)
+            .map((r) => r.log_date),
+        );
   const coughNights = new Set(coughRows.map((r) => r.log_date));
   const restlessNights = new Set([...elevatedPillowDays, ...coughNights]);
 

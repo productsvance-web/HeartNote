@@ -258,13 +258,26 @@ describe('empty patient', () => {
 // ─── Restless-nights edge: null patient baseline ─────────────────────────────
 
 describe('null normal_pillow_count', () => {
-  it('falls back to baseline=1 when patient has not configured normal_pillow_count', () => {
-    // Documents current behavior: the engine treats a missing patient
-    // baseline as 1 pillow. Any logged pillow_count > 1 counts as restless.
+  it('does NOT count pillow elevation as restless when no baseline is set', () => {
+    // Without a patient-configured baseline we have no evidence that any
+    // given pillow_count is unusual for them. Silently defaulting to 1
+    // would flag every night ≥ 2 pillows, which is normal for a chunk of
+    // adults. Caregiver sets the baseline via /me/patient/edit.
     const out = seriesFromRows(
       baseInputs({
         normalPillowCount: null,
         pillowRows: [{ log_date: dateMinus(3), pillow_count: 2 }],
+      }),
+    );
+    assert.equal(out.restlessNights14d, 0);
+  });
+
+  it('still counts cough nights as restless even when no pillow baseline', () => {
+    const out = seriesFromRows(
+      baseInputs({
+        normalPillowCount: null,
+        pillowRows: [{ log_date: dateMinus(3), pillow_count: 2 }],
+        coughRows: [{ log_date: dateMinus(2) }],
       }),
     );
     assert.equal(out.restlessNights14d, 1);
