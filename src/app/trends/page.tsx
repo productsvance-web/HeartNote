@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { getTrendSeries } from '@/lib/trends/series';
+import { getCoughHeatmapCells } from '@/lib/trends/cough-buckets';
 import { TrendsView } from '@/components/heartnote/TrendsView';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 
@@ -27,7 +28,7 @@ export default async function TrendsPage() {
   if (!patient) redirect('/onboarding');
 
   const today = getTodayInTimezone(profile.timezone);
-  const [series, assessment] = await Promise.all([
+  const [series, assessment, coughCells] = await Promise.all([
     getTrendSeries(supabase, patient.id, today),
     supabase
       .from('daily_assessments')
@@ -35,6 +36,7 @@ export default async function TrendsPage() {
       .eq('patient_id', patient.id)
       .eq('log_date', today)
       .maybeSingle(),
+    getCoughHeatmapCells(supabase, patient.id, today, profile.timezone),
   ]);
   const triggers =
     (assessment.data?.triggers as
@@ -43,7 +45,13 @@ export default async function TrendsPage() {
 
   return (
     <PhoneShell>
-      <TrendsView patient={patient} series={series} triggers={triggers} />
+      <TrendsView
+        patient={patient}
+        series={series}
+        triggers={triggers}
+        coughCells={coughCells}
+        today={today}
+      />
     </PhoneShell>
   );
 }

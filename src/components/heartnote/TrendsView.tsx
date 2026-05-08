@@ -15,6 +15,7 @@
 import { Heart } from 'lucide-react';
 import { StatusPip } from './StatusPip';
 import { MiniTrendSpark } from './MiniTrendSpark';
+import { CoughHeatmap, type CoughCell } from './CoughHeatmap';
 import type { TrendSeries } from '@/lib/trends/series';
 import type { Tier, TriggerRow } from '@/lib/vitals/per-vital-tier';
 import {
@@ -27,15 +28,20 @@ interface Props {
   patient: { display_name: string | null; dry_weight_lb: number | null };
   series: TrendSeries;
   triggers: TriggerRow[];
+  coughCells: CoughCell[];
+  today: string;
 }
 
-export function TrendsView({ series, triggers }: Props) {
+export function TrendsView({ series, triggers, coughCells, today }: Props) {
   if (series.loadError) {
     return <ErrorView />;
   }
 
   const weightTier = classifyWeightTierFromTriggers(triggers, series);
-  const flaggedCount = weightTier === 'alert' || weightTier === 'watch' ? 1 : 0;
+  const nocturnalThisWindow = coughCells.reduce((acc, c) => acc + c.nocturnal, 0);
+  const flaggedCount =
+    (weightTier === 'alert' || weightTier === 'watch' ? 1 : 0) +
+    (nocturnalThisWindow > 0 ? 1 : 0);
 
   return (
     <div className="px-1">
@@ -52,6 +58,7 @@ export function TrendsView({ series, triggers }: Props) {
       </header>
 
       <WeightCard series={series} tier={weightTier} />
+      <CoughHeatmap cells={coughCells} today={today} />
       <SleepCard series={series} />
       <SymptomsCard series={series} />
 
