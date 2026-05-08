@@ -2,12 +2,28 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Minus } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import { saveLogEdit, type SaveLogEditPayload } from './actions';
+import { READING_RANGE, type ReadingField } from '@/lib/clinical/reading-ranges';
 
 type AppetiteChange = 'decreased' | 'unchanged' | 'increased';
 type UrineChange = 'decreased' | 'unchanged' | 'increased';
 type ActivityChange = 'none' | 'mild_slowdown' | 'severe_change';
+type SymptomKey =
+  | 'dyspnea'
+  | 'cough'
+  | 'chest_pain'
+  | 'swelling'
+  | 'fatigue'
+  | 'pnd'
+  | 'syncope'
+  | 'cognition_change'
+  | 'extremities_cold_clammy'
+  | 'cyanosis'
+  | 'early_satiety'
+  | 'pulse_irregular'
+  | 'dizziness'
+  | 'nausea';
 
 interface ReadingRow {
   id: string;
@@ -67,6 +83,38 @@ const SYMPTOM_LABEL: Record<string, string> = {
   early_satiety: 'Early fullness',
 };
 
+// Deterministic, alphabetized-by-label dropdown order. Object key order
+// from a Record literal isn't a guarantee. Source list mirrors the
+// SymptomKey union and the daily_log_symptom_events.symptom CHECK.
+const SYMPTOM_OPTIONS: { key: SymptomKey; label: string }[] = (
+  [
+    'dyspnea',
+    'cough',
+    'chest_pain',
+    'swelling',
+    'fatigue',
+    'pnd',
+    'syncope',
+    'cognition_change',
+    'extremities_cold_clammy',
+    'cyanosis',
+    'early_satiety',
+    'pulse_irregular',
+    'dizziness',
+    'nausea',
+  ] as SymptomKey[]
+)
+  .map((key) => ({ key, label: SYMPTOM_LABEL[key] }))
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+const READING_OPTIONS: { key: ReadingField; label: string }[] = [
+  { key: 'weight_lb', label: 'Weight' },
+  { key: 'resting_hr', label: 'Resting heart rate' },
+  { key: 'spo2', label: 'Oxygen' },
+  { key: 'systolic_bp', label: 'Systolic BP' },
+  { key: 'diastolic_bp', label: 'Diastolic BP' },
+];
+
 // Symptoms whose severity (0–4) is read by the alert engine. For
 // symptoms outside this set the severity field is hidden in v0.
 const SYMPTOMS_WITH_SEVERITY = new Set([
@@ -100,13 +148,22 @@ export function LogEditForm({
   const [activity, setActivity] = useState<ActivityChange | null>(initialActivityStepChange);
 
   // Editable copies. `removed` flag carries through to the action; the
-  // server applies the deletion.
+  // server applies the deletion. `created` rows skip the patch path and
+  // route to newReadings / newSymptoms in the payload.
   const [readings, setReadings] = useState(
-    initialReadings.map((r) => ({ ...r, removed: false, edited: false })),
+    initialReadings.map((r) => ({ ...r, removed: false, edited: false, created: false })),
   );
   const [symptoms, setSymptoms] = useState(
-    initialSymptomEvents.map((e) => ({ ...e, removed: false, edited: false })),
+    initialSymptomEvents.map((e) => ({ ...e, removed: false, edited: false, created: false })),
   );
+
+  // Inline picker drafts. null = picker closed.
+  const [readingDraft, setReadingDraft] = useState<{
+    field: ReadingField | '';
+    value: string;
+  } | null>(null);
+  const [symptomDraft, setSymptomDraft] = useState<{ symptom: SymptomKey | '' } | null>(null);
+  const [readingDraftError, setReadingDraftError] = useState<string | null>(null);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -120,14 +177,14 @@ export function LogEditForm({
       urineOutputChange: urine,
       activityStepChange: activity,
       readings: readings
-        .filter((r) => r.removed || r.edited)
+        .filter((r) => !r.created && (r.removed || r.edited))
         .map((r) =>
           r.removed
             ? { id: r.id, remove: true }
             : { id: r.id, value: r.value },
         ),
       symptomEvents: symptoms
-        .filter((s) => s.removed || s.edited)
+        .filter((s) => !s.created && (s.removed || s.edited))
         .map((s) =>
           s.removed
             ? { id: s.id, remove: true }
@@ -140,6 +197,18 @@ export function LogEditForm({
                 resolvesOvernight: s.resolvesOvernight,
               },
         ),
+      newReadings: readings
+        .filter((r) => r.created && !r.removed)
+        .map((r) => ({ field: r.field as ReadingField, value: r.value })),
+      newSymptoms: symptoms
+        .filter((s) => s.created && !s.removed)
+        .map((s) => ({
+          symptom: s.symptom as SymptomKey,
+          severity: s.severity,
+          nocturnal: s.nocturnal,
+          postural: s.postural,
+          resolvesOvernight: s.resolvesOvernight,
+        })),
     };
 
     startTransition(async () => {
@@ -180,9 +249,10 @@ export function LogEditForm({
       </Section>
 
       <Section eyebrow={`Vitals${visibleReadings.length > 0 ? ` (${visibleReadings.length})` : ''}`}>
-        {visibleReadings.length === 0 ? (
-          <EmptyHint>No readings extracted from this log. Dictate again to add one.</EmptyHint>
-        ) : (
+        {visibleReadings.length === 0 && readingDraft === null && (
+          <EmptyHint>No readings extracted yet. Add one below if the AI missed it.</EmptyHint>
+        )}
+        {visibleReadings.length > 0 && (
           <ul className="space-y-2">
             {readings.map(
               (r, i) =>
@@ -194,6 +264,7 @@ export function LogEditForm({
                     <input
                       type="number"
                       step="0.1"
+                      inputMode="decimal"
                       value={r.value}
                       onChange={(e) => {
                         const v = Number(e.target.value);
@@ -225,6 +296,56 @@ export function LogEditForm({
             )}
           </ul>
         )}
+        {readingDraft !== null && (
+          <ReadingDraftRow
+            draft={readingDraft}
+            error={readingDraftError}
+            onChange={(d) => {
+              setReadingDraft(d);
+              setReadingDraftError(null);
+            }}
+            onCancel={() => {
+              setReadingDraft(null);
+              setReadingDraftError(null);
+            }}
+            onConfirm={() => {
+              if (readingDraft.field === '') return;
+              const value = Number(readingDraft.value);
+              if (!Number.isFinite(value)) {
+                setReadingDraftError('Enter a number.');
+                return;
+              }
+              const [min, max] = READING_RANGE[readingDraft.field];
+              if (value < min || value > max) {
+                const unit = READING_LABEL[readingDraft.field]?.unit ?? '';
+                setReadingDraftError(`Out of range. ${min}–${max} ${unit}.`);
+                return;
+              }
+              setReadings((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  field: readingDraft.field as ReadingField,
+                  value,
+                  recordedAt: '',
+                  removed: false,
+                  edited: false,
+                  created: true,
+                },
+              ]);
+              setReadingDraft(null);
+              setReadingDraftError(null);
+            }}
+          />
+        )}
+        <div className={readingDraft !== null || visibleReadings.length > 0 ? 'mt-3' : 'mt-2'}>
+          <AddButton
+            label="Add a reading"
+            onClick={() => {
+              if (readingDraft === null) setReadingDraft({ field: '', value: '' });
+            }}
+          />
+        </div>
       </Section>
 
       <Section eyebrow="Daily details">
@@ -279,9 +400,10 @@ export function LogEditForm({
       </Section>
 
       <Section eyebrow={`Symptoms${visibleSymptoms.length > 0 ? ` (${visibleSymptoms.length})` : ''}`}>
-        {visibleSymptoms.length === 0 ? (
-          <EmptyHint>No symptoms reported in this log.</EmptyHint>
-        ) : (
+        {visibleSymptoms.length === 0 && symptomDraft === null && (
+          <EmptyHint>No symptoms reported yet. Add one below if the AI missed it.</EmptyHint>
+        )}
+        {visibleSymptoms.length > 0 && (
           <ul className="space-y-2">
             {symptoms.map(
               (s, i) =>
@@ -377,6 +499,43 @@ export function LogEditForm({
             )}
           </ul>
         )}
+        {symptomDraft !== null && (
+          <SymptomDraftRow
+            draft={symptomDraft}
+            onChange={setSymptomDraft}
+            onCancel={() => setSymptomDraft(null)}
+            onConfirm={() => {
+              if (symptomDraft.symptom === '') return;
+              setSymptoms((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  symptom: symptomDraft.symptom as SymptomKey,
+                  present: true,
+                  severity: null,
+                  bodyRegion: null,
+                  nocturnal: null,
+                  sputumColor: null,
+                  chestPainCharacter: null,
+                  resolvesOvernight: null,
+                  postural: null,
+                  removed: false,
+                  edited: false,
+                  created: true,
+                },
+              ]);
+              setSymptomDraft(null);
+            }}
+          />
+        )}
+        <div className={symptomDraft !== null || visibleSymptoms.length > 0 ? 'mt-3' : 'mt-2'}>
+          <AddButton
+            label="Add a symptom"
+            onClick={() => {
+              if (symptomDraft === null) setSymptomDraft({ symptom: '' });
+            }}
+          />
+        </div>
       </Section>
 
       {error && (
@@ -492,5 +651,150 @@ function BoolToggle({
         <option value="no">No</option>
       </select>
     </label>
+  );
+}
+
+// Pattern #3 (sage-circle-plus). Geometry mirrors the existing
+// RemoveButton (22×22) so the page reads as one consistent register.
+// See .claude/rules/canonical-controls.md — written spec calls out 32×32
+// + bg-accent, but the cadence-fields reference impl + the in-page
+// RemoveButton are both 22×22, so this matches the local convention.
+function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className="inline-flex items-center gap-2 text-sm font-semibold text-primary active:scale-[0.94] transition"
+    >
+      <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
+        <Plus size={14} strokeWidth={3} className="text-white" />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+function ReadingDraftRow({
+  draft,
+  error,
+  onChange,
+  onConfirm,
+  onCancel,
+}: {
+  draft: { field: ReadingField | ''; value: string };
+  error: string | null;
+  onChange: (d: { field: ReadingField | ''; value: string }) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const unit = draft.field === '' ? '' : READING_LABEL[draft.field]?.unit ?? '';
+  const canConfirm = draft.field !== '' && draft.value.trim() !== '';
+  return (
+    <div className="mt-3 rounded-2xl bg-muted/40 px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <select
+          value={draft.field}
+          onChange={(e) =>
+            onChange({ ...draft, field: e.target.value as ReadingField | '' })
+          }
+          aria-label="New reading field"
+          className="flex-1 rounded-full bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Pick a reading…</option>
+          {READING_OPTIONS.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          step="0.1"
+          inputMode="decimal"
+          value={draft.value}
+          onChange={(e) => onChange({ ...draft, value: e.target.value })}
+          placeholder="Value"
+          aria-label="New reading value"
+          className="w-24 rounded-full bg-background px-3 py-1.5 text-base font-medium text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <span className="text-xs text-muted-foreground tabular-nums w-10">{unit}</span>
+      </div>
+      {error && (
+        <p
+          className="text-xs"
+          style={{ color: 'var(--status-alert-foreground)' }}
+        >
+          {error}
+        </p>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs font-semibold text-muted-foreground active:scale-[0.96] transition px-3 py-1.5"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={!canConfirm}
+          className="text-xs font-semibold text-primary disabled:opacity-40 active:scale-[0.96] transition px-3 py-1.5"
+        >
+          Confirm
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SymptomDraftRow({
+  draft,
+  onChange,
+  onConfirm,
+  onCancel,
+}: {
+  draft: { symptom: SymptomKey | '' };
+  onChange: (d: { symptom: SymptomKey | '' }) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const canConfirm = draft.symptom !== '';
+  return (
+    <div className="mt-3 rounded-2xl bg-muted/40 px-4 py-3 space-y-2">
+      <select
+        value={draft.symptom}
+        onChange={(e) =>
+          onChange({ symptom: e.target.value as SymptomKey | '' })
+        }
+        aria-label="New symptom"
+        className="w-full rounded-full bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        <option value="">Pick a symptom…</option>
+        {SYMPTOM_OPTIONS.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs font-semibold text-muted-foreground active:scale-[0.96] transition px-3 py-1.5"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={!canConfirm}
+          className="text-xs font-semibold text-primary disabled:opacity-40 active:scale-[0.96] transition px-3 py-1.5"
+        >
+          Confirm
+        </button>
+      </div>
+    </div>
   );
 }

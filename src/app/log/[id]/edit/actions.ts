@@ -4,13 +4,14 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
+import { READING_RANGE, type ReadingField } from '@/lib/clinical/reading-ranges';
 
 // Server action for the manual-edit form. Updates day-level fields on the
 // daily_logs row, applies per-row deletes / value-edits to readings and
-// symptom events, then re-runs the alert engine for the log_date and
-// upserts daily_assessments. Caregiver-facing edits MUST re-run the
-// engine — otherwise the dashboard tier would lie about the just-fixed
-// data.
+// symptom events, inserts caregiver-added readings + symptom events, then
+// re-runs the alert engine for the log_date and upserts daily_assessments.
+// Caregiver-facing edits MUST re-run the engine — otherwise the dashboard
+// tier would lie about the just-fixed data.
 
 const ReadingPatchSchema = z.object({
   id: z.string().uuid(),
@@ -28,6 +29,48 @@ const SymptomPatchSchema = z.object({
   resolvesOvernight: z.boolean().nullable().optional(),
 });
 
+// Server-side backstop for caregiver-added readings. Per-field range
+// matches the DB CHECK constraints and the AI-extraction validator in
+// process.ts (single source of truth via ReadingRange).
+const NewReadingSchema = z
+  .object({
+    field: z.enum(['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp']),
+    value: z.number().finite(),
+  })
+  .refine(
+    ({ field, value }) => {
+      const [min, max] = READING_RANGE[field as ReadingField];
+      return value >= min && value <= max;
+    },
+    { message: 'Value out of range for this field.' },
+  );
+
+// Caregiver-added symptom events default to present=true. Adding a
+// "resolved" symptom is out of scope — caregivers remove the existing
+// row instead.
+const NewSymptomSchema = z.object({
+  symptom: z.enum([
+    'dyspnea',
+    'cough',
+    'chest_pain',
+    'swelling',
+    'fatigue',
+    'pnd',
+    'syncope',
+    'cognition_change',
+    'extremities_cold_clammy',
+    'cyanosis',
+    'early_satiety',
+    'pulse_irregular',
+    'dizziness',
+    'nausea',
+  ]),
+  severity: z.number().int().min(0).max(4).nullable().optional(),
+  nocturnal: z.boolean().nullable().optional(),
+  postural: z.boolean().nullable().optional(),
+  resolvesOvernight: z.boolean().nullable().optional(),
+});
+
 const PayloadSchema = z.object({
   logId: z.string().uuid(),
   notes: z.string().max(2000),
@@ -37,6 +80,8 @@ const PayloadSchema = z.object({
   activityStepChange: z.enum(['none', 'mild_slowdown', 'severe_change']).nullable(),
   readings: z.array(ReadingPatchSchema),
   symptomEvents: z.array(SymptomPatchSchema),
+  newReadings: z.array(NewReadingSchema),
+  newSymptoms: z.array(NewSymptomSchema),
 });
 
 export type SaveLogEditPayload = z.infer<typeof PayloadSchema>;
@@ -59,7 +104,7 @@ export async function saveLogEdit(
   // explicit check lets us return a friendly error instead of a 500.
   const { data: log } = await supabase
     .from('daily_logs')
-    .select('id, patient_id, log_date')
+    .select('id, patient_id, log_date, created_at')
     .eq('id', data.logId)
     .maybeSingle();
   if (!log) return { ok: false, error: 'Log not found.' };
@@ -129,6 +174,44 @@ export async function saveLogEdit(
         if (error) return { ok: false, error: error.message };
       }
     }
+  }
+
+  // 3b. Insert caregiver-added readings. recorded_at = log.created_at so
+  // "latest weight" queries (which order by recorded_at desc) treat the
+  // manual entry as part of the original dictation's time frame, not as
+  // a brand-new "today" reading on a yesterday log.
+  if (data.newReadings.length > 0) {
+    const { error } = await supabase.from('daily_log_readings').insert(
+      data.newReadings.map((r) => ({
+        patient_id: log.patient_id,
+        log_date: log.log_date,
+        recorded_at: log.created_at,
+        field: r.field,
+        value: r.value,
+        source_log_id: data.logId,
+      })),
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  // 3c. Insert caregiver-added symptom events. Same recorded_at convention.
+  // present=true is implicit; symptoms-resolved is an out-of-scope add.
+  if (data.newSymptoms.length > 0) {
+    const { error } = await supabase.from('daily_log_symptom_events').insert(
+      data.newSymptoms.map((s) => ({
+        patient_id: log.patient_id,
+        log_date: log.log_date,
+        recorded_at: log.created_at,
+        symptom: s.symptom,
+        present: true,
+        severity: s.severity ?? null,
+        nocturnal: s.nocturnal ?? null,
+        postural: s.postural ?? null,
+        resolves_overnight: s.resolvesOvernight ?? null,
+        source_log_id: data.logId,
+      })),
+    );
+    if (error) return { ok: false, error: error.message };
   }
 
   // 4. Re-run the alert engine for the log_date and upsert daily_assessments.
