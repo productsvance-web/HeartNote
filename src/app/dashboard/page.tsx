@@ -1,14 +1,21 @@
 import { redirect } from 'next/navigation';
-import { Mic, TrendingUp, Users, CalendarHeart, Settings, Heart, ChevronRight, Loader2, Phone, AlertTriangle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
-import { StatusRing } from '@/components/heartnote/StatusRing';
 import { TodaysMedsCard } from '@/components/heartnote/TodaysMedsCard';
-import { COLD_START_MIN_LOG_DAYS } from '@/lib/clinical/thresholds';
+import { HeroAlertCard } from '@/components/heartnote/HeroAlertCard';
+import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
+import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
+import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
+import { HomeAffirmationCard } from '@/components/heartnote/HomeAffirmationCard';
+import { countWord } from '@/lib/format/count';
+import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
+import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
+import { getBaselineContext } from '@/lib/vitals/baseline-context';
+import { COLD_START_MIN_LOG_DAYS, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
+import { formatHeaderEyebrow } from '@/lib/dates/format';
 import Link from 'next/link';
-
-type TriggerRow = { rule_id: string; label: string; evidence: Record<string, unknown> };
 
 function greet() {
   const h = new Date().getHours();
@@ -31,20 +38,21 @@ export default async function DashboardPage() {
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name, cardiologist_phone')
+    .select(
+      'id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name, cardiologist_phone, normal_pillow_count',
+    )
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
     .single();
 
   const patientName = patient?.display_name ?? 'them';
+  const patientInitial = (patient?.display_name?.trim()[0] ?? '?').toUpperCase();
   const cardiologist = patient?.cardiologist_name;
   const cardiologistPhone = patient?.cardiologist_phone;
 
   const today = getTodayInTimezone(profile.timezone);
 
-  // Multiple daily_logs rows can exist for one (patient, log_date) since the
-  // multi-readings migration. Pull the most recent for processing-status.
   const { data: todaysLogs } = patient
     ? await supabase
         .from('daily_logs')
@@ -56,8 +64,6 @@ export default async function DashboardPage() {
     : { data: null };
   const todaysLog = todaysLogs?.[0] ?? null;
 
-  // Phase 1 alert engine writes one row per (patient, log_date). Read it
-  // straight — never recompute (per code-quality.md rule #3).
   const { data: assessment } = patient
     ? await supabase
         .from('daily_assessments')
@@ -67,19 +73,10 @@ export default async function DashboardPage() {
         .maybeSingle()
     : { data: null };
 
-  // Cold-start "N of 7 days logged" copy needs the count of distinct prior log days.
-  let priorLogDayCount = 0;
-  if (patient && assessment?.cold_start) {
-    const lookback = new Date();
-    lookback.setUTCDate(lookback.getUTCDate() - 14);
-    const { data: priorRows } = await supabase
-      .from('daily_logs')
-      .select('log_date')
-      .eq('patient_id', patient.id)
-      .gte('log_date', lookback.toISOString().slice(0, 10))
-      .lt('log_date', today);
-    priorLogDayCount = new Set((priorRows ?? []).map((r) => r.log_date)).size;
-  }
+  const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
+  const tier = assessment?.tier ?? null;
+  const coldStart = assessment?.cold_start === true;
+  const isAlertHeader = tier === 'tier_1_911' || tier === 'tier_2_today' || tier === 'tier_3_48hr';
 
   const logStatus: 'none' | 'processing' | 'complete' =
     !todaysLog || todaysLog.processing_status === 'pending'
@@ -88,277 +85,464 @@ export default async function DashboardPage() {
         ? 'complete'
         : 'processing';
 
-  const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
-  const tier = assessment?.tier ?? null;
-  const coldStart = assessment?.cold_start === true;
+  const todaysLogTime = todaysLog?.created_at
+    ? formatTime(todaysLog.created_at, profile.timezone)
+    : null;
 
-  const tiles = [
-    { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
-    { to: '/family', label: 'Family', Icon: Users, tint: 'oklch(0.93 0.02 220)' },
-    { to: '/visits', label: 'Visit prep', Icon: CalendarHeart, tint: 'var(--status-watch-soft)' },
-    { to: '/me', label: 'Settings', Icon: Settings, tint: 'var(--accent)' },
-  ] as const;
+  // Cold-start branch — distinct layout (matches design-system Baseline Setup
+  // page). No tier UI, no central card; just progress + collecting list.
+  // Cold-start is decided by the engine's verdict on today's log; if no
+  // assessment exists yet today, fall back to a heuristic based on the
+  // count of distinct prior days in the last 14.
+  const baselineWindow = patient
+    ? await getBaselineWindow(supabase, patient.id, today)
+    : { firstLoggedDate: null as string | null, loggedDates: [] as string[] };
+  const priorLogDays = baselineWindow.loggedDates.filter((d) => d !== today);
+  // What we pass to the card: prior dates plus today, but only count today
+  // when its log has fully processed. A pending-today log shouldn't show
+  // as a banked morning.
+  const loggedDatesForCard =
+    logStatus === 'complete' ? [...priorLogDays, today] : priorLogDays;
+  const inColdStart =
+    patient !== null &&
+    (coldStart === true ||
+      // No assessment yet today AND fewer than 7 distinct prior log days.
+      (assessment === null && priorLogDays.length < 7));
+
+  if (patient && inColdStart) {
+    const collecting = await getCollectingCounts(supabase, patient.id, today);
+    const todayBanked =
+      logStatus === 'complete' && loggedDatesForCard.includes(today)
+        ? loggedDatesForCard.length
+        : 0;
+    const coldStartSubhead =
+      logStatus === 'complete' && todaysLogTime !== null && todayBanked > 0
+        ? `${patientName === 'them' ? "Today's" : `${patientName}'s`} check-in came in at ${todaysLogTime}. Day ${Math.min(todayBanked, COLD_START_MIN_LOG_DAYS)} of ${COLD_START_MIN_LOG_DAYS}.`
+        : 'Days 1–7 are just data. After seven mornings, we can flag the day something feels different.';
+    return (
+      <PhoneShell>
+        <header className="px-6 pt-8 relative">
+          <PatientInitialAvatar initial={patientInitial} />
+          <p
+            className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
+            style={{ letterSpacing: '0.06em' }}
+          >
+            {formatHeaderEyebrow(today, profile.timezone)}
+          </p>
+          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-16">
+            {greet()}, {profile?.display_name ?? 'there'}.
+          </h1>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{coldStartSubhead}</p>
+        </header>
+
+        <BaselineProgressCard
+          loggedDates={loggedDatesForCard}
+          today={today}
+          firstLoggedDate={baselineWindow.firstLoggedDate}
+          collecting={collecting}
+        />
+
+        <BaselineLogPrompt
+          alreadyLoggedToday={logStatus === 'complete'}
+          processing={logStatus === 'processing'}
+        />
+      </PhoneShell>
+    );
+  }
+
+  // Non-cold-start branch.
+  const willShowVitals =
+    patient !== null && logStatus === 'complete' && tier !== null;
+  const snapshot = willShowVitals
+    ? await getTodaySnapshot(supabase, patient!.id, today)
+    : null;
+  const baseline =
+    willShowVitals && snapshot
+      ? await getBaselineContext(
+          supabase,
+          patient!.id,
+          today,
+          coldStart,
+          patient!.normal_pillow_count ?? null,
+        )
+      : null;
+
+  // Weight series for HeroAlert spark — fetched only when alert is rendering.
+  let weightSeries14d: { d: string; v: number }[] | null = null;
+  let weightBaselineLb: number | null = null;
+  if (patient && isAlertHeader && triggers.length > 0) {
+    const lookback = isoDateOffset(today, -14);
+    const { data: weightRows } = await supabase
+      .from('daily_log_readings')
+      .select('log_date, value, recorded_at')
+      .eq('patient_id', patient.id)
+      .eq('field', 'weight_lb')
+      .gte('log_date', lookback)
+      .order('recorded_at', { ascending: true });
+    if (weightRows && weightRows.length >= 2) {
+      const byDay = new Map<string, number>();
+      for (const r of weightRows) byDay.set(r.log_date as string, Number(r.value));
+      weightSeries14d = Array.from(byDay.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([d, v]) => ({ d, v }));
+      const sevenDaysAgo = isoDateOffset(today, -ROLLING_BASELINE_DAYS);
+      weightBaselineLb =
+        weightSeries14d.find((p) => p.d <= sevenDaysAgo)?.v ?? weightSeries14d[0].v;
+    }
+  }
+
+  const showVitals = willShowVitals && snapshot !== null && baseline !== null;
+  const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
+  const showSubhead = logStatus === 'complete' && (showVitals || showHero) && todaysLogTime !== null;
+  // Affirmation card replaces the silent gap on green days. Gates: log
+  // complete, snapshot loaded, engine ran (tier !== null), nothing flagged.
+  // Mutually exclusive with showHero.
+  const showAffirmation = showVitals && triggers.length === 0 && !showHero;
 
   return (
     <PhoneShell>
-      <header className="px-6 pt-8">
-        <p className="text-sm text-muted-foreground">{greet()}, {profile?.display_name ?? 'there'}.</p>
-        <h1 className="font-display text-3xl text-foreground mt-1">
-          How is <span className="italic">{patientName}</span> today?
+      <header className="px-6 pt-8 relative">
+        <PatientInitialAvatar initial={patientInitial} />
+        <p
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
+          style={{ letterSpacing: '0.06em' }}
+        >
+          {formatHeaderEyebrow(today, profile.timezone)}
+        </p>
+        <h1 className="font-display text-3xl text-foreground mt-1 pr-16">
+          {greet()}, {profile?.display_name ?? 'there'}.
         </h1>
+        {showSubhead && (
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+            {patientName === 'them'
+              ? `Today's check-in came in at ${todaysLogTime}.`
+              : `${patientName}'s check-in came in at ${todaysLogTime}.`}
+            {triggers.length > 0 && (
+              <>
+                {' '}
+                <span className="text-foreground font-medium">
+                  {countWord(triggers.length)} thing{triggers.length === 1 ? '' : 's'} changed today.
+                </span>
+              </>
+            )}
+          </p>
+        )}
       </header>
 
-      <section className="mt-6 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
-        {logStatus === 'processing' && (
-          <div className="flex flex-col items-center gap-3 py-6">
+      {showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-5 animate-fade-up">
+          <HeroAlertCard
+            tone={tier === 'tier_3_48hr' ? 'watch' : 'alert'}
+            triggers={triggers}
+            weightSeries14d={weightSeries14d}
+            weightBaselineLb={weightBaselineLb}
+            cardiologistName={cardiologist ?? null}
+            cardiologistPhone={cardiologistPhone ?? null}
+            forceCall911={tier === 'tier_1_911'}
+          />
+        </section>
+      )}
+
+      {logStatus === 'processing' && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
+          <div className="flex flex-col items-center gap-3 py-2">
             <div
               className="h-16 w-16 rounded-full flex items-center justify-center animate-pulse-ring"
               style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
             >
               <Loader2 size={26} className="animate-spin" />
             </div>
-            <p className="font-display text-lg">Listening to today&apos;s log…</p>
+            <p className="font-display text-lg">Listening to today&rsquo;s log…</p>
             <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
           </div>
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_1_911' && (
-          <AlertBlock
-            tone="alert"
-            heading="Call 911 now"
-            sub="Severe sign logged today"
-            triggers={triggers}
-            phoneCta={{ label: 'Call 911', href: 'tel:911', intent: 'call' }}
-          />
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_2_today' && (
-          <AlertBlock
-            tone="alert"
-            heading="Call cardiologist today"
-            sub="Pattern worth a phone call"
-            triggers={triggers}
-            phoneCta={cardiologistCta(cardiologist, cardiologistPhone)}
-          />
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_3_48hr' && (
-          <AlertBlock
-            tone="watch"
-            heading="Call cardiologist within 48 hours"
-            sub="Worth flagging at the next call"
-            triggers={triggers}
-            phoneCta={cardiologistCta(cardiologist, cardiologistPhone)}
-          />
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_4_log' && coldStart && (
-          <div className="flex flex-col items-center text-center py-4">
-            <div
-              className="h-16 w-16 rounded-full flex items-center justify-center"
-              style={{ background: 'var(--secondary)', color: 'var(--bluegray)' }}
-            >
-              <Heart size={26} />
-            </div>
-            <p className="font-display text-2xl mt-3">Building baseline</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              {priorLogDayCount + 1} of {COLD_START_MIN_LOG_DAYS} days logged. Patterns become
-              visible after about a week.
-            </p>
-          </div>
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_4_log' && !coldStart && (
-          <StatusRing status="good" />
-        )}
-
-        {logStatus === 'complete' && tier === null && (
-          <div className="text-center py-2">
-            <p className="text-sm text-muted-foreground">
-              Log saved. Today&apos;s pattern read isn&apos;t available — tap below to add another note.
-            </p>
-          </div>
-        )}
-
-        {logStatus === 'none' && (
-          <div className="text-center py-2">
-            <p className="text-sm text-muted-foreground">
-              No check-in for today yet. Tap below for a 30-second log — weight, breathing,
-              swelling, energy, or anything that feels off.
-            </p>
-          </div>
-        )}
-
-        <div className="mt-6 flex items-center justify-between rounded-2xl bg-muted/60 px-4 py-3">
-          <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">
-              {patient?.relationship ?? 'Patient'}
-            </p>
-            <p className="text-lg font-semibold text-foreground">{patientName}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {logStatus === 'complete'
-                ? 'Logged today'
-                : logStatus === 'processing'
-                  ? 'Processing today’s log'
-                  : 'No log yet today'}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">
-              {patient?.dry_weight_lb ? 'Dry weight' : 'NYHA'}
-            </p>
-            <p className="text-lg font-semibold text-foreground">
-              {patient?.dry_weight_lb ? `${patient.dry_weight_lb} lb` : patient?.nyha_class ?? '—'}
-            </p>
-          </div>
-        </div>
-
-        {logStatus !== 'processing' && (
-          <Link
-            href="/log"
-            className="mt-5 w-full flex items-center justify-center gap-3 rounded-full px-6 py-5 text-primary-foreground font-semibold text-base shadow-soft active:scale-[0.98] transition"
-            style={{
-              background:
-                'linear-gradient(135deg, var(--sage), color-mix(in oklab, var(--sage) 70%, white))',
-            }}
-          >
-            <Mic size={22} />
-            {logStatus === 'complete' ? 'Add to today’s log' : 'Start daily log'}
-            <span className="text-xs font-normal opacity-80">· 30 sec</span>
-          </Link>
-        )}
-      </section>
-
-      {patient && (
-        <TodaysMedsCard patientId={patient.id} tz={profile.timezone} date={today} />
+        </section>
       )}
 
+      {logStatus === 'none' && !showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
+          <p className="font-display text-2xl text-foreground">No check-in yet today.</p>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+            Tap the mic to dictate a 30-second update — sleep, weight, swelling, breath, or anything
+            that feels off.
+          </p>
+        </section>
+      )}
+
+      {logStatus === 'complete' && tier === null && !showHero && (
+        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
+          <p className="text-sm text-muted-foreground">
+            Log saved. Today&rsquo;s pattern read isn&rsquo;t available — tap the mic to add another
+            note.
+          </p>
+        </section>
+      )}
+
+      {showAffirmation && snapshot && <HomeAffirmationCard snapshot={snapshot} />}
+
+      {showVitals && snapshot && baseline && (
+        <VitalsListCard snapshot={snapshot} baseline={baseline} triggers={triggers} />
+      )}
+
+      {patient && (
+        <TodaysMedsCard
+          patientId={patient.id}
+          tz={profile.timezone}
+          date={today}
+          patientName={patient.display_name}
+        />
+      )}
+
+      {patient && (await getUpcomingVisitChip(supabase, patient.id, today))}
+
       <Link
-        href="/me"
-        className="mx-4 mt-4 flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-card"
+        href="/trends"
+        className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
       >
-        <div
-          className="h-10 w-10 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--status-good-soft)', color: 'var(--status-good-foreground)' }}
-        >
-          <Heart size={18} />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-foreground">Welcome to HeartNote</p>
-          <p className="text-xs text-muted-foreground">
-            {cardiologist ? `${cardiologist} is on file. ` : ''}Voice log, alerts, and visit prep
-            unlock as we build them.
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-foreground">See the last two weeks.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Weight, sleep, symptoms — patterns to bring to cardiology.
           </p>
         </div>
-        <ChevronRight size={18} className="text-muted-foreground" />
+        <span className="text-xs font-medium" style={{ color: 'var(--accent-foreground)' }}>
+          Trends →
+        </span>
       </Link>
-
-      <section className="mx-4 mt-5 grid grid-cols-2 gap-3">
-        {tiles.map(({ to, label, Icon, tint }) => (
-          <Link
-            key={to}
-            href={to}
-            className="rounded-2xl bg-card p-4 shadow-card flex flex-col gap-3 active:scale-[0.98] transition"
-          >
-            <div
-              className="h-11 w-11 rounded-xl flex items-center justify-center text-foreground"
-              style={{ background: tint }}
-            >
-              <Icon size={20} />
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">{label}</p>
-              <p className="text-xs text-muted-foreground">Coming soon</p>
-            </div>
-          </Link>
-        ))}
-      </section>
-
-      <footer className="mt-10 mb-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-1.5">
-        Built with{' '}
-        <Heart
-          size={12}
-          className="inline"
-          style={{ color: 'var(--status-alert)' }}
-          fill="currentColor"
-        />{' '}
-        for caregivers
-      </footer>
     </PhoneShell>
   );
 }
 
-type PhoneCta = { label: string; href: string; intent: 'call' | 'fallback' };
-
-function cardiologistCta(name: string | null | undefined, phone: string | null | undefined): PhoneCta {
-  if (phone) {
-    return { label: `Call ${name ?? 'cardiologist'}`, href: `tel:${phone}`, intent: 'call' };
-  }
-  return { label: 'Add cardiologist phone in Settings', href: '/me', intent: 'fallback' };
+// Single query that supplies both pieces the cold-start branch needs:
+// every distinct logged date in the last 14 days (drives the 7-dot track
+// and the cold-start gate) and the patient's first-ever logged date (so
+// the "started May 5" eyebrow reads correctly even for caregivers who
+// started > 14 days ago).
+async function getBaselineWindow(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+): Promise<{ firstLoggedDate: string | null; loggedDates: string[] }> {
+  const lookback = isoDateOffset(today, -14);
+  const [windowQ, firstQ] = await Promise.all([
+    supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patientId)
+      .gte('log_date', lookback)
+      .lte('log_date', today),
+    supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patientId)
+      .order('log_date', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const loggedDates = Array.from(
+    new Set((windowQ.data ?? []).map((r) => r.log_date as string)),
+  ).sort();
+  const firstLoggedDate = (firstQ.data?.log_date as string | undefined) ?? null;
+  return { firstLoggedDate, loggedDates };
 }
 
-function AlertBlock({
-  tone,
-  heading,
-  sub,
-  triggers,
-  phoneCta,
-}: {
-  tone: 'alert' | 'watch';
-  heading: string;
-  sub: string;
-  triggers: TriggerRow[];
-  phoneCta: PhoneCta | null;
-}) {
-  const ringVar = tone === 'alert' ? 'var(--status-alert)' : 'var(--status-watch)';
-  const softVar = tone === 'alert' ? 'var(--status-alert-soft)' : 'var(--status-watch-soft)';
-  const fgVar = tone === 'alert' ? 'var(--status-alert-foreground)' : 'var(--status-watch-foreground)';
+async function getCollectingCounts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+) {
+  const start = isoDateOffset(today, -7);
+  const [readings, events, logs] = await Promise.all([
+    supabase
+      .from('daily_log_readings')
+      .select('log_date, field')
+      .eq('patient_id', patientId)
+      .eq('field', 'weight_lb')
+      .gte('log_date', start)
+      .lte('log_date', today),
+    supabase
+      .from('daily_log_symptom_events')
+      .select('log_date, symptom, present')
+      .eq('patient_id', patientId)
+      .gte('log_date', start)
+      .lte('log_date', today),
+    supabase
+      .from('daily_logs')
+      .select('log_date, pillow_count')
+      .eq('patient_id', patientId)
+      .gte('log_date', start)
+      .lte('log_date', today)
+      .not('pillow_count', 'is', null),
+  ]);
+
+  const weightDays = new Set((readings.data ?? []).map((r) => r.log_date as string));
+  const eventRows = (events.data ?? []) as { log_date: string; symptom: string; present: boolean }[];
+  const swellingDays = new Set(eventRows.filter((r) => r.symptom === 'swelling').map((r) => r.log_date));
+  const dyspneaDays = new Set(eventRows.filter((r) => r.symptom === 'dyspnea').map((r) => r.log_date));
+  const coughDays = new Set(eventRows.filter((r) => r.symptom === 'cough').map((r) => r.log_date));
+  const pillowDays = new Set((logs.data ?? []).map((r) => r.log_date as string));
+
+  return [
+    {
+      key: 'weight',
+      label: 'Weight',
+      summary:
+        weightDays.size > 0
+          ? `${weightDays.size} reading${weightDays.size === 1 ? '' : 's'}`
+          : 'no readings yet',
+      count: weightDays.size,
+    },
+    {
+      key: 'swelling',
+      label: 'Swelling',
+      summary:
+        swellingDays.size > 0
+          ? `${swellingDays.size} day${swellingDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
+      count: swellingDays.size,
+    },
+    {
+      key: 'breathing',
+      label: 'Breathing',
+      summary:
+        dyspneaDays.size > 0
+          ? `${dyspneaDays.size} day${dyspneaDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
+      count: dyspneaDays.size,
+    },
+    {
+      key: 'pillows',
+      label: 'Pillows',
+      summary:
+        pillowDays.size > 0
+          ? `${pillowDays.size} night${pillowDays.size === 1 ? '' : 's'} logged`
+          : 'not logged yet',
+      count: pillowDays.size,
+    },
+    {
+      key: 'cough',
+      label: 'Cough',
+      summary:
+        coughDays.size > 0
+          ? `${coughDays.size} day${coughDays.size === 1 ? '' : 's'} reported`
+          : 'not reported yet',
+      count: coughDays.size,
+    },
+  ];
+}
+
+// Surfaces an upcoming cardiology visit on the home screen when one is
+// scheduled within the next 14 days. Renders nothing when no upcoming
+// visit exists or when the next visit is more than 14 days out — beyond
+// that, the home screen doesn't need to be a daily reminder.
+async function getUpcomingVisitChip(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+) {
+  const horizon = isoDateOffset(today, 14);
+  const { data } = await supabase
+    .from('cardiology_visits')
+    .select('id, visit_date, cardiologist_name, visit_kind')
+    .eq('patient_id', patientId)
+    .gte('visit_date', today)
+    .lte('visit_date', horizon)
+    .order('visit_date', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+
+  const daysOut = daysBetween(today, data.visit_date);
+  const sub =
+    daysOut === 0
+      ? 'Today'
+      : daysOut === 1
+        ? 'Tomorrow'
+        : `In ${daysOut} days`;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
-        <div
-          className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
-          style={{ background: softVar, color: fgVar }}
-        >
-          <AlertTriangle size={22} />
-        </div>
-        <div className="min-w-0">
-          <p className="font-display text-xl text-foreground leading-tight">{heading}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>
-        </div>
+    <Link
+      href={`/visits/${data.id}`}
+      className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
+    >
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-foreground">
+          Cardiology · {prettyDateLong(data.visit_date)}
+        </p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {sub} · {data.cardiologist_name ?? 'open the handoff'}
+        </p>
       </div>
-
-      {triggers.length > 0 && (
-        <ul className="rounded-2xl px-4 py-3 space-y-1.5" style={{ background: softVar }}>
-          {triggers.map((t) => (
-            <li key={t.rule_id} className="text-sm" style={{ color: fgVar }}>
-              • {t.label}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {phoneCta && phoneCta.intent === 'call' && (
-        <a
-          href={phoneCta.href}
-          className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-4 text-white font-semibold shadow-soft active:scale-[0.98] transition"
-          style={{ background: ringVar }}
-        >
-          <Phone size={18} />
-          {phoneCta.label}
-        </a>
-      )}
-      {phoneCta && phoneCta.intent === 'fallback' && (
-        <Link
-          href={phoneCta.href}
-          className="w-full flex items-center justify-center gap-2 rounded-full px-5 py-4 font-semibold border active:scale-[0.98] transition"
-          style={{ borderColor: ringVar, color: fgVar }}
-        >
-          <Phone size={18} />
-          {phoneCta.label}
-        </Link>
-      )}
-    </div>
+      <span className="text-xs font-medium" style={{ color: 'var(--accent-foreground)' }}>
+        Open →
+      </span>
+    </Link>
   );
 }
+
+function daysBetween(from: string, to: string): number {
+  const a = new Date(`${from}T00:00:00Z`).getTime();
+  const b = new Date(`${to}T00:00:00Z`).getTime();
+  return Math.round((b - a) / (1000 * 60 * 60 * 24));
+}
+
+const MONTH_ABBR_DASH = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function prettyDateLong(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  return `${MONTH_ABBR_DASH[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+function isoDateOffset(isoDate: string, deltaDays: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatTime(iso: string, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: tz,
+    }).format(new Date(iso));
+  } catch {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+}
+
+// Sage-tinted patient initial bubble in the header's top-right corner.
+function PatientInitialAvatar({ initial }: { initial: string }) {
+  return (
+    <span
+      aria-hidden
+      className="absolute right-6 top-8 h-[38px] w-[38px] rounded-full flex items-center justify-center font-display text-base font-medium"
+      style={{
+        background: 'color-mix(in oklab, var(--sage) 20%, var(--cream))',
+        border: '1px solid color-mix(in oklab, var(--sage) 35%, transparent)',
+        color: 'var(--accent-foreground)',
+        letterSpacing: '-0.01em',
+      }}
+    >
+      {initial}
+    </span>
+  );
+}
+

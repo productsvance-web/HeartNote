@@ -966,15 +966,6 @@ export function VoiceLogClient({
 
   return (
     <section className="px-4 pt-4 flex flex-col gap-4 animate-fade-up">
-      {/* Header strip — concise; no big "How is X?" block competing with the
-          recording surface for visual weight. Lovable's design instead. */}
-      <div className="flex items-center justify-between px-2">
-        <p className="text-sm text-muted-foreground">Today’s check-in</p>
-        <p className="text-xs uppercase tracking-wider text-muted-foreground">
-          For {patientName}
-        </p>
-      </div>
-
       {/* Mic + timer + waveform header — the always-visible vital sign of
           recording state. Pulse ring active during recording; static during
           idle/analyzing/complete. */}

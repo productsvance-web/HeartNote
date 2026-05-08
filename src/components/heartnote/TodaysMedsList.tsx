@@ -16,10 +16,11 @@
 // and Refused are disabled. Extra remains tappable. Trash on any logged
 // event reopens its slot. Server enforces the same rule on confirmDose.
 
-import { useOptimistic, useState, useTransition } from 'react';
+import { useEffect, useOptimistic, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Clock, Minus, Pill, Plus } from 'lucide-react';
 import { confirmDose, deleteDoseEvent } from '@/app/dashboard/actions';
+import { minutesUntilWallClock } from '@/lib/dates/format';
 import {
   SLOT_CONSUMER_STATUSES,
   TAKEN_DOSE_STATUSES,
@@ -32,6 +33,36 @@ interface Props {
   scheduled: MedAdherenceRow[];
   prn: MedAdherenceRow[];
   tz: string;
+  today: string; // caregiver-TZ ISO YYYY-MM-DD
+}
+
+// "Due in {N}m" minute-granularity threshold. Within 60 min of the next
+// scheduled dose, the row swaps to the Clock + butter pill register.
+const DUE_SOON_THRESHOLD_MIN = 60;
+
+type PillState = 'done' | 'due-soon' | 'past-due' | 'idle';
+
+interface DueState {
+  pill: PillState;
+  minutesUntil: number | null;
+}
+
+function deriveDueState(
+  row: MedAdherenceRow,
+  nextSlotTime: string | null,
+  today: string,
+  tz: string,
+  nowMs: number,
+): DueState {
+  if (row.dosesPerDay !== null && row.slotsResolved >= row.dosesPerDay) {
+    return { pill: 'done', minutesUntil: null };
+  }
+  if (!nextSlotTime) return { pill: 'idle', minutesUntil: null };
+  const minutesUntil = minutesUntilWallClock(nextSlotTime, today, tz, nowMs);
+  if (!Number.isFinite(minutesUntil)) return { pill: 'idle', minutesUntil: null };
+  if (minutesUntil < 0) return { pill: 'past-due', minutesUntil };
+  if (minutesUntil <= DUE_SOON_THRESHOLD_MIN) return { pill: 'due-soon', minutesUntil };
+  return { pill: 'idle', minutesUntil };
 }
 
 const STATUS_LABEL: Record<MedEventStatus, string> = {
@@ -90,7 +121,7 @@ function applyOptimistic(
   });
 }
 
-export function TodaysMedsList({ scheduled, prn, tz }: Props) {
+export function TodaysMedsList({ scheduled, prn, tz, today }: Props) {
   // Single optimistic store across both scheduled and PRN. Splits back into
   // scheduled / PRN on render so existing layout is preserved.
   const allRows = [...scheduled, ...prn];
@@ -98,6 +129,43 @@ export function TodaysMedsList({ scheduled, prn, tz }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  // One ticker for the whole list — drives the "Due in {N}m" pill on every
+  // scheduled row from a single `nowMs`. Pauses when the tab is hidden so
+  // backgrounded screens don't burn cycles. Per memory feedback_no_bad_polling
+  // and feedback_react_closure_in_timers (refs over state for timer ids).
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const intervalRef = useRef<number | null>(null);
+  useEffect(() => {
+    function tick() {
+      setNowMs(Date.now());
+    }
+    function start() {
+      if (intervalRef.current !== null) return;
+      if (document.visibilityState !== 'visible') return;
+      intervalRef.current = window.setInterval(tick, 60_000);
+    }
+    function stop() {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    }
+    function onVisibility() {
+      if (document.visibilityState === 'visible') {
+        tick();
+        start();
+      } else {
+        stop();
+      }
+    }
+    start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   const optimisticScheduled = optimisticRows.filter((r) => r.dosesPerDay !== null);
   const optimisticPrn = optimisticRows.filter((r) => r.dosesPerDay === null);
@@ -152,6 +220,8 @@ export function TodaysMedsList({ scheduled, prn, tz }: Props) {
             key={row.medicationId}
             row={row}
             tz={tz}
+            today={today}
+            nowMs={nowMs}
             isPending={isPending}
             onConfirm={(status) => handleConfirm(row.medicationId, status)}
             onDelete={(eventId) => handleDelete(row.medicationId, eventId)}
@@ -191,7 +261,15 @@ interface RowProps {
   onDelete: (eventId: string) => void;
 }
 
-function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
+function MedRow({
+  row,
+  tz,
+  today,
+  nowMs,
+  isPending,
+  onConfirm,
+  onDelete,
+}: RowProps & { today: string; nowMs: number }) {
   const [open, setOpen] = useState(false);
   const expected = row.dosesPerDay ?? 0;
   // Numerator = doses actually administered (taken/early/late/double_dosed).
@@ -203,6 +281,14 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   // Marker for "schedule logged but not all doses were taken" — at least one
   // refused/missed today. The expansion lists the specific events.
   const hasSkipped = row.slotsResolved > row.takenCount;
+  // Next un-resolved slot's clock time (HH:MM as stored in scheduleTimes).
+  // Slots fill in chronological order in practice, so scheduleTimes[i] for
+  // i = slotsResolved is the next time the caregiver should expect a dose
+  // prompt. Null when the day is complete or PRN.
+  const nextSlotTime =
+    !slotsFull && row.scheduleTimes ? row.scheduleTimes[row.slotsResolved] ?? null : null;
+  const due = deriveDueState(row, nextSlotTime, today, tz, nowMs);
+  const showClockIcon = due.pill === 'due-soon' || due.pill === 'past-due';
 
   return (
     <li className="border-b border-border last:border-0">
@@ -211,29 +297,50 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-3 px-5 py-4 text-left active:bg-muted/40 transition"
       >
+        <span
+          aria-hidden
+          className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
+          style={{
+            background: slotsFull ? 'var(--status-good-soft)' : 'var(--accent)',
+            color: slotsFull ? 'var(--status-good-foreground)' : 'var(--accent-foreground)',
+          }}
+        >
+          {slotsFull ? (
+            <Check size={16} strokeWidth={2.4} />
+          ) : showClockIcon ? (
+            <Clock size={16} />
+          ) : (
+            <Pill size={16} />
+          )}
+        </span>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
+          {nextSlotTime && (
+            <p className="text-xs text-muted-foreground tabular-nums mt-0.5 truncate">
+              Next at {formatScheduleTime(nextSlotTime)}
+            </p>
+          )}
+          {!nextSlotTime && hasSkipped && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {row.slotsResolved - row.takenCount} not taken today
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold tabular-nums text-foreground">
-            {row.takenCount}/{expected}
+        <DuePill
+          due={due}
+          slotsFull={slotsFull}
+          taken={row.takenCount}
+          expected={expected}
+          nextSlotTime={nextSlotTime}
+        />
+        {isOver && (
+          <span
+            className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground tabular-nums shrink-0"
+            title={`${row.takenCount} doses given for a ${expected}-dose schedule`}
+          >
+            {row.takenCount}×
           </span>
-          {hasSkipped && (
-            <span
-              aria-label={`${row.slotsResolved - row.takenCount} not taken today`}
-              title={`${row.slotsResolved - row.takenCount} not taken today`}
-              className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-            />
-          )}
-          {isOver && (
-            <span
-              className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground"
-              title={`${row.takenCount} doses given for a ${expected}-dose schedule`}
-            >
-              {row.takenCount}×
-            </span>
-          )}
-        </div>
+        )}
       </button>
 
       {open && (
@@ -252,6 +359,78 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   );
 }
 
+function DuePill({
+  due,
+  slotsFull,
+  taken,
+  expected,
+  nextSlotTime,
+}: {
+  due: DueState;
+  slotsFull: boolean;
+  taken: number;
+  expected: number;
+  nextSlotTime: string | null;
+}) {
+  if (slotsFull) {
+    return (
+      <span
+        className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 tabular-nums"
+        style={{
+          background: 'var(--status-good-soft)',
+          color: 'var(--status-good-foreground)',
+        }}
+      >
+        Done
+      </span>
+    );
+  }
+  if (due.pill === 'due-soon' && due.minutesUntil !== null) {
+    return (
+      <span
+        className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 tabular-nums"
+        style={{
+          background: 'var(--status-watch-soft)',
+          color: 'var(--status-watch-foreground)',
+        }}
+      >
+        Due in {due.minutesUntil}m
+      </span>
+    );
+  }
+  if (due.pill === 'past-due' && nextSlotTime) {
+    return (
+      <span
+        className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 tabular-nums"
+        style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
+      >
+        Past due {formatScheduleTime(nextSlotTime)}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 tabular-nums"
+      style={{ background: 'var(--muted)', color: 'var(--muted-foreground)' }}
+    >
+      {taken}/{expected}
+    </span>
+  );
+}
+
+// Local register: "8 a.m." / "6:30 p.m." per the design system (TodaysMeds
+// row). The compact "8am" register lives in cadence.ts for management
+// summaries; different surfaces, different copy.
+function formatScheduleTime(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  const hour12 = ((h + 11) % 12) + 1;
+  const ampm = h < 12 ? 'a.m.' : 'p.m.';
+  return m === 0 ? `${hour12} ${ampm}` : `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   const [open, setOpen] = useState(false);
   return (
@@ -261,13 +440,20 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-3 px-5 py-4 text-left active:bg-muted/40 transition"
       >
+        <span
+          aria-hidden
+          className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
+          style={{ background: 'var(--accent)', color: 'var(--accent-foreground)' }}
+        >
+          <Pill size={16} />
+        </span>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {row.takenCount === 0 ? 'none today' : `${row.takenCount} today`}
           </p>
         </div>
-        <Plus size={18} className="text-muted-foreground" />
+        <Plus size={18} className="text-muted-foreground shrink-0" />
       </button>
 
       {open && (
@@ -333,10 +519,10 @@ function Expansion({
                   type="button"
                   disabled={isPending}
                   onClick={() => onDelete(e.id)}
-                  className="p-1 rounded-md text-muted-foreground active:bg-muted/60 disabled:opacity-50"
-                  aria-label={`Delete ${STATUS_LABEL[e.status].toLowerCase()} entry at ${formatTime(e.actual_taken_at, tz)}`}
+                  className="shrink-0 inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-destructive active:scale-[0.94] transition disabled:opacity-50"
+                  aria-label={`Remove ${STATUS_LABEL[e.status].toLowerCase()} entry at ${formatTime(e.actual_taken_at, tz)}`}
                 >
-                  <Trash2 size={14} />
+                  <Minus size={14} strokeWidth={3} className="text-white" />
                 </button>
               </li>
             ))}

@@ -1,0 +1,165 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
+import { createClient } from '@/lib/supabase/server';
+import { evaluateAlertTier } from '@/lib/alerts/evaluate';
+
+// Server action for the manual-edit form. Updates day-level fields on the
+// daily_logs row, applies per-row deletes / value-edits to readings and
+// symptom events, then re-runs the alert engine for the log_date and
+// upserts daily_assessments. Caregiver-facing edits MUST re-run the
+// engine — otherwise the dashboard tier would lie about the just-fixed
+// data.
+
+const ReadingPatchSchema = z.object({
+  id: z.string().uuid(),
+  remove: z.boolean().optional(),
+  value: z.number().finite().optional(),
+});
+
+const SymptomPatchSchema = z.object({
+  id: z.string().uuid(),
+  remove: z.boolean().optional(),
+  present: z.boolean().optional(),
+  severity: z.number().int().min(0).max(4).nullable().optional(),
+  nocturnal: z.boolean().nullable().optional(),
+  postural: z.boolean().nullable().optional(),
+  resolvesOvernight: z.boolean().nullable().optional(),
+});
+
+const PayloadSchema = z.object({
+  logId: z.string().uuid(),
+  notes: z.string().max(2000),
+  pillowCount: z.number().int().min(0).max(10).nullable(),
+  appetiteChange: z.enum(['decreased', 'unchanged', 'increased']).nullable(),
+  urineOutputChange: z.enum(['decreased', 'unchanged', 'increased']).nullable(),
+  activityStepChange: z.enum(['none', 'mild_slowdown', 'severe_change']).nullable(),
+  readings: z.array(ReadingPatchSchema),
+  symptomEvents: z.array(SymptomPatchSchema),
+});
+
+export type SaveLogEditPayload = z.infer<typeof PayloadSchema>;
+
+export async function saveLogEdit(
+  payload: SaveLogEditPayload,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = PayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid input.' };
+  }
+  const data = parsed.data;
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Not signed in.' };
+
+  // Verify ownership: load the log + its patient row, confirm caregiver owns
+  // the patient. RLS would also block writes from other caregivers but the
+  // explicit check lets us return a friendly error instead of a 500.
+  const { data: log } = await supabase
+    .from('daily_logs')
+    .select('id, patient_id, log_date')
+    .eq('id', data.logId)
+    .maybeSingle();
+  if (!log) return { ok: false, error: 'Log not found.' };
+
+  const { data: patient } = await supabase
+    .from('patients')
+    .select('caregiver_id')
+    .eq('id', log.patient_id)
+    .single();
+  if (!patient || patient.caregiver_id !== user.id) {
+    return { ok: false, error: 'Not your log.' };
+  }
+
+  // 1. Update day-level fields on daily_logs.
+  const { error: logErr } = await supabase
+    .from('daily_logs')
+    .update({
+      notes: data.notes.trim().length > 0 ? data.notes.trim() : null,
+      pillow_count: data.pillowCount,
+      appetite_change: data.appetiteChange,
+      urine_output_change: data.urineOutputChange,
+      activity_step_change: data.activityStepChange,
+    })
+    .eq('id', data.logId);
+  if (logErr) return { ok: false, error: logErr.message };
+
+  // 2. Apply reading patches.
+  for (const r of data.readings) {
+    if (r.remove) {
+      const { error } = await supabase.from('daily_log_readings').delete().eq('id', r.id);
+      if (error) return { ok: false, error: error.message };
+    } else if (typeof r.value === 'number') {
+      const { error } = await supabase
+        .from('daily_log_readings')
+        .update({ value: r.value })
+        .eq('id', r.id);
+      if (error) return { ok: false, error: error.message };
+    }
+  }
+
+  // 3. Apply symptom-event patches.
+  for (const e of data.symptomEvents) {
+    if (e.remove) {
+      const { error } = await supabase
+        .from('daily_log_symptom_events')
+        .delete()
+        .eq('id', e.id);
+      if (error) return { ok: false, error: error.message };
+    } else {
+      const update: {
+        present?: boolean;
+        severity?: number | null;
+        nocturnal?: boolean | null;
+        postural?: boolean | null;
+        resolves_overnight?: boolean | null;
+      } = {};
+      if (typeof e.present === 'boolean') update.present = e.present;
+      if (e.severity !== undefined) update.severity = e.severity;
+      if (e.nocturnal !== undefined) update.nocturnal = e.nocturnal;
+      if (e.postural !== undefined) update.postural = e.postural;
+      if (e.resolvesOvernight !== undefined) update.resolves_overnight = e.resolvesOvernight;
+      if (Object.keys(update).length > 0) {
+        const { error } = await supabase
+          .from('daily_log_symptom_events')
+          .update(update)
+          .eq('id', e.id);
+        if (error) return { ok: false, error: error.message };
+      }
+    }
+  }
+
+  // 4. Re-run the alert engine for the log_date and upsert daily_assessments.
+  // The dashboard reads daily_assessments — without this the tier would
+  // still reflect the pre-edit data.
+  try {
+    const assessment = await evaluateAlertTier(supabase, log.patient_id, log.log_date);
+    const { error: upsertErr } = await supabase.from('daily_assessments').upsert(
+      [
+        {
+          patient_id: log.patient_id,
+          log_date: log.log_date,
+          tier: assessment.tier,
+          triggers: assessment.triggers as unknown as import('@/lib/supabase/types').Json,
+          cold_start: assessment.coldStart,
+          source_log_id: data.logId,
+          evaluated_at: new Date().toISOString(),
+        },
+      ],
+      { onConflict: 'patient_id,log_date' },
+    );
+    if (upsertErr) return { ok: false, error: upsertErr.message };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to re-evaluate alert.',
+    };
+  }
+
+  revalidatePath('/log');
+  revalidatePath('/dashboard');
+  revalidatePath(`/log/${data.logId}/edit`);
+  return { ok: true };
+}
