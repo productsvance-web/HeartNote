@@ -38,6 +38,11 @@ const nextConfig: NextConfig = {
       { source: '/onboarding', headers: NO_STORE_HEADERS },
       { source: '/me/:path*', headers: NO_STORE_HEADERS },
       { source: '/auth/:path*', headers: NO_STORE_HEADERS },
+      // Family share snapshots: not auth-sensitive, but each request must
+      // re-fetch from the DB so revoked/expired tokens stop resolving the
+      // moment they're revoked. BFCache would let a sister navigate back
+      // to a stale snapshot after the caregiver pulled the link.
+      { source: '/s/:path*', headers: NO_STORE_HEADERS },
     ];
   },
 };
