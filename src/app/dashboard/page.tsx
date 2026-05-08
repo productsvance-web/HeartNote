@@ -13,7 +13,8 @@ import { countWord } from '@/lib/format/count';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
-import { ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
+import { COLD_START_MIN_LOG_DAYS, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
+import { formatHeaderEyebrow } from '@/lib/dates/format';
 import Link from 'next/link';
 
 function greet() {
@@ -110,21 +111,28 @@ export default async function DashboardPage() {
 
   if (patient && inColdStart) {
     const collecting = await getCollectingCounts(supabase, patient.id, today);
+    const todayBanked =
+      logStatus === 'complete' && loggedDatesForCard.includes(today)
+        ? loggedDatesForCard.length
+        : 0;
+    const coldStartSubhead =
+      logStatus === 'complete' && todaysLogTime !== null && todayBanked > 0
+        ? `${patientName === 'them' ? "Today's" : `${patientName}'s`} check-in came in at ${todaysLogTime}. Day ${Math.min(todayBanked, COLD_START_MIN_LOG_DAYS)} of ${COLD_START_MIN_LOG_DAYS}.`
+        : 'Days 1–7 are just data. After seven mornings, we can flag the day something feels different.';
     return (
       <PhoneShell>
         <header className="px-6 pt-8 relative">
           <PatientInitialAvatar initial={patientInitial} />
-          <p className="text-sm text-muted-foreground pr-16">
-            {greet()}, {profile?.display_name ?? 'there'}.
+          <p
+            className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
+            style={{ letterSpacing: '0.06em' }}
+          >
+            {formatHeaderEyebrow(today, profile.timezone)}
           </p>
           <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-16">
-            We&rsquo;re learning what normal looks like for{' '}
-            <span className="italic">{patientName}</span>.
+            {greet()}, {profile?.display_name ?? 'there'}.
           </h1>
-          <p className="text-sm text-muted-foreground mt-2">
-            Days 1–7 are just data. After seven mornings, we can flag the day something feels
-            different.
-          </p>
+          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{coldStartSubhead}</p>
         </header>
 
         <BaselineProgressCard
@@ -195,11 +203,14 @@ export default async function DashboardPage() {
     <PhoneShell>
       <header className="px-6 pt-8 relative">
         <PatientInitialAvatar initial={patientInitial} />
-        <p className="text-sm text-muted-foreground pr-16">
-          {greet()}, {profile?.display_name ?? 'there'}.
+        <p
+          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
+          style={{ letterSpacing: '0.06em' }}
+        >
+          {formatHeaderEyebrow(today, profile.timezone)}
         </p>
         <h1 className="font-display text-3xl text-foreground mt-1 pr-16">
-          How is <span className="italic">{patientName}</span> today?
+          {greet()}, {profile?.display_name ?? 'there'}.
         </h1>
         {showSubhead && (
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
