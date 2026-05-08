@@ -202,9 +202,11 @@ None. All changes fit existing components.
 - [ ] All ACs verifiable.
 
 #### Functional — happy path
-- [ ] TodaysMedsCard, scheduled med, dose due in <60min: row renders Pill or Clock icon (left), drug name (center), "Due at 8:00 AM" sub-line, butter-soft "Due in {N}m" pill (right). Tap still opens Expansion panel.
-- [ ] TodaysMedsCard, scheduled med, all doses logged today: row renders sage-soft check pill instead of count.
-- [ ] TodaysMedsCard, PRN med: row unchanged (drug name + "{N} today" + Plus).
+- [ ] TodaysMedsCard, scheduled med with un-resolved slots: row renders sage Pill icon (left), drug name (center), "Next at 8 a.m." sub-line, muted "{taken}/{expected}" pill (right). Tap still opens Expansion panel.
+- [ ] TodaysMedsCard, scheduled med, all doses logged today: row renders sage check icon (left) and sage-soft "Done" pill (right).
+- [ ] TodaysMedsCard, PRN med: same Pill-icon avatar treatment for visual rhythm; right column still shows the Plus icon. Drug name + "{N} today" subline preserved.
+
+> **Scope note:** the plan's earlier draft promised a "Due in {N}m" duration pill with a Clock icon. That treatment is incompatible with a server-rendered page — the duration would be stale the moment the caregiver paused on the screen. The shipped treatment uses an absolute "Next at 8 a.m." subline (always accurate) plus a count pill. The Clock icon is dropped because the Pill-icon-on-due is sufficient signal alongside the absolute time.
 - [ ] Trends, no upcoming visit, 2 patterns: "Two patterns worth flagging at the next visit."
 - [ ] Trends, upcoming visit on May 14, 2 patterns: "Two patterns worth flagging at the May 14 visit."
 - [ ] Trends, upcoming visit today, 1 pattern: "One pattern worth flagging at the visit today."

@@ -9,6 +9,7 @@ import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
 import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
 import { HomeAffirmationCard } from '@/components/heartnote/HomeAffirmationCard';
+import { countWord } from '@/lib/format/count';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
@@ -113,10 +114,10 @@ export default async function DashboardPage() {
       <PhoneShell>
         <header className="px-6 pt-8 relative">
           <PatientInitialAvatar initial={patientInitial} />
-          <p className="text-sm text-muted-foreground pr-12">
+          <p className="text-sm text-muted-foreground pr-16">
             {greet()}, {profile?.display_name ?? 'there'}.
           </p>
-          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-12">
+          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-16">
             We&rsquo;re learning what normal looks like for{' '}
             <span className="italic">{patientName}</span>.
           </h1>
@@ -194,10 +195,10 @@ export default async function DashboardPage() {
     <PhoneShell>
       <header className="px-6 pt-8 relative">
         <PatientInitialAvatar initial={patientInitial} />
-        <p className="text-sm text-muted-foreground pr-12">
+        <p className="text-sm text-muted-foreground pr-16">
           {greet()}, {profile?.display_name ?? 'there'}.
         </p>
-        <h1 className="font-display text-3xl text-foreground mt-1 pr-12">
+        <h1 className="font-display text-3xl text-foreground mt-1 pr-16">
           How is <span className="italic">{patientName}</span> today?
         </h1>
         {showSubhead && (
@@ -517,8 +518,6 @@ function formatTime(iso: string, tz: string): string {
 }
 
 // Sage-tinted patient initial bubble in the header's top-right corner.
-// Sized to the design (38×38) with sage 20% / cream tint and a sage 35%
-// border. Falls back to "?" when the patient's display_name is empty.
 function PatientInitialAvatar({ initial }: { initial: string }) {
   return (
     <span
@@ -536,20 +535,3 @@ function PatientInitialAvatar({ initial }: { initial: string }) {
   );
 }
 
-// Words for small counts ("Two things changed"); digits past 9. Matches the
-// design system register where 1–9 are spelled out in narrative copy.
-const COUNT_WORDS = [
-  'Zero',
-  'One',
-  'Two',
-  'Three',
-  'Four',
-  'Five',
-  'Six',
-  'Seven',
-  'Eight',
-  'Nine',
-];
-function countWord(n: number): string {
-  return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
-}

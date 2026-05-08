@@ -23,6 +23,8 @@ import {
   WEIGHT_WATCH_RULES,
 } from '@/lib/vitals/per-vital-tier';
 import { WEIGHT_GAIN_TIER_2_7D_LB, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
+import { formatShortDate, isoDateOffset } from '@/lib/dates/format';
+import { countWord } from '@/lib/format/count';
 
 interface Props {
   patient: { display_name: string | null; dry_weight_lb: number | null };
@@ -264,46 +266,18 @@ function classifyWeightTierFromTriggers(triggers: TriggerRow[], series: TrendSer
 function headlineForCount(n: number, nextVisitDate: string | null, today: string): string {
   if (n === 0) return 'Nothing pulling at your attention this week.';
   const visitPhrase = visitPhraseFor(nextVisitDate, today);
-  if (n === 1) return `One pattern worth flagging at ${visitPhrase}.`;
-  return `${n} patterns worth flagging at ${visitPhrase}.`;
+  const word = countWord(n);
+  return `${word} pattern${n === 1 ? '' : 's'} worth flagging at ${visitPhrase}.`;
 }
 
-// Visit phrasing escalates from generic to date-specific when an upcoming
-// cardiology visit is on the calendar. "the visit today" / "tomorrow's
-// visit" reads more urgently than the always-on "the next visit"; specific
-// dates drop into the same shape ("the May 14 visit").
+// Visit phrasing escalates to date-specific when an upcoming cardiology
+// visit is on the calendar. Falls back to "the next visit" when nothing's
+// scheduled.
 function visitPhraseFor(visitDate: string | null, today: string): string {
   if (!visitDate) return 'the next visit';
   if (visitDate === today) return 'the visit today';
-  const tomorrow = isoDateOffset(today, 1);
-  if (visitDate === tomorrow) return "tomorrow's visit";
-  return `the ${prettyDate(visitDate)} visit`;
-}
-
-const TREND_MONTH_ABBR = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-function prettyDate(isoDate: string): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  return `${TREND_MONTH_ABBR[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
-
-function isoDateOffset(isoDate: string, deltaDays: number): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + deltaDays);
-  return d.toISOString().slice(0, 10);
+  if (visitDate === isoDateOffset(today, 1)) return "tomorrow's visit";
+  return `the ${formatShortDate(visitDate)} visit`;
 }
 
 function ErrorView() {

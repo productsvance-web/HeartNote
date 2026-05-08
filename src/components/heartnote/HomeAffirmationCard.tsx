@@ -1,23 +1,6 @@
-// HomeAffirmationCard — sage-tinted "all steady" card on green days. The
-// home screen never goes silent: when the engine finished and nothing was
-// flagged, this card affirms in the same calm register the cold-start hero
-// uses for "we're learning." Same recipe — sage 11% tinted card, sage 28%
-// border, soft sage shadow.
-//
-// Plain-English: when mom's morning log is in and nothing crossed a
-// threshold, this card sits where HeroAlertCard would otherwise sit and
-// summarizes the day's signals in one line ("weight 178.2 lb · breathing
-// normal · no cough"). It never says "you're doing great" — that's the
-// chirpy register the brand rejects.
-//
-// Gated upstream: dashboard/page.tsx renders this only when triggers
-// length is 0 AND the engine wrote a non-null tier (we're past cold-start
-// and the assessment ran). That gate is the source of truth — this
-// component does not re-decide.
-//
-// Citations: research/04-caregiver-language.md (no chirpy copy);
-// design source: home-screen.jsx hero recipe + screens.jsx good-state
-// summary card.
+// Sage-tinted "all steady" card on green days. Gated by dashboard/page.tsx
+// (rendered only when triggers.length === 0 AND tier !== null) — this
+// component does not re-decide. Same card recipe as the cold-start hero.
 
 import type { TodaySnapshot } from '@/lib/vitals/today-snapshot';
 
@@ -64,11 +47,9 @@ export function HomeAffirmationCard({ snapshot }: Props) {
   );
 }
 
-// Picks up to three reported signals and joins them with " · ". Each
-// vital reads from the snapshot and never invents data — if the caregiver
-// didn't dictate a value, that vital is silent in the summary. Order
-// follows the decompensation cascade (weight → swelling → breathing →
-// pillows → cough) so the most prognostically important signal is first.
+// Joins up to 3 reported signals with " · ", in decompensation-cascade
+// order (weight → swelling → breathing → pillows → cough). Silent on
+// signals the caregiver didn't dictate.
 function summarize(snap: TodaySnapshot): string {
   const parts: string[] = [];
   if (snap.weightLb !== null) parts.push(`weight ${snap.weightLb.toFixed(1)} lb`);

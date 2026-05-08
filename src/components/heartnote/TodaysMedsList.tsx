@@ -275,9 +275,9 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   );
 }
 
-// Formats "HH:MM" (24-hour, as stored in medication_dose_times.time_of_day)
-// to a 12-hour clock with lowercase a.m./p.m. Zero-minute slots drop the
-// ":00" for cleaner reading ("8 a.m." vs "8:00 a.m.").
+// Local register: "8 a.m." / "6:30 p.m." per the design system (TodaysMeds
+// row). The compact "8am" register lives in cadence.ts for management
+// summaries; different surfaces, different copy.
 function formatScheduleTime(hhmm: string): string {
   const [hStr, mStr] = hhmm.split(':');
   const h = Number(hStr);
