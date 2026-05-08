@@ -127,8 +127,8 @@ export default async function MePage({
           <SectionLink
             href="/family"
             icon={<Users size={18} />}
-            label="Care circle"
-            sub="Who else is helping"
+            label="Family"
+            sub="Share status with a sibling"
             isLast
           />
         </div>
