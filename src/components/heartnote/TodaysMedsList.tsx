@@ -18,7 +18,7 @@
 
 import { useEffect, useOptimistic, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, Clock, Pill, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Clock, Minus, Pill, Plus } from 'lucide-react';
 import { confirmDose, deleteDoseEvent } from '@/app/dashboard/actions';
 import { minutesUntilWallClock } from '@/lib/dates/format';
 import {
@@ -519,10 +519,10 @@ function Expansion({
                   type="button"
                   disabled={isPending}
                   onClick={() => onDelete(e.id)}
-                  className="p-1 rounded-md text-muted-foreground active:bg-muted/60 disabled:opacity-50"
-                  aria-label={`Delete ${STATUS_LABEL[e.status].toLowerCase()} entry at ${formatTime(e.actual_taken_at, tz)}`}
+                  className="shrink-0 inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-destructive active:scale-[0.94] transition disabled:opacity-50"
+                  aria-label={`Remove ${STATUS_LABEL[e.status].toLowerCase()} entry at ${formatTime(e.actual_taken_at, tz)}`}
                 >
-                  <Trash2 size={14} />
+                  <Minus size={14} strokeWidth={3} className="text-white" />
                 </button>
               </li>
             ))}
