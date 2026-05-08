@@ -58,7 +58,7 @@ export async function TodaysMedsCard({ patientId, tz, date, patientName }: Props
           Manage
         </Link>
       </div>
-      <TodaysMedsList scheduled={scheduled} prn={prn} tz={tz} />
+      <TodaysMedsList scheduled={scheduled} prn={prn} tz={tz} today={date} />
     </section>
   );
 }
