@@ -22,7 +22,7 @@ export default async function PatientEditPage() {
   const { data: patient } = await supabase
     .from('patients')
     .select(
-      'id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name, cardiologist_phone, normal_pillow_count',
+      'id, display_name, relationship, dry_weight_lb, nyha_class, cardiologist_name, cardiologist_phone, normal_pillow_count, date_of_birth',
     )
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
@@ -66,6 +66,7 @@ export default async function PatientEditPage() {
         initialCardiologistName={patient.cardiologist_name ?? ''}
         initialCardiologistPhone={patient.cardiologist_phone ?? ''}
         initialNormalPillowCount={patient.normal_pillow_count}
+        initialDateOfBirth={patient.date_of_birth}
       />
     </PhoneShell>
   );
