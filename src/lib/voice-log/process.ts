@@ -17,22 +17,12 @@ import { extractWithClaude } from '@/lib/voice-log/extract';
 import { matchMedByDrugName } from '@/lib/medications/match';
 import type { UnmatchedChip } from '@/lib/voice-log/chip';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
+import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 
-export const ReadingSchema = z.object({
+const ReadingSchema = z.object({
   field: z.enum(['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp']),
   value: z.number().finite(),
 });
-export type ReadingField = z.infer<typeof ReadingSchema>['field'];
-// Per-field range mirrors the DB CHECK constraints. Defense in depth: Zod
-// drops bad values at the boundary so one hallucination doesn't fail the
-// whole RPC.
-export const ReadingRange: Record<ReadingField, [number, number]> = {
-  weight_lb: [50, 700],
-  resting_hr: [30, 220],
-  spo2: [50, 100],
-  systolic_bp: [60, 250],
-  diastolic_bp: [30, 150],
-};
 
 const SymptomEventSchema = z.object({
   symptom: z.enum([
@@ -128,7 +118,7 @@ export async function processVoiceLog(
           validationWarnings.push(`reading rejected (shape): ${JSON.stringify(r)}`);
           return [];
         }
-        const [min, max] = ReadingRange[parsed.data.field];
+        const [min, max] = READING_RANGE[parsed.data.field];
         if (parsed.data.value < min || parsed.data.value > max) {
           validationWarnings.push(
             `reading rejected (range): ${parsed.data.field}=${parsed.data.value}`

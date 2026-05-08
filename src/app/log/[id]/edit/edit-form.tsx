@@ -4,11 +4,11 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Minus, Plus } from 'lucide-react';
 import { saveLogEdit, type SaveLogEditPayload } from './actions';
+import { READING_RANGE, type ReadingField } from '@/lib/clinical/reading-ranges';
 
 type AppetiteChange = 'decreased' | 'unchanged' | 'increased';
 type UrineChange = 'decreased' | 'unchanged' | 'increased';
 type ActivityChange = 'none' | 'mild_slowdown' | 'severe_change';
-type ReadingField = 'weight_lb' | 'resting_hr' | 'spo2' | 'systolic_bp' | 'diastolic_bp';
 type SymptomKey =
   | 'dyspnea'
   | 'cough'
@@ -24,17 +24,6 @@ type SymptomKey =
   | 'pulse_irregular'
   | 'dizziness'
   | 'nausea';
-
-// Per-field range matches src/lib/voice-log/process.ts ReadingRange
-// and the DB CHECK constraints. Client-side guard so the Confirm button
-// surfaces a clear error before the server round-trip.
-const READING_RANGE: Record<ReadingField, [number, number]> = {
-  weight_lb: [50, 700],
-  resting_hr: [30, 220],
-  spo2: [50, 100],
-  systolic_bp: [60, 250],
-  diastolic_bp: [30, 150],
-};
 
 interface ReadingRow {
   id: string;

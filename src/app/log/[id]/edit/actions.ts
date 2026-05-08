@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
-import { ReadingRange, type ReadingField } from '@/lib/voice-log/process';
+import { READING_RANGE, type ReadingField } from '@/lib/clinical/reading-ranges';
 
 // Server action for the manual-edit form. Updates day-level fields on the
 // daily_logs row, applies per-row deletes / value-edits to readings and
@@ -39,7 +39,7 @@ const NewReadingSchema = z
   })
   .refine(
     ({ field, value }) => {
-      const [min, max] = ReadingRange[field as ReadingField];
+      const [min, max] = READING_RANGE[field as ReadingField];
       return value >= min && value <= max;
     },
     { message: 'Value out of range for this field.' },
