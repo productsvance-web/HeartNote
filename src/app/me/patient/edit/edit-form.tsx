@@ -15,6 +15,7 @@ interface Props {
   initialCardiologistName: string;
   initialCardiologistPhone: string;
   initialNormalPillowCount: number | null;
+  initialDateOfBirth: string | null;
 }
 
 export function PatientEditForm({
@@ -26,6 +27,7 @@ export function PatientEditForm({
   initialCardiologistName,
   initialCardiologistPhone,
   initialNormalPillowCount,
+  initialDateOfBirth,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -42,6 +44,7 @@ export function PatientEditForm({
   const [pillows, setPillows] = useState<string>(
     initialNormalPillowCount === null ? '' : String(initialNormalPillowCount),
   );
+  const [dateOfBirth, setDateOfBirth] = useState<string>(initialDateOfBirth ?? '');
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,6 +70,7 @@ export function PatientEditForm({
       cardiologistName: cardiologistName.trim(),
       cardiologistPhone: cardiologistPhone.trim(),
       normalPillowCount: pillowsNum,
+      dateOfBirth: dateOfBirth.trim() === '' ? null : dateOfBirth,
     };
 
     startTransition(async () => {
@@ -102,6 +106,18 @@ export function PatientEditForm({
           onChange={(e) => setRelationship(e.target.value)}
           className="input"
           placeholder="mother"
+        />
+      </Field>
+
+      <Field
+        label="Date of birth"
+        hint="Used on the visit-handoff PDF header so the cardiologist sees age at a glance."
+      >
+        <input
+          type="date"
+          value={dateOfBirth}
+          onChange={(e) => setDateOfBirth(e.target.value)}
+          className="input tabular-nums"
         />
       </Field>
 

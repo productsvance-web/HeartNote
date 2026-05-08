@@ -29,6 +29,10 @@ const PayloadSchema = z.object({
   cardiologistName: z.string().trim().max(120),
   cardiologistPhone: z.string().trim().max(40),
   normalPillowCount: z.number().int().min(0).max(10).nullable(),
+  dateOfBirth: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker for date of birth.')
+    .nullable(),
 });
 
 export type SavePatientPayload = z.infer<typeof PayloadSchema>;
@@ -67,6 +71,7 @@ export async function savePatient(
       cardiologist_name: data.cardiologistName.length > 0 ? data.cardiologistName : null,
       cardiologist_phone: normalizePhone(data.cardiologistPhone),
       normal_pillow_count: data.normalPillowCount,
+      date_of_birth: data.dateOfBirth,
     })
     .eq('id', data.patientId);
   if (error) return { ok: false, error: error.message };

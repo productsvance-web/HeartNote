@@ -106,6 +106,7 @@ export type Database = {
           generated_report: Json | null
           generated_report_text: string | null
           id: string
+          last_visit_id: string | null
           notes_after: string | null
           patient_id: string
           questions_to_ask: Json | null
@@ -119,6 +120,7 @@ export type Database = {
           generated_report?: Json | null
           generated_report_text?: string | null
           id?: string
+          last_visit_id?: string | null
           notes_after?: string | null
           patient_id: string
           questions_to_ask?: Json | null
@@ -132,6 +134,7 @@ export type Database = {
           generated_report?: Json | null
           generated_report_text?: string | null
           id?: string
+          last_visit_id?: string | null
           notes_after?: string | null
           patient_id?: string
           questions_to_ask?: Json | null
@@ -140,6 +143,13 @@ export type Database = {
           visit_kind?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "cardiology_visits_last_visit_id_fkey"
+            columns: ["last_visit_id"]
+            isOneToOne: false
+            referencedRelation: "cardiology_visits"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "cardiology_visits_patient_id_fkey"
             columns: ["patient_id"]
