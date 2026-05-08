@@ -83,8 +83,8 @@ export default async function LogEditPage({
           Fix what was misheard.
         </h1>
         <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-          Edit or remove anything that doesn&rsquo;t match what {patient.display_name} actually
-          reported. To add a new reading, dictate another log.
+          Edit, remove, or add anything that doesn&rsquo;t match what {patient.display_name}{' '}
+          actually reported.
         </p>
       </header>
 

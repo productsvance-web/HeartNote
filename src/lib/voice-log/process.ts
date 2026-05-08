@@ -18,14 +18,15 @@ import { matchMedByDrugName } from '@/lib/medications/match';
 import type { UnmatchedChip } from '@/lib/voice-log/chip';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
 
-const ReadingSchema = z.object({
+export const ReadingSchema = z.object({
   field: z.enum(['weight_lb', 'resting_hr', 'spo2', 'systolic_bp', 'diastolic_bp']),
   value: z.number().finite(),
 });
+export type ReadingField = z.infer<typeof ReadingSchema>['field'];
 // Per-field range mirrors the DB CHECK constraints. Defense in depth: Zod
 // drops bad values at the boundary so one hallucination doesn't fail the
 // whole RPC.
-const ReadingRange: Record<z.infer<typeof ReadingSchema>['field'], [number, number]> = {
+export const ReadingRange: Record<ReadingField, [number, number]> = {
   weight_lb: [50, 700],
   resting_hr: [30, 220],
   spo2: [50, 100],
