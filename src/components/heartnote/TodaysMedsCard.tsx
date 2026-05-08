@@ -12,9 +12,10 @@ interface Props {
   patientId: string;
   tz: string;
   date: string; // YYYY-MM-DD in patient tz
+  patientName: string | null;
 }
 
-export async function TodaysMedsCard({ patientId, tz, date }: Props) {
+export async function TodaysMedsCard({ patientId, tz, date, patientName }: Props) {
   const supabase = await createClient();
   const rows = await evaluateMedAdherenceForDay(supabase, patientId, { date, tz });
 
@@ -31,7 +32,9 @@ export async function TodaysMedsCard({ patientId, tz, date }: Props) {
           <div className="flex-1">
             <p className="text-sm font-semibold text-foreground">No medications added yet</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Add the meds your loved one takes so dose tracking can show up here.
+              {patientName
+                ? `Add the meds ${patientName} takes so dose tracking can show up here.`
+                : 'Add the meds so dose tracking can show up here.'}
             </p>
             <Link
               href="/me/medications"

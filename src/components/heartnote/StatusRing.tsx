@@ -10,7 +10,7 @@ const map: Record<Status, { ring: string; soft: string; label: string; sub: stri
   watch: {
     ring: 'var(--status-watch)',
     soft: 'var(--status-watch-soft)',
-    label: 'Watch for changes',
+    label: 'Pay attention',
     sub: 'A few small things to keep an eye on',
   },
   alert: {

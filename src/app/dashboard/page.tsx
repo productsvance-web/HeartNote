@@ -230,7 +230,12 @@ export default async function DashboardPage() {
       </section>
 
       {patient && (
-        <TodaysMedsCard patientId={patient.id} tz={profile.timezone} date={today} />
+        <TodaysMedsCard
+          patientId={patient.id}
+          tz={profile.timezone}
+          date={today}
+          patientName={patient.display_name}
+        />
       )}
 
       <Link
