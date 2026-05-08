@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
+import { YesterdayLogCard } from '@/components/heartnote/YesterdayLogCard';
+import { getYesterdayLog } from '@/lib/voice-log/yesterday';
 import { VoiceLogClient } from './voice-log-client';
 
 export default async function LogPage() {
@@ -31,14 +33,17 @@ export default async function LogPage() {
   // `today` is the caregiver's local calendar day, not UTC — see
   // src/lib/dates/today.ts.
   const today = getTodayInTimezone(profile.timezone);
-  const { data: todaysLogs } = await supabase
-    .from('daily_logs')
-    .select('id, processing_status, transcribed_text, structured_observations, created_at')
-    .eq('patient_id', patient.id)
-    .eq('log_date', today)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  const todaysLog = todaysLogs?.[0] ?? null;
+  const [todaysLogsRes, yesterdayLog] = await Promise.all([
+    supabase
+      .from('daily_logs')
+      .select('id, processing_status, transcribed_text, structured_observations, created_at')
+      .eq('patient_id', patient.id)
+      .eq('log_date', today)
+      .order('created_at', { ascending: false })
+      .limit(1),
+    getYesterdayLog(supabase, patient.id, today),
+  ]);
+  const todaysLog = todaysLogsRes.data?.[0] ?? null;
 
   return (
     <PhoneShell>
@@ -52,6 +57,7 @@ export default async function LogPage() {
           (todaysLog?.structured_observations as Record<string, unknown> | null) ?? null
         }
       />
+      {yesterdayLog && <YesterdayLogCard log={yesterdayLog} />}
     </PhoneShell>
   );
 }
