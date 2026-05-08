@@ -20,6 +20,7 @@ export type CoughBucket = (typeof BUCKETS)[number];
 
 export type CoughCell = {
   date: string; // ISO YYYY-MM-DD, oldest left → newest right
+  logged: boolean; // false when the patient had no daily_logs row on this date
   morning: number;
   afternoon: number;
   evening: number;
@@ -110,18 +111,30 @@ export function CoughHeatmap({ cells, today }: Props) {
             cells.map((cell) => {
               const count = cell[bucket];
               const isToday = cell.date === today;
+              const unlogged = !cell.logged;
               return (
                 <span
                   key={`${bucket}-${cell.date}`}
                   className="rounded-[3px]"
                   style={{
-                    background: cellBackground(count),
+                    background: unlogged ? 'transparent' : cellBackground(count),
+                    border: unlogged
+                      ? '1px dashed color-mix(in oklab, var(--muted-foreground) 30%, transparent)'
+                      : 'none',
                     outline: isToday
                       ? '1.5px solid color-mix(in oklab, var(--foreground) 32%, transparent)'
                       : 'none',
                     outlineOffset: isToday ? -1 : 0,
                   }}
-                  aria-label={`${bucket} on ${cell.date}: ${count > 0 ? `${count}${count >= 3 ? '+' : ''} cough event${count === 1 ? '' : 's'}` : 'no cough'}`}
+                  aria-label={
+                    unlogged
+                      ? `no log on ${cell.date}`
+                      : `${bucket} on ${cell.date}: ${
+                          count > 0
+                            ? `${count}${count >= 3 ? '+' : ''} cough event${count === 1 ? '' : 's'}`
+                            : 'no cough'
+                        }`
+                  }
                 />
               );
             }),
@@ -152,17 +165,23 @@ function cellBackground(count: number): string {
   return 'color-mix(in oklab, var(--status-alert) 85%, transparent)';
 }
 
+// Tallies are over LOGGED cells only. An unlogged day isn't "quiet" — we
+// don't know what happened that day. Counting it as quiet was the
+// phantom-quiet bug.
 function totalsFor(cells: CoughCell[]) {
   let daytime = 0;
   let nocturnal = 0;
   let quietDays = 0;
+  let loggedDays = 0;
   for (const c of cells) {
+    if (!c.logged) continue;
+    loggedDays += 1;
     const dayCount = c.morning + c.afternoon + c.evening;
     daytime += dayCount;
     nocturnal += c.nocturnal;
     if (dayCount === 0 && c.nocturnal === 0) quietDays += 1;
   }
-  return { daytime, nocturnal, quietDays };
+  return { daytime, nocturnal, quietDays, loggedDays };
 }
 
 function headlineFor(t: { daytime: number; nocturnal: number; quietDays: number }) {

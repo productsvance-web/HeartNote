@@ -87,20 +87,26 @@ export default async function DashboardPage() {
 
   // Cold-start branch — distinct layout (matches design-system Baseline Setup
   // page). No tier UI, no central card; just progress + collecting list.
-  // Whether we're in cold-start is decided by the engine's verdict on today's
-  // log. If today hasn't been logged yet, fall back to a heuristic based on
-  // how many distinct prior days exist in the last 14.
-  const priorLogDayCount = patient ? await countPriorLogDays(supabase, patient.id, today) : 0;
+  // Cold-start is decided by the engine's verdict on today's log; if no
+  // assessment exists yet today, fall back to a heuristic based on the
+  // count of distinct prior days in the last 14.
+  const baselineWindow = patient
+    ? await getBaselineWindow(supabase, patient.id, today)
+    : { startedAt: today, loggedDates: [] as string[] };
+  const priorLogDays = baselineWindow.loggedDates.filter((d) => d !== today);
+  // What we pass to the card: prior dates plus today, but only count today
+  // when its log has fully processed. A pending-today log shouldn't show
+  // as a banked morning.
+  const loggedDatesForCard =
+    logStatus === 'complete' ? [...priorLogDays, today] : priorLogDays;
   const inColdStart =
     patient !== null &&
     (coldStart === true ||
-      // No assessment yet today AND we have fewer than 7 prior log days.
-      (assessment === null && priorLogDayCount < 7));
+      // No assessment yet today AND fewer than 7 distinct prior log days.
+      (assessment === null && priorLogDays.length < 7));
 
   if (patient && inColdStart) {
-    const baselineStartedAt = await getFirstLogDate(supabase, patient.id, today);
     const collecting = await getCollectingCounts(supabase, patient.id, today);
-    const daysLogged = Math.min(priorLogDayCount + (logStatus === 'complete' ? 1 : 0), 7);
     return (
       <PhoneShell>
         <header className="px-6 pt-8">
@@ -118,8 +124,9 @@ export default async function DashboardPage() {
         </header>
 
         <BaselineProgressCard
-          daysLogged={daysLogged === 0 ? 1 : daysLogged}
-          startedAt={baselineStartedAt ?? today}
+          loggedDates={loggedDatesForCard}
+          today={today}
+          startedAt={baselineWindow.startedAt}
           collecting={collecting}
         />
 
@@ -275,34 +282,37 @@ export default async function DashboardPage() {
   );
 }
 
-async function countPriorLogDays(
+// Single query that supplies both pieces the cold-start branch needs:
+// every distinct logged date in the last 14 days (drives the 7-dot track
+// and the cold-start gate) and the patient's first-ever logged date (so
+// the "started May 5" eyebrow reads correctly even for caregivers who
+// started > 14 days ago).
+async function getBaselineWindow(
   supabase: Awaited<ReturnType<typeof createClient>>,
   patientId: string,
   today: string,
-): Promise<number> {
-  const start = isoDateOffset(today, -14);
-  const { data } = await supabase
-    .from('daily_logs')
-    .select('log_date')
-    .eq('patient_id', patientId)
-    .gte('log_date', start)
-    .lt('log_date', today);
-  return new Set((data ?? []).map((r) => r.log_date)).size;
-}
-
-async function getFirstLogDate(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  patientId: string,
-  today: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from('daily_logs')
-    .select('log_date')
-    .eq('patient_id', patientId)
-    .order('log_date', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return (data?.log_date as string | undefined) ?? today;
+): Promise<{ startedAt: string; loggedDates: string[] }> {
+  const lookback = isoDateOffset(today, -14);
+  const [windowQ, firstQ] = await Promise.all([
+    supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patientId)
+      .gte('log_date', lookback)
+      .lte('log_date', today),
+    supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patientId)
+      .order('log_date', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const loggedDates = Array.from(
+    new Set((windowQ.data ?? []).map((r) => r.log_date as string)),
+  ).sort();
+  const startedAt = (firstQ.data?.log_date as string | undefined) ?? today;
+  return { startedAt, loggedDates };
 }
 
 async function getCollectingCounts(

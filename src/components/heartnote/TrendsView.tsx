@@ -58,7 +58,7 @@ export function TrendsView({ series, triggers, coughCells, today }: Props) {
       </header>
 
       <WeightCard series={series} tier={weightTier} />
-      <CoughHeatmap cells={coughCells} today={today} />
+      <CoughSection cells={coughCells} today={today} />
       <SleepCard series={series} />
       <SymptomsCard series={series} />
 
@@ -80,6 +80,35 @@ export function TrendsView({ series, triggers, coughCells, today }: Props) {
       </section>
     </div>
   );
+}
+
+// Renders the cough heatmap when there's enough signal (≥ 7 logged days,
+// matching cold-start exit), otherwise a thin explanatory placeholder.
+// Without this gate, brand-new patients saw a chart full of "quiet" cells
+// for days they didn't even exist for — the placeholder is more honest.
+const COUGH_HEATMAP_MIN_LOGGED_DAYS = 7;
+
+function CoughSection({ cells, today }: { cells: CoughCell[]; today: string }) {
+  const loggedDays = cells.filter((c) => c.logged).length;
+  if (loggedDays < COUGH_HEATMAP_MIN_LOGGED_DAYS) {
+    return (
+      <section className="mx-4 mt-5 rounded-3xl bg-card border border-border shadow-card p-5">
+        <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span
+            aria-hidden
+            className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle"
+            style={{ background: 'var(--status-good)' }}
+          />
+          Cough · 14d heatmap
+        </p>
+        <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+          The cough chart needs about a week of logs to be useful. Keep
+          dictating each morning and the time-of-day pattern shows up here.
+        </p>
+      </section>
+    );
+  }
+  return <CoughHeatmap cells={cells} today={today} />;
 }
 
 function WeightCard({ series, tier }: { series: TrendSeries; tier: Tier }) {

@@ -3,6 +3,11 @@
 // `nocturnal` boolean directly; daytime split is by hour-of-day on the
 // caregiver's timezone.
 //
+// Each cell is tagged `logged: boolean` so the heatmap can distinguish
+// "this day was logged with no cough" from "no log existed for this
+// day at all" — phantom-quiet days for brand-new patients were the
+// failure mode that motivated this column.
+//
 // Cited: research/chf-source-of-truth.md §5 (nocturnal cough late-stage
 // decompensation marker) and docs/specs/cough-heatmap.md (encoding).
 
@@ -18,20 +23,36 @@ export async function getCoughHeatmapCells(
   tz: string,
 ): Promise<CoughCell[]> {
   const start = isoDateOffset(today, -(TRENDS_LOOKBACK_DAYS - 1));
-  const { data } = await supabase
-    .from('daily_log_symptom_events')
-    .select('log_date, recorded_at, nocturnal, present')
-    .eq('patient_id', patientId)
-    .eq('symptom', 'cough')
-    .eq('present', true)
-    .gte('log_date', start)
-    .lte('log_date', today);
+  const [eventsQ, logsQ] = await Promise.all([
+    supabase
+      .from('daily_log_symptom_events')
+      .select('log_date, recorded_at, nocturnal, present')
+      .eq('patient_id', patientId)
+      .eq('symptom', 'cough')
+      .eq('present', true)
+      .gte('log_date', start)
+      .lte('log_date', today),
+    supabase
+      .from('daily_logs')
+      .select('log_date')
+      .eq('patient_id', patientId)
+      .gte('log_date', start)
+      .lte('log_date', today),
+  ]);
 
-  // Initialize an empty cell per day in the window.
+  const loggedDates = new Set(
+    (logsQ.data ?? []).map((r) => r.log_date as string),
+  );
+
+  // Initialize an empty cell per day in the window. `logged` reflects the
+  // actual daily_logs presence so the renderer can paint unlogged days
+  // differently from logged-but-quiet days.
   const cells: CoughCell[] = [];
   for (let i = 0; i < TRENDS_LOOKBACK_DAYS; i++) {
+    const date = isoDateOffset(start, i);
     cells.push({
-      date: isoDateOffset(start, i),
+      date,
+      logged: loggedDates.has(date),
       morning: 0,
       afternoon: 0,
       evening: 0,
@@ -40,7 +61,7 @@ export async function getCoughHeatmapCells(
   }
   const byDate = new Map<string, CoughCell>(cells.map((c) => [c.date, c]));
 
-  for (const ev of (data ?? []) as {
+  for (const ev of (eventsQ.data ?? []) as {
     log_date: string;
     recorded_at: string | null;
     nocturnal: boolean | null;
