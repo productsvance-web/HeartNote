@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import { saveQuestions } from '@/app/visits/actions';
 
 interface Props {
@@ -67,10 +67,10 @@ export function VisitQuestionsEditor({ visitId, initialQuestions }: Props) {
             <button
               type="button"
               onClick={() => remove(i)}
-              className="h-9 w-9 rounded-full flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition"
+              className="shrink-0 inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-destructive active:scale-[0.94] transition"
               aria-label="Remove question"
             >
-              <Trash2 size={15} />
+              <Minus size={14} strokeWidth={3} className="text-white" />
             </button>
           </div>
         ))}
@@ -79,10 +79,11 @@ export function VisitQuestionsEditor({ visitId, initialQuestions }: Props) {
       <button
         type="button"
         onClick={add}
-        className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-foreground"
-        style={{ color: 'var(--accent-foreground)' }}
+        className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-primary"
       >
-        <Plus size={15} />
+        <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good">
+          <Plus size={14} strokeWidth={3} className="text-white" />
+        </span>
         Add a question
       </button>
 
