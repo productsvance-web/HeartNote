@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // (yesterday's tier).
 
 export interface YesterdayLog {
+  id: string; // daily_logs.id of the most-recent row for yesterday
   date: string; // ISO YYYY-MM-DD
   transcriptSnippet: string | null;
   caregiverSummary: string | null;
@@ -24,7 +25,7 @@ export async function getYesterdayLog(
   const [logsQ, assessmentQ, eventsQ] = await Promise.all([
     supabase
       .from('daily_logs')
-      .select('transcribed_text, structured_observations, processing_status, created_at')
+      .select('id, transcribed_text, structured_observations, processing_status, created_at')
       .eq('patient_id', patientId)
       .eq('log_date', yesterday)
       .order('created_at', { ascending: false })
@@ -62,6 +63,7 @@ export async function getYesterdayLog(
   ).size;
 
   return {
+    id: logsQ.data.id as string,
     date: yesterday,
     transcriptSnippet: snippet(transcript ?? summary, 180),
     caregiverSummary: summary,

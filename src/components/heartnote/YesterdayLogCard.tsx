@@ -3,8 +3,10 @@
 // yesterday log to show; never empty-card.
 //
 // Per design system screens.jsx#VoiceLogScreen, the yesterday card is a
-// muted recap: transcript snippet + tier badge + symptom count.
+// muted recap: transcript snippet + tier badge + symptom count, plus an
+// "Edit" link the caregiver can use to fix what the AI misheard.
 
+import Link from 'next/link';
 import type { YesterdayLog } from '@/lib/voice-log/yesterday';
 
 interface Props {
@@ -14,9 +16,18 @@ interface Props {
 export function YesterdayLogCard({ log }: Props) {
   return (
     <section className="mx-4 mt-2 rounded-3xl bg-card border border-border shadow-card p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Yesterday&rsquo;s log
-      </p>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Yesterday&rsquo;s log
+        </p>
+        <Link
+          href={`/log/${log.id}/edit`}
+          className="text-[11px] font-semibold underline underline-offset-2"
+          style={{ color: 'var(--accent-foreground)' }}
+        >
+          Edit
+        </Link>
+      </div>
       {log.transcriptSnippet ? (
         <p
           className="text-sm text-foreground mt-2 leading-relaxed"

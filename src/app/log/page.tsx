@@ -93,6 +93,17 @@ export default async function LogPage() {
           (todaysLog?.structured_observations as Record<string, unknown> | null) ?? null
         }
       />
+      {todaysLog && todaysLog.processing_status === 'complete' && (
+        <div className="mx-4 mt-3 text-center">
+          <Link
+            href={`/log/${todaysLog.id}/edit`}
+            className="text-sm font-semibold underline underline-offset-2"
+            style={{ color: 'var(--accent-foreground)' }}
+          >
+            Edit today&rsquo;s details
+          </Link>
+        </div>
+      )}
       {yesterdayLog && <YesterdayLogCard log={yesterdayLog} />}
     </PhoneShell>
   );
