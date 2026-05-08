@@ -117,8 +117,13 @@ export function seriesFromRows(inputs: SeriesInputs): TrendSeries {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([d, v]) => ({ d, v }));
 
+  // Baseline = most-recent weight on or before today-7. Walking the
+  // ascending series with `find` returns the OLDEST qualifying day (e.g.
+  // day-14), not the closest-to-the-window day (day-7). Reverse-find so
+  // the day closest to the 7d boundary wins. Falls back to the oldest
+  // point we have when no point is older than today-7 (cold-start).
   const weight7dBaselineLb =
-    weight14d.find((p) => p.d <= start7Baseline)?.v ?? weight14d[0]?.v ?? null;
+    [...weight14d].reverse().find((p) => p.d <= start7Baseline)?.v ?? weight14d[0]?.v ?? null;
 
   // Restless nights = nights where nocturnal cough OR pillow_count above
   // patient's baseline.

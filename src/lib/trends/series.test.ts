@@ -14,8 +14,6 @@ import {
   seriesFromRows,
   type SeriesInputs,
   type WeightRow,
-  type PillowRow,
-  type CoughNightRow,
   type SymptomRow,
 } from './series.ts';
 
