@@ -8,6 +8,7 @@ import { HeroAlertCard } from '@/components/heartnote/HeroAlertCard';
 import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
 import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
+import { HomeAffirmationCard } from '@/components/heartnote/HomeAffirmationCard';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
@@ -44,6 +45,7 @@ export default async function DashboardPage() {
     .single();
 
   const patientName = patient?.display_name ?? 'them';
+  const patientInitial = (patient?.display_name?.trim()[0] ?? '?').toUpperCase();
   const cardiologist = patient?.cardiologist_name;
   const cardiologistPhone = patient?.cardiologist_phone;
 
@@ -109,11 +111,12 @@ export default async function DashboardPage() {
     const collecting = await getCollectingCounts(supabase, patient.id, today);
     return (
       <PhoneShell>
-        <header className="px-6 pt-8">
-          <p className="text-sm text-muted-foreground">
+        <header className="px-6 pt-8 relative">
+          <PatientInitialAvatar initial={patientInitial} />
+          <p className="text-sm text-muted-foreground pr-12">
             {greet()}, {profile?.display_name ?? 'there'}.
           </p>
-          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight">
+          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-12">
             We&rsquo;re learning what normal looks like for{' '}
             <span className="italic">{patientName}</span>.
           </h1>
@@ -182,15 +185,19 @@ export default async function DashboardPage() {
   const showVitals = willShowVitals && snapshot !== null && baseline !== null;
   const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
   const showSubhead = logStatus === 'complete' && (showVitals || showHero) && todaysLogTime !== null;
-  const signalsCount = snapshot?.signalsReportedCount ?? 0;
+  // Affirmation card replaces the silent gap on green days. Gates: log
+  // complete, snapshot loaded, engine ran (tier !== null), nothing flagged.
+  // Mutually exclusive with showHero.
+  const showAffirmation = showVitals && triggers.length === 0 && !showHero;
 
   return (
     <PhoneShell>
-      <header className="px-6 pt-8">
-        <p className="text-sm text-muted-foreground">
+      <header className="px-6 pt-8 relative">
+        <PatientInitialAvatar initial={patientInitial} />
+        <p className="text-sm text-muted-foreground pr-12">
           {greet()}, {profile?.display_name ?? 'there'}.
         </p>
-        <h1 className="font-display text-3xl text-foreground mt-1">
+        <h1 className="font-display text-3xl text-foreground mt-1 pr-12">
           How is <span className="italic">{patientName}</span> today?
         </h1>
         {showSubhead && (
@@ -198,7 +205,14 @@ export default async function DashboardPage() {
             {patientName === 'them'
               ? `Today's check-in came in at ${todaysLogTime}.`
               : `${patientName}'s check-in came in at ${todaysLogTime}.`}
-            {showVitals && ` ${signalsCount} signal${signalsCount === 1 ? '' : 's'} to read today.`}
+            {triggers.length > 0 && (
+              <>
+                {' '}
+                <span className="text-foreground font-medium">
+                  {countWord(triggers.length)} thing{triggers.length === 1 ? '' : 's'} changed today.
+                </span>
+              </>
+            )}
           </p>
         )}
       </header>
@@ -250,6 +264,8 @@ export default async function DashboardPage() {
           </p>
         </section>
       )}
+
+      {showAffirmation && snapshot && <HomeAffirmationCard snapshot={snapshot} />}
 
       {showVitals && snapshot && baseline && (
         <VitalsListCard snapshot={snapshot} baseline={baseline} triggers={triggers} />
@@ -498,4 +514,42 @@ function formatTime(iso: string, tz: string): string {
       hour12: true,
     });
   }
+}
+
+// Sage-tinted patient initial bubble in the header's top-right corner.
+// Sized to the design (38×38) with sage 20% / cream tint and a sage 35%
+// border. Falls back to "?" when the patient's display_name is empty.
+function PatientInitialAvatar({ initial }: { initial: string }) {
+  return (
+    <span
+      aria-hidden
+      className="absolute right-6 top-8 h-[38px] w-[38px] rounded-full flex items-center justify-center font-display text-base font-medium"
+      style={{
+        background: 'color-mix(in oklab, var(--sage) 20%, var(--cream))',
+        border: '1px solid color-mix(in oklab, var(--sage) 35%, transparent)',
+        color: 'var(--accent-foreground)',
+        letterSpacing: '-0.01em',
+      }}
+    >
+      {initial}
+    </span>
+  );
+}
+
+// Words for small counts ("Two things changed"); digits past 9. Matches the
+// design system register where 1–9 are spelled out in narrative copy.
+const COUNT_WORDS = [
+  'Zero',
+  'One',
+  'Two',
+  'Three',
+  'Four',
+  'Five',
+  'Six',
+  'Seven',
+  'Eight',
+  'Nine',
+];
+function countWord(n: number): string {
+  return n < COUNT_WORDS.length ? COUNT_WORDS[n] : String(n);
 }
