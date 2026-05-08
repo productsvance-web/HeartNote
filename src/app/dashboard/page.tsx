@@ -17,6 +17,8 @@ import { HeroAlertCard } from '@/components/heartnote/HeroAlertCard';
 import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
+import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
+import { getBaselineContext } from '@/lib/vitals/baseline-context';
 import { ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
 import Link from 'next/link';
 
@@ -154,6 +156,25 @@ export default async function DashboardPage() {
     ? formatTime(todaysLog.created_at, profile.timezone)
     : null;
 
+  // Fetch today's snapshot + baseline once at the page level when we'll be
+  // rendering VitalsList. The snapshot's signalsReportedCount drives the
+  // subhead; classifyVitals consumes the same data inside VitalsListCard.
+  const willShowVitals =
+    patient !== null && logStatus === 'complete' && tier !== null && !coldStart;
+  const snapshot = willShowVitals
+    ? await getTodaySnapshot(supabase, patient!.id, today)
+    : null;
+  const baseline =
+    willShowVitals && snapshot
+      ? await getBaselineContext(
+          supabase,
+          patient!.id,
+          today,
+          coldStart,
+          patient!.normal_pillow_count ?? null,
+        )
+      : null;
+
   const tiles = [
     { to: '/trends', label: 'Trends', Icon: TrendingUp, tint: 'var(--status-good-soft)' },
     { to: '/family', label: 'Family', Icon: Users, tint: 'oklch(0.93 0.02 220)' },
@@ -161,12 +182,12 @@ export default async function DashboardPage() {
     { to: '/me', label: 'Settings', Icon: Settings, tint: 'var(--accent)' },
   ] as const;
 
-  const showVitals =
-    patient !== null && logStatus === 'complete' && tier !== null && !coldStart;
+  const showVitals = willShowVitals && snapshot !== null && baseline !== null;
   const showBaseline =
     patient !== null && logStatus === 'complete' && tier === 'tier_4_log' && coldStart;
   const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
-  const showSubhead = logStatus === 'complete' && (showVitals || showHero);
+  const showSubhead = logStatus === 'complete' && (showVitals || showHero) && todaysLogTime !== null;
+  const signalsCount = snapshot?.signalsReportedCount ?? 0;
 
   return (
     <PhoneShell>
@@ -177,11 +198,12 @@ export default async function DashboardPage() {
         <h1 className="font-display text-3xl text-foreground mt-1">
           How is <span className="italic">{patientName}</span> today?
         </h1>
-        {showSubhead && todaysLogTime && (
+        {showSubhead && (
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
             {patientName === 'them'
               ? `Today's check-in came in at ${todaysLogTime}.`
               : `${patientName}'s check-in came in at ${todaysLogTime}.`}
+            {showVitals && ` ${signalsCount} signal${signalsCount === 1 ? '' : 's'} to read today.`}
           </p>
         )}
       </header>
@@ -216,15 +238,6 @@ export default async function DashboardPage() {
           <div className="text-center py-2">
             <p className="text-sm text-muted-foreground">
               Log saved. Today&apos;s pattern read isn&apos;t available — tap below to add another note.
-            </p>
-          </div>
-        )}
-
-        {logStatus === 'complete' && tier === 'tier_4_log' && !coldStart && (
-          <div className="text-center py-2">
-            <p className="font-display text-2xl">Steady today.</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Nothing pulling at your attention right now.
             </p>
           </div>
         )}
@@ -278,15 +291,8 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {patient && showVitals && (
-        <VitalsListCard
-          supabase={supabase}
-          patientId={patient.id}
-          logDate={today}
-          triggers={triggers}
-          coldStart={coldStart}
-          pillowBaseline={patient.normal_pillow_count ?? null}
-        />
+      {showVitals && snapshot && baseline && (
+        <VitalsListCard snapshot={snapshot} baseline={baseline} triggers={triggers} />
       )}
 
       {patient && showBaseline && baselineStartedAt && (

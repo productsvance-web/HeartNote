@@ -4,41 +4,23 @@
 // row pips never disagree with the home headline).
 
 import { ChevronRight } from 'lucide-react';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
-import { getBaselineContext } from '@/lib/vitals/baseline-context';
-import { classifyVitals, type PerVitalRow, type TriggerRow } from '@/lib/vitals/per-vital-tier';
+import type { TodaySnapshot } from '@/lib/vitals/today-snapshot';
+import {
+  classifyVitals,
+  type BaselineCtx,
+  type PerVitalRow,
+  type TriggerRow,
+} from '@/lib/vitals/per-vital-tier';
 import { StatusPip } from './StatusPip';
 
 interface Props {
-  supabase: SupabaseClient;
-  patientId: string;
-  logDate: string;
+  snapshot: TodaySnapshot;
+  baseline: BaselineCtx;
   triggers: TriggerRow[];
-  coldStart: boolean;
-  pillowBaseline: number | null;
 }
 
-export async function VitalsListCard({
-  supabase,
-  patientId,
-  logDate,
-  triggers,
-  coldStart,
-  pillowBaseline,
-}: Props) {
-  const snap = await getTodaySnapshot(supabase, patientId, logDate);
-  if (!snap) return null;
-
-  const baseline = await getBaselineContext(
-    supabase,
-    patientId,
-    logDate,
-    coldStart,
-    pillowBaseline,
-  );
-
-  const rows = classifyVitals(snap, triggers, baseline);
+export function VitalsListCard({ snapshot, baseline, triggers }: Props) {
+  const rows = classifyVitals(snapshot, triggers, baseline);
   const reported = rows.filter((r) => r.tier !== 'unknown').length;
 
   return (

@@ -12,16 +12,24 @@
 // home-screen headline tier. Per .claude/rules/code-quality.md rule #3
 // (database is the source of truth) — daily_assessments is canonical.
 //
-// Rule → vital mapping:
-//   T2.1 / T2.2 / T2.3 → weight (alert)   24h / 48h / 7d weight gain
-//   T3.1                → weight (watch)   1–2 lb/day for 3+ consecutive days
-//   T2.6                → swelling (alert) new/worsened, doesn't resolve overnight
-//   T3.3                → swelling (watch) evening-only, resolves overnight
-//   T2.7                → breathing (alert) severe activity step-change
-//   T2.5                → breathing (alert) PND in last 48h
-//   T3.2                → breathing (watch) mild slowdown
-//   T2.4                → pillows (alert)  more pillows than baseline
-//   T2.8                → cough (alert)    new nocturnal cough
+// Rule → vital mapping (engine source: src/lib/alerts/evaluate.ts):
+//   weight    alert: T2.1 / T2.2 / T2.3        (24h / 48h / 7d weight gain)
+//   weight    watch: T3.1                      (1–2 lb/day for 3+ days)
+//   swelling  alert: T2.6                      (new/worsened, doesn't resolve overnight)
+//   swelling  watch: T3.3                      (evening-only, resolves overnight)
+//   breathing alert: T1.1 / T1.6 / T1.7a / T1.7b / T2.5 / T2.7
+//                                              (severe dyspnea / cyanosis / SpO2 / PND /
+//                                              severe activity step-change)
+//   breathing watch: T3.2                      (mild slowdown)
+//   pillows   alert: T2.4                      (more pillows than baseline)
+//   cough     alert: T1.2 / T2.8               (frothy sputum / new nocturnal cough)
+//
+// Rules with no per-vital row (chest pain T1.3, syncope T1.5, low SBP T2.10,
+// HR-only T2.11, irregular pulse T1.8, cognition T1.4 / T2.13, urine output
+// T2.9, postural dizziness T3.4, etc.): the headline tier alone communicates
+// urgency; per-vital pips remain at their data-derived tier. The HeroAlert
+// card below the headline lists every trigger label, so the caregiver sees
+// the full reason regardless.
 //
 // Citations for the underlying rules live in research/chf-source-of-truth.md
 // and are quoted in `src/lib/alerts/evaluate.ts`. This file does not invent
@@ -56,14 +64,24 @@ export type PerVitalRow = {
   sub: string;
 };
 
-const WEIGHT_ALERT_RULES = new Set(['T2.1', 'T2.2', 'T2.3']);
-const WEIGHT_WATCH_RULES = new Set(['T3.1']);
+export const WEIGHT_ALERT_RULES = new Set(['T2.1', 'T2.2', 'T2.3']);
+export const WEIGHT_WATCH_RULES = new Set(['T3.1']);
 const SWELLING_ALERT_RULES = new Set(['T2.6']);
 const SWELLING_WATCH_RULES = new Set(['T3.3']);
-const BREATHING_ALERT_RULES = new Set(['T2.5', 'T2.7']);
+const BREATHING_ALERT_RULES = new Set([
+  'T1.1', // severe dyspnea at rest
+  'T1.6', // cyanosis (blue lips/fingers)
+  'T1.7a', // SpO2 < 88
+  'T1.7b', // SpO2 < 90 with new dyspnea
+  'T2.5', // PND in last 48h
+  'T2.7', // severe activity step-change
+]);
 const BREATHING_WATCH_RULES = new Set(['T3.2']);
 const PILLOWS_ALERT_RULES = new Set(['T2.4']);
-const COUGH_ALERT_RULES = new Set(['T2.8']);
+const COUGH_ALERT_RULES = new Set([
+  'T1.2', // pink/white frothy sputum
+  'T2.8', // new nocturnal cough
+]);
 
 export function classifyVitals(
   snap: TodaySnapshot,

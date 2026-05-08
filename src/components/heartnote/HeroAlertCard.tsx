@@ -169,11 +169,26 @@ export function HeroAlertCard({
 }
 
 function categoryFor(lead: TriggerRow | null): string {
-  if (!lead) return 'today';
+  if (!lead) return 'pattern';
   if (WEIGHT_RULE_IDS.has(lead.rule_id)) return 'weight';
-  if (lead.rule_id.startsWith('T2.4')) return 'pillows';
+  if (lead.rule_id === 'T2.4') return 'pillows';
   if (lead.rule_id === 'T2.6' || lead.rule_id === 'T3.3') return 'swelling';
-  if (lead.rule_id === 'T2.5' || lead.rule_id === 'T2.7' || lead.rule_id === 'T3.2') return 'breathing';
-  if (lead.rule_id === 'T2.8') return 'cough';
-  return 'today';
+  if (
+    lead.rule_id === 'T1.1' ||
+    lead.rule_id === 'T1.6' ||
+    lead.rule_id.startsWith('T1.7') ||
+    lead.rule_id === 'T2.5' ||
+    lead.rule_id === 'T2.7' ||
+    lead.rule_id === 'T3.2' ||
+    lead.rule_id === 'T2.10'
+  )
+    return 'breathing';
+  if (lead.rule_id === 'T1.2' || lead.rule_id === 'T2.8') return 'cough';
+  if (lead.rule_id === 'T1.3') return 'chest pain';
+  if (lead.rule_id === 'T1.5') return 'fainting';
+  if (lead.rule_id === 'T1.4' || lead.rule_id === 'T2.13') return 'thinking';
+  if (lead.rule_id === 'T1.8' || lead.rule_id.startsWith('T2.11')) return 'pulse';
+  if (lead.rule_id === 'T2.9') return 'urine';
+  if (lead.rule_id === 'T3.4') return 'dizziness';
+  return 'pattern';
 }

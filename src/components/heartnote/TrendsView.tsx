@@ -1,32 +1,41 @@
 // TrendsView — server component composing the Trends page body. Three
-// sparkline cards (weight, sleep, symptoms) + a visit-prep strip.
+// data cards (weight, sleep, symptom mentions) + a visit-prep strip.
 //
 // Plain-English: this is the page that answers "what should I bring up
-// at the next cardiology visit?" — patterns over the last two weeks the
-// caregiver may not have noticed day-to-day.
+// at the next cardiology visit?" — the last two weeks of weight,
+// nighttime restlessness, and symptom mentions, with a status badge on
+// the weight card driven by the engine's verdict (so it never disagrees
+// with the home headline).
+//
+// The Sleep and Symptom cards show numeric data only — no status badge.
+// Inventing thresholds for those would conflict with the engine's
+// canonical rule set; if a rule is worth firing, it will fire on the
+// home screen.
 
 import { Heart } from 'lucide-react';
 import { StatusPip } from './StatusPip';
 import { MiniTrendSpark } from './MiniTrendSpark';
 import type { TrendSeries } from '@/lib/trends/series';
-import type { Tier } from '@/lib/vitals/per-vital-tier';
+import type { Tier, TriggerRow } from '@/lib/vitals/per-vital-tier';
+import {
+  WEIGHT_ALERT_RULES,
+  WEIGHT_WATCH_RULES,
+} from '@/lib/vitals/per-vital-tier';
 import { WEIGHT_GAIN_TIER_2_7D_LB, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
 
 interface Props {
   patient: { display_name: string | null; dry_weight_lb: number | null };
   series: TrendSeries;
+  triggers: TriggerRow[];
 }
 
-export function TrendsView({ series }: Props) {
+export function TrendsView({ series, triggers }: Props) {
   if (series.loadError) {
     return <ErrorView />;
   }
 
-  const weightTier = classifyWeightTier(series);
-  const sleepTier = classifySleepTier(series);
-  const symptomsTier = classifySymptomsTier(series);
-
-  const nonGoodCount = [weightTier, sleepTier, symptomsTier].filter((t) => t !== 'good' && t !== 'unknown').length;
+  const weightTier = classifyWeightTierFromTriggers(triggers, series);
+  const flaggedCount = weightTier === 'alert' || weightTier === 'watch' ? 1 : 0;
 
   return (
     <div className="px-1">
@@ -38,13 +47,13 @@ export function TrendsView({ series }: Props) {
           className="font-display text-[28px] text-foreground mt-1.5 leading-tight"
           style={{ letterSpacing: '-0.02em' }}
         >
-          {headlineForCount(nonGoodCount)}
+          {headlineForCount(flaggedCount)}
         </h1>
       </header>
 
       <WeightCard series={series} tier={weightTier} />
-      <SleepCard series={series} tier={sleepTier} />
-      <SymptomsCard series={series} tier={symptomsTier} />
+      <SleepCard series={series} />
+      <SymptomsCard series={series} />
 
       <section className="mx-4 mt-5 mb-2 rounded-2xl bg-card border border-border p-4 flex items-start gap-3">
         <span
@@ -123,59 +132,49 @@ function WeightCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
   );
 }
 
-function SleepCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
+function SleepCard({ series }: { series: TrendSeries }) {
   return (
     <section className="mx-4 mt-4 rounded-3xl bg-card border border-border shadow-card p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Sleep
-          </p>
-          <p
-            className="font-display text-[28px] text-foreground tabular-nums mt-1 leading-none"
-            style={{ letterSpacing: '-0.02em' }}
-          >
-            {series.restlessNights14d}
-            <span className="text-sm text-muted-foreground font-normal ml-1">restless</span>
-          </p>
-          <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-            {series.restlessNights14d === 0
-              ? 'no nighttime cough or extra pillows'
-              : `${series.restlessNights14d} night${series.restlessNights14d === 1 ? '' : 's'} / 14d`}
-          </p>
-        </div>
-        <Badge tier={tier} />
-      </div>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Sleep
+      </p>
+      <p
+        className="font-display text-[28px] text-foreground tabular-nums mt-1 leading-none"
+        style={{ letterSpacing: '-0.02em' }}
+      >
+        {series.restlessNights14d}
+        <span className="text-sm text-muted-foreground font-normal ml-1">restless</span>
+      </p>
+      <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+        {series.restlessNights14d === 0
+          ? 'no nighttime cough or extra pillows'
+          : `${series.restlessNights14d} night${series.restlessNights14d === 1 ? '' : 's'} / 14d`}
+      </p>
     </section>
   );
 }
 
-function SymptomsCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
+function SymptomsCard({ series }: { series: TrendSeries }) {
   return (
     <section className="mx-4 mt-4 rounded-3xl bg-card border border-border shadow-card p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Symptom mentions
-          </p>
-          <p
-            className="font-display text-[28px] text-foreground tabular-nums mt-1 leading-none"
-            style={{ letterSpacing: '-0.02em' }}
-          >
-            {series.symptomsTotal7d}
-            <span className="text-sm text-muted-foreground font-normal ml-1">this week</span>
-          </p>
-        </div>
-        <Badge tier={tier} />
-      </div>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Symptom mentions
+      </p>
+      <p
+        className="font-display text-[28px] text-foreground tabular-nums mt-1 leading-none"
+        style={{ letterSpacing: '-0.02em' }}
+      >
+        {series.symptomsTotal7d}
+        <span className="text-sm text-muted-foreground font-normal ml-1">this week</span>
+      </p>
       {series.topSymptoms7d.length > 0 && (
         <div className="mt-3 flex gap-1.5 flex-wrap">
           {series.topSymptoms7d.map((s) => (
             <span
               key={s.label}
-              className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground tabular-nums"
+              className="text-xs px-2.5 py-1 rounded-full bg-muted text-muted-foreground"
             >
-              {s.label} · {s.count}
+              {s.label}
             </span>
           ))}
         </div>
@@ -213,38 +212,21 @@ function Badge({ tier }: { tier: Tier }) {
   );
 }
 
-function classifyWeightTier(series: TrendSeries): Tier {
-  if (series.weight14d.length === 0) return 'unknown';
-  if (series.weight14d.length === 1) return 'unknown';
-  const last = series.weight14d[series.weight14d.length - 1].v;
-  const baseline = series.weight7dBaselineLb;
-  if (baseline === null) return 'unknown';
-  const delta = last - baseline;
-  if (delta >= WEIGHT_GAIN_TIER_2_7D_LB) return 'alert';
-  if (delta >= 1) return 'watch';
-  return 'good';
+// Read the engine's per-day assessment directly: if today's daily_assessments
+// triggers includes a weight rule, that's the tier. Otherwise fall back to
+// "good" when we have data, "unknown" when we don't. No re-implementation of
+// thresholds here.
+function classifyWeightTierFromTriggers(triggers: TriggerRow[], series: TrendSeries): Tier {
+  const ids = new Set(triggers.map((t) => t.rule_id));
+  for (const id of WEIGHT_ALERT_RULES) if (ids.has(id)) return 'alert';
+  for (const id of WEIGHT_WATCH_RULES) if (ids.has(id)) return 'watch';
+  if (series.weight14d.length >= 2) return 'good';
+  return 'unknown';
 }
-
-function classifySleepTier(series: TrendSeries): Tier {
-  if (series.restlessNights14d === 0) return 'good';
-  if (series.restlessNights14d <= 2) return 'good';
-  if (series.restlessNights14d <= 5) return 'watch';
-  return 'alert';
-}
-
-function classifySymptomsTier(series: TrendSeries): Tier {
-  if (series.symptomsTotal7d === 0) return 'good';
-  if (series.symptomsTotal7d <= 3) return 'good';
-  if (series.symptomsTotal7d <= 6) return 'watch';
-  return 'alert';
-}
-
-const NUMBER_WORD = ['Zero', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
 
 function headlineForCount(n: number): string {
   if (n === 0) return 'Nothing pulling at your attention this week.';
   if (n === 1) return 'One pattern worth flagging at the next visit.';
-  if (n < 10) return `${NUMBER_WORD[n]} patterns worth flagging at the next visit.`;
   return `${n} patterns worth flagging at the next visit.`;
 }
 

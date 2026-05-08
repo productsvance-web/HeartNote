@@ -27,11 +27,23 @@ export default async function TrendsPage() {
   if (!patient) redirect('/onboarding');
 
   const today = getTodayInTimezone(profile.timezone);
-  const series = await getTrendSeries(supabase, patient.id, today);
+  const [series, assessment] = await Promise.all([
+    getTrendSeries(supabase, patient.id, today),
+    supabase
+      .from('daily_assessments')
+      .select('triggers')
+      .eq('patient_id', patient.id)
+      .eq('log_date', today)
+      .maybeSingle(),
+  ]);
+  const triggers =
+    (assessment.data?.triggers as
+      | { rule_id: string; label: string; evidence: Record<string, unknown> }[]
+      | null) ?? [];
 
   return (
     <PhoneShell>
-      <TrendsView patient={patient} series={series} />
+      <TrendsView patient={patient} series={series} triggers={triggers} />
     </PhoneShell>
   );
 }
