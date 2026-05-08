@@ -18,6 +18,12 @@
 // Every numeric threshold imports from src/lib/clinical/thresholds.ts.
 // Every rule cites the section in research/chf-source-of-truth.md it
 // derives from. If a clinical claim isn't traceable, it doesn't ship.
+//
+// Shape:
+//   - `evaluateAlertTier(supabase, patientId, logDate)` is the DB-fed entry.
+//     It calls `loadInputs()` then `evaluateRules()`.
+//   - `evaluateRules(inputs)` is a pure function — no I/O. It's exported so
+//     unit tests can drive every rule from synthetic fixtures.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
@@ -80,14 +86,14 @@ export type Assessment = {
   coldStart: boolean;
 };
 
-type Reading = {
+export type Reading = {
   field: 'weight_lb' | 'resting_hr' | 'spo2' | 'systolic_bp' | 'diastolic_bp';
   value: number;
   recorded_at: string;
   log_date: string;
 };
 
-type SymptomEvent = {
+export type SymptomEvent = {
   symptom: string;
   present: boolean;
   severity: number | null;
@@ -101,16 +107,37 @@ type SymptomEvent = {
   log_date: string;
 };
 
-type DayLevel = {
+export type DayLevel = {
   pillow_count: number | null;
   appetite_change: 'decreased' | 'unchanged' | 'increased' | null;
   urine_output_change: 'decreased' | 'unchanged' | 'increased' | null;
   activity_step_change: 'none' | 'mild_slowdown' | 'severe_change' | null;
 };
 
-type Patient = {
+export type Patient = {
   normal_pillow_count: number | null;
 };
+
+export interface EngineInputs {
+  readings: Reading[];
+  symptomEvents: SymptomEvent[];
+  dayLevel: DayLevel;
+  patient: Patient;
+  distinctPriorLogDays: number;
+  logDate: string;
+  // Pre-computed prior-window aggregates over ROLLING_BASELINE_DAYS, ending
+  // the day before logDate. Computed by loadInputs so evaluateRules stays
+  // pure and synchronous.
+  priorWindowMaxes: {
+    pillowCount: number | null;
+    swellingSeverity: number | null;
+    dyspneaEventCount: number;
+    coughEventCount: number;
+  };
+  // Override "now" for the 48h PND window. Tests pass a fixed value so the
+  // window is deterministic; production omits it (uses Date.now()).
+  nowMs?: number;
+}
 
 const TIER_RANK: Record<AlertTier, number> = {
   tier_1_911: 1,
@@ -121,15 +148,30 @@ const TIER_RANK: Record<AlertTier, number> = {
 
 type RuleHit = Trigger & { tier: AlertTier };
 
-// ─── Public entry point ─────────────────────────────────────────────────────
+// ─── Public entry point (DB-fed) ────────────────────────────────────────────
 
 export async function evaluateAlertTier(
   supabase: SupabaseClient<Database>,
   patientId: string,
   logDate: string
 ): Promise<Assessment> {
-  const { readings, symptomEvents, dayLevel, patient, distinctPriorLogDays } =
-    await loadInputs(supabase, patientId, logDate);
+  const inputs = await loadInputs(supabase, patientId, logDate);
+  return evaluateRules(inputs);
+}
+
+// ─── Pure rule engine ───────────────────────────────────────────────────────
+
+export function evaluateRules(inputs: EngineInputs): Assessment {
+  const {
+    readings,
+    symptomEvents,
+    dayLevel,
+    patient,
+    distinctPriorLogDays,
+    logDate,
+    priorWindowMaxes,
+    nowMs,
+  } = inputs;
 
   const coldStart = distinctPriorLogDays < COLD_START_MIN_LOG_DAYS;
 
@@ -138,7 +180,8 @@ export async function evaluateAlertTier(
   // Tighten the 48h window from "now" rather than "end-of-(logDate-2 UTC)".
   // The DB query loads everything in the broader window for cheap; we
   // re-filter here so an early-morning dictation doesn't pull a 70h-old PND.
-  const fortyEightHoursAgoMs = Date.now() - PND_LOOKBACK_HOURS * 3600_000;
+  const referenceNowMs = nowMs ?? Date.now();
+  const fortyEightHoursAgoMs = referenceNowMs - PND_LOOKBACK_HOURS * 3600_000;
   const last48hEvents = symptomEvents.filter(
     (e) => new Date(e.recorded_at).getTime() >= fortyEightHoursAgoMs
   );
@@ -221,13 +264,7 @@ export async function evaluateAlertTier(
     // Research §2 Tier 1 says "<90% with NEW dyspnea" — gate on the absence
     // of dyspnea events in the prior 7 days so chronic NYHA-III dyspnea
     // doesn't trip 911 every morning the spo2 cuff reads 89.
-    const priorDyspnea = await dyspneaEventsInPriorDays(
-      supabase,
-      patientId,
-      logDate,
-      ROLLING_BASELINE_DAYS
-    );
-    if (priorDyspnea === 0) {
+    if (priorWindowMaxes.dyspneaEventCount === 0) {
       hits.push({
         tier: 'tier_1_911',
         rule_id: 'T1.7b',
@@ -319,12 +356,7 @@ export async function evaluateAlertTier(
   // (or above the onboarding baseline if no recent data). Fires at-or-above
   // baseline+1 to capture "needs more pillows than usual."
   if (dayLevel.pillow_count !== null) {
-    const recentMax = await maxPillowCountInPriorDays(
-      supabase,
-      patientId,
-      logDate,
-      ROLLING_BASELINE_DAYS
-    );
+    const recentMax = priorWindowMaxes.pillowCount;
     const baseline = patient.normal_pillow_count ?? 1;
     const reference = Math.max(recentMax ?? baseline, baseline);
     if (dayLevel.pillow_count > reference) {
@@ -361,12 +393,7 @@ export async function evaluateAlertTier(
       e.resolves_overnight !== true
   );
   if (swellingToday) {
-    const priorMax = await maxSwellingSeverityInPriorDays(
-      supabase,
-      patientId,
-      logDate,
-      ROLLING_BASELINE_DAYS
-    );
+    const priorMax = priorWindowMaxes.swellingSeverity;
     if (priorMax === null || (swellingToday.severity ?? 0) > priorMax) {
       hits.push({
         tier: 'tier_2_today',
@@ -403,13 +430,7 @@ export async function evaluateAlertTier(
         e.sputum_color !== 'white_frothy'
     );
     if (nocturnalCoughToday) {
-      const priorCough = await coughEventsInPriorDays(
-        supabase,
-        patientId,
-        logDate,
-        ROLLING_BASELINE_DAYS
-      );
-      if (priorCough === 0) {
+      if (priorWindowMaxes.coughEventCount === 0) {
         hits.push({
           tier: 'tier_2_today',
           rule_id: 'T2.8',
@@ -602,12 +623,23 @@ async function loadInputs(
   supabase: SupabaseClient<Database>,
   patientId: string,
   logDate: string
-) {
+): Promise<EngineInputs> {
   const eightDaysAgo = isoDateOffset(logDate, -8);
   const fortyEightHoursAgo = isoTimestampOffsetHours(logDate, -48);
   const lookbackDate = isoDateOffset(logDate, -COLD_START_LOOKBACK_DAYS);
+  const baselineStart = isoDateOffset(logDate, -ROLLING_BASELINE_DAYS);
 
-  const [readingsRes, eventsRes, dayRowsRes, patientRes, priorDaysRes] = await Promise.all([
+  const [
+    readingsRes,
+    eventsRes,
+    dayRowsRes,
+    patientRes,
+    priorDaysRes,
+    priorPillowsRes,
+    priorSwellingRes,
+    priorDyspneaRes,
+    priorCoughRes,
+  ] = await Promise.all([
     supabase
       .from('daily_log_readings')
       .select('field, value, recorded_at, log_date')
@@ -639,6 +671,37 @@ async function loadInputs(
       .eq('patient_id', patientId)
       .gte('log_date', lookbackDate)
       .lt('log_date', logDate),
+    supabase
+      .from('daily_logs')
+      .select('pillow_count')
+      .eq('patient_id', patientId)
+      .gte('log_date', baselineStart)
+      .lt('log_date', logDate)
+      .not('pillow_count', 'is', null),
+    supabase
+      .from('daily_log_symptom_events')
+      .select('severity')
+      .eq('patient_id', patientId)
+      .eq('symptom', 'swelling')
+      .eq('present', true)
+      .gte('log_date', baselineStart)
+      .lt('log_date', logDate),
+    supabase
+      .from('daily_log_symptom_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('patient_id', patientId)
+      .eq('symptom', 'dyspnea')
+      .eq('present', true)
+      .gte('log_date', baselineStart)
+      .lt('log_date', logDate),
+    supabase
+      .from('daily_log_symptom_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('patient_id', patientId)
+      .eq('symptom', 'cough')
+      .eq('present', true)
+      .gte('log_date', baselineStart)
+      .lt('log_date', logDate),
   ]);
 
   if (readingsRes.error) throw readingsRes.error;
@@ -646,6 +709,10 @@ async function loadInputs(
   if (dayRowsRes.error) throw dayRowsRes.error;
   if (patientRes.error) throw patientRes.error;
   if (priorDaysRes.error) throw priorDaysRes.error;
+  if (priorPillowsRes.error) throw priorPillowsRes.error;
+  if (priorSwellingRes.error) throw priorSwellingRes.error;
+  if (priorDyspneaRes.error) throw priorDyspneaRes.error;
+  if (priorCoughRes.error) throw priorCoughRes.error;
 
   const readings = (readingsRes.data ?? []) as Reading[];
   const symptomEvents = (eventsRes.data ?? []) as SymptomEvent[];
@@ -663,12 +730,27 @@ async function loadInputs(
     (priorDaysRes.data ?? []).map((r) => r.log_date)
   ).size;
 
+  const priorPillowCounts = (priorPillowsRes.data ?? [])
+    .map((r) => r.pillow_count as number | null)
+    .filter((v): v is number => v !== null);
+  const priorSwellingSeverities = (priorSwellingRes.data ?? [])
+    .map((r) => r.severity as number | null)
+    .filter((v): v is number => v !== null);
+
   return {
     readings,
     symptomEvents,
     dayLevel,
     patient: patientRes.data as Patient,
     distinctPriorLogDays,
+    logDate,
+    priorWindowMaxes: {
+      pillowCount: priorPillowCounts.length === 0 ? null : Math.max(...priorPillowCounts),
+      swellingSeverity:
+        priorSwellingSeverities.length === 0 ? null : Math.max(...priorSwellingSeverities),
+      dyspneaEventCount: priorDyspneaRes.count ?? 0,
+      coughEventCount: priorCoughRes.count ?? 0,
+    },
   };
 }
 
@@ -772,81 +854,6 @@ function consecutiveSubTier2WeightGain(
       log_date: logDate,
     },
   };
-}
-
-async function maxPillowCountInPriorDays(
-  supabase: SupabaseClient<Database>,
-  patientId: string,
-  logDate: string,
-  days: number
-): Promise<number | null> {
-  const start = isoDateOffset(logDate, -days);
-  const { data } = await supabase
-    .from('daily_logs')
-    .select('pillow_count')
-    .eq('patient_id', patientId)
-    .gte('log_date', start)
-    .lt('log_date', logDate)
-    .not('pillow_count', 'is', null);
-  if (!data || data.length === 0) return null;
-  return Math.max(...data.map((r) => r.pillow_count as number));
-}
-
-async function maxSwellingSeverityInPriorDays(
-  supabase: SupabaseClient<Database>,
-  patientId: string,
-  logDate: string,
-  days: number
-): Promise<number | null> {
-  const start = isoDateOffset(logDate, -days);
-  const { data } = await supabase
-    .from('daily_log_symptom_events')
-    .select('severity')
-    .eq('patient_id', patientId)
-    .eq('symptom', 'swelling')
-    .eq('present', true)
-    .gte('log_date', start)
-    .lt('log_date', logDate);
-  if (!data || data.length === 0) return null;
-  const severities = data.map((r) => r.severity as number | null).filter((v): v is number => v !== null);
-  if (severities.length === 0) return null;
-  return Math.max(...severities);
-}
-
-async function dyspneaEventsInPriorDays(
-  supabase: SupabaseClient<Database>,
-  patientId: string,
-  logDate: string,
-  days: number
-): Promise<number> {
-  const start = isoDateOffset(logDate, -days);
-  const { count } = await supabase
-    .from('daily_log_symptom_events')
-    .select('id', { count: 'exact', head: true })
-    .eq('patient_id', patientId)
-    .eq('symptom', 'dyspnea')
-    .eq('present', true)
-    .gte('log_date', start)
-    .lt('log_date', logDate);
-  return count ?? 0;
-}
-
-async function coughEventsInPriorDays(
-  supabase: SupabaseClient<Database>,
-  patientId: string,
-  logDate: string,
-  days: number
-): Promise<number> {
-  const start = isoDateOffset(logDate, -days);
-  const { count } = await supabase
-    .from('daily_log_symptom_events')
-    .select('id', { count: 'exact', head: true })
-    .eq('patient_id', patientId)
-    .eq('symptom', 'cough')
-    .eq('present', true)
-    .gte('log_date', start)
-    .lt('log_date', logDate);
-  return count ?? 0;
 }
 
 function hasAnyOtherTier2Symptom(events: SymptomEvent[]): boolean {
