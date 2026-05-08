@@ -28,7 +28,7 @@ export default async function TrendsPage() {
   if (!patient) redirect('/onboarding');
 
   const today = getTodayInTimezone(profile.timezone);
-  const [series, assessment, coughCells] = await Promise.all([
+  const [series, assessment, coughCells, nextVisitRes] = await Promise.all([
     getTrendSeries(supabase, patient.id, today),
     supabase
       .from('daily_assessments')
@@ -37,11 +37,20 @@ export default async function TrendsPage() {
       .eq('log_date', today)
       .maybeSingle(),
     getCoughHeatmapCells(supabase, patient.id, today, profile.timezone),
+    supabase
+      .from('cardiology_visits')
+      .select('visit_date')
+      .eq('patient_id', patient.id)
+      .gte('visit_date', today)
+      .order('visit_date', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
   ]);
   const triggers =
     (assessment.data?.triggers as
       | { rule_id: string; label: string; evidence: Record<string, unknown> }[]
       | null) ?? [];
+  const nextVisitDate = (nextVisitRes.data?.visit_date as string | undefined) ?? null;
 
   return (
     <PhoneShell>
@@ -51,6 +60,7 @@ export default async function TrendsPage() {
         triggers={triggers}
         coughCells={coughCells}
         today={today}
+        nextVisitDate={nextVisitDate}
       />
     </PhoneShell>
   );

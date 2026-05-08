@@ -30,9 +30,10 @@ interface Props {
   triggers: TriggerRow[];
   coughCells: CoughCell[];
   today: string;
+  nextVisitDate: string | null;
 }
 
-export function TrendsView({ series, triggers, coughCells, today }: Props) {
+export function TrendsView({ series, triggers, coughCells, today, nextVisitDate }: Props) {
   if (series.loadError) {
     return <ErrorView />;
   }
@@ -53,7 +54,7 @@ export function TrendsView({ series, triggers, coughCells, today }: Props) {
           className="font-display text-[28px] text-foreground mt-1.5 leading-tight"
           style={{ letterSpacing: '-0.02em' }}
         >
-          {headlineForCount(flaggedCount)}
+          {headlineForCount(flaggedCount, nextVisitDate, today)}
         </h1>
       </header>
 
@@ -260,10 +261,49 @@ function classifyWeightTierFromTriggers(triggers: TriggerRow[], series: TrendSer
   return 'unknown';
 }
 
-function headlineForCount(n: number): string {
+function headlineForCount(n: number, nextVisitDate: string | null, today: string): string {
   if (n === 0) return 'Nothing pulling at your attention this week.';
-  if (n === 1) return 'One pattern worth flagging at the next visit.';
-  return `${n} patterns worth flagging at the next visit.`;
+  const visitPhrase = visitPhraseFor(nextVisitDate, today);
+  if (n === 1) return `One pattern worth flagging at ${visitPhrase}.`;
+  return `${n} patterns worth flagging at ${visitPhrase}.`;
+}
+
+// Visit phrasing escalates from generic to date-specific when an upcoming
+// cardiology visit is on the calendar. "the visit today" / "tomorrow's
+// visit" reads more urgently than the always-on "the next visit"; specific
+// dates drop into the same shape ("the May 14 visit").
+function visitPhraseFor(visitDate: string | null, today: string): string {
+  if (!visitDate) return 'the next visit';
+  if (visitDate === today) return 'the visit today';
+  const tomorrow = isoDateOffset(today, 1);
+  if (visitDate === tomorrow) return "tomorrow's visit";
+  return `the ${prettyDate(visitDate)} visit`;
+}
+
+const TREND_MONTH_ABBR = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function prettyDate(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  return `${TREND_MONTH_ABBR[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+function isoDateOffset(isoDate: string, deltaDays: number): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
 }
 
 function ErrorView() {

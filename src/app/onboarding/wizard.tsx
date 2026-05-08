@@ -59,7 +59,11 @@ export function OnboardingWizard({ email, initialDisplayName, initialTimezone }:
       <ProgressDots step={step} total={4} />
 
       {step === 0 && (
-        <Step title="About you" subtitle="So HeartNote knows what to call you.">
+        <Step
+          eyebrow="STEP 1 OF 4 · ABOUT YOU"
+          title="About you"
+          subtitle="So HeartNote knows what to call you."
+        >
           <Field label="Your name">
             <input
               autoFocus
@@ -89,7 +93,11 @@ export function OnboardingWizard({ email, initialDisplayName, initialTimezone }:
       )}
 
       {step === 1 && (
-        <Step title="Who you're caring for" subtitle="The parent (or family member) you're tracking.">
+        <Step
+          eyebrow="STEP 2 OF 4 · WHO YOU'RE CARING FOR"
+          title="Who you're caring for"
+          subtitle="The parent (or family member) you're tracking."
+        >
           <Field label="Their name">
             <input
               autoFocus
@@ -120,6 +128,7 @@ export function OnboardingWizard({ email, initialDisplayName, initialTimezone }:
 
       {step === 2 && (
         <Step
+          eyebrow="STEP 3 OF 4 · HEART-FAILURE CONTEXT"
           title="Heart-failure context"
           subtitle="What the cardiologist has told you. Skip anything you don't know."
         >
@@ -180,7 +189,11 @@ export function OnboardingWizard({ email, initialDisplayName, initialTimezone }:
       )}
 
       {step === 3 && (
-        <Step title="Baseline" subtitle='So HeartNote knows what "normal" is for them, not the population.'>
+        <Step
+          eyebrow="STEP 4 OF 4 · BASELINE"
+          title="Baseline"
+          subtitle='So HeartNote knows what "normal" is for them, not the population.'
+        >
           <Field label="Pillows they normally sleep with">
             <input
               type="number"
@@ -223,10 +236,26 @@ export function OnboardingWizard({ email, initialDisplayName, initialTimezone }:
   );
 }
 
-function Step({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function Step({
+  eyebrow,
+  title,
+  subtitle,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
+      <header className="space-y-1.5">
+        <p
+          className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+          style={{ letterSpacing: '0.08em' }}
+        >
+          {eyebrow}
+        </p>
         <h1 className="font-display text-3xl text-foreground">{title}</h1>
         <p className="text-sm text-muted-foreground">{subtitle}</p>
       </header>

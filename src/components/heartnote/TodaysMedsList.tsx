@@ -18,7 +18,7 @@
 
 import { useOptimistic, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Pill, Plus, Trash2 } from 'lucide-react';
 import { confirmDose, deleteDoseEvent } from '@/app/dashboard/actions';
 import {
   SLOT_CONSUMER_STATUSES,
@@ -203,6 +203,12 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   // Marker for "schedule logged but not all doses were taken" — at least one
   // refused/missed today. The expansion lists the specific events.
   const hasSkipped = row.slotsResolved > row.takenCount;
+  // Next un-resolved slot's clock time (HH:MM as stored in scheduleTimes).
+  // Slots fill in chronological order in practice, so scheduleTimes[i] for
+  // i = slotsResolved is the next time the caregiver should expect a dose
+  // prompt. Null when the day is complete or PRN.
+  const nextSlotTime =
+    !slotsFull && row.scheduleTimes ? row.scheduleTimes[row.slotsResolved] ?? null : null;
 
   return (
     <li className="border-b border-border last:border-0">
@@ -211,29 +217,46 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-3 px-5 py-4 text-left active:bg-muted/40 transition"
       >
+        <span
+          aria-hidden
+          className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
+          style={{
+            background: slotsFull ? 'var(--status-good-soft)' : 'var(--accent)',
+            color: slotsFull ? 'var(--status-good-foreground)' : 'var(--accent-foreground)',
+          }}
+        >
+          {slotsFull ? <Check size={16} strokeWidth={2.4} /> : <Pill size={16} />}
+        </span>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
+          {nextSlotTime && (
+            <p className="text-xs text-muted-foreground tabular-nums mt-0.5 truncate">
+              Next at {formatScheduleTime(nextSlotTime)}
+            </p>
+          )}
+          {!nextSlotTime && hasSkipped && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {row.slotsResolved - row.takenCount} not taken today
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold tabular-nums text-foreground">
-            {row.takenCount}/{expected}
+        <span
+          className="text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 tabular-nums"
+          style={{
+            background: slotsFull ? 'var(--status-good-soft)' : 'var(--muted)',
+            color: slotsFull ? 'var(--status-good-foreground)' : 'var(--muted-foreground)',
+          }}
+        >
+          {slotsFull ? 'Done' : `${row.takenCount}/${expected}`}
+        </span>
+        {isOver && (
+          <span
+            className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground tabular-nums shrink-0"
+            title={`${row.takenCount} doses given for a ${expected}-dose schedule`}
+          >
+            {row.takenCount}×
           </span>
-          {hasSkipped && (
-            <span
-              aria-label={`${row.slotsResolved - row.takenCount} not taken today`}
-              title={`${row.slotsResolved - row.takenCount} not taken today`}
-              className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-            />
-          )}
-          {isOver && (
-            <span
-              className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-muted text-muted-foreground"
-              title={`${row.takenCount} doses given for a ${expected}-dose schedule`}
-            >
-              {row.takenCount}×
-            </span>
-          )}
-        </div>
+        )}
       </button>
 
       {open && (
@@ -252,6 +275,19 @@ function MedRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   );
 }
 
+// Formats "HH:MM" (24-hour, as stored in medication_dose_times.time_of_day)
+// to a 12-hour clock with lowercase a.m./p.m. Zero-minute slots drop the
+// ":00" for cleaner reading ("8 a.m." vs "8:00 a.m.").
+function formatScheduleTime(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm;
+  const hour12 = ((h + 11) % 12) + 1;
+  const ampm = h < 12 ? 'a.m.' : 'p.m.';
+  return m === 0 ? `${hour12} ${ampm}` : `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
   const [open, setOpen] = useState(false);
   return (
@@ -261,13 +297,20 @@ function PrnRow({ row, tz, isPending, onConfirm, onDelete }: RowProps) {
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center gap-3 px-5 py-4 text-left active:bg-muted/40 transition"
       >
+        <span
+          aria-hidden
+          className="h-9 w-9 rounded-full flex items-center justify-center shrink-0"
+          style={{ background: 'var(--accent)', color: 'var(--accent-foreground)' }}
+        >
+          <Pill size={16} />
+        </span>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-foreground truncate">{row.drugName}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             {row.takenCount === 0 ? 'none today' : `${row.takenCount} today`}
           </p>
         </div>
-        <Plus size={18} className="text-muted-foreground" />
+        <Plus size={18} className="text-muted-foreground shrink-0" />
       </button>
 
       {open && (
