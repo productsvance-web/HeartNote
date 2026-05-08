@@ -95,7 +95,7 @@ export default async function DashboardPage() {
   // count of distinct prior days in the last 14.
   const baselineWindow = patient
     ? await getBaselineWindow(supabase, patient.id, today)
-    : { startedAt: today, loggedDates: [] as string[] };
+    : { firstLoggedDate: null as string | null, loggedDates: [] as string[] };
   const priorLogDays = baselineWindow.loggedDates.filter((d) => d !== today);
   // What we pass to the card: prior dates plus today, but only count today
   // when its log has fully processed. A pending-today log shouldn't show
@@ -130,7 +130,7 @@ export default async function DashboardPage() {
         <BaselineProgressCard
           loggedDates={loggedDatesForCard}
           today={today}
-          startedAt={baselineWindow.startedAt}
+          firstLoggedDate={baselineWindow.firstLoggedDate}
           collecting={collecting}
         />
 
@@ -310,7 +310,7 @@ async function getBaselineWindow(
   supabase: Awaited<ReturnType<typeof createClient>>,
   patientId: string,
   today: string,
-): Promise<{ startedAt: string; loggedDates: string[] }> {
+): Promise<{ firstLoggedDate: string | null; loggedDates: string[] }> {
   const lookback = isoDateOffset(today, -14);
   const [windowQ, firstQ] = await Promise.all([
     supabase
@@ -330,8 +330,8 @@ async function getBaselineWindow(
   const loggedDates = Array.from(
     new Set((windowQ.data ?? []).map((r) => r.log_date as string)),
   ).sort();
-  const startedAt = (firstQ.data?.log_date as string | undefined) ?? today;
-  return { startedAt, loggedDates };
+  const firstLoggedDate = (firstQ.data?.log_date as string | undefined) ?? null;
+  return { firstLoggedDate, loggedDates };
 }
 
 async function getCollectingCounts(

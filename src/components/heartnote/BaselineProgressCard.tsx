@@ -29,17 +29,26 @@ interface CollectingRow {
 interface Props {
   loggedDates: string[]; // sorted ascending, distinct ISO YYYY-MM-DD; includes today only if today has a complete log
   today: string; // ISO YYYY-MM-DD in caregiver TZ
-  startedAt: string; // ISO YYYY-MM-DD — first daily_logs.log_date, or today if none
+  firstLoggedDate: string | null; // ISO YYYY-MM-DD — patient's first-ever daily_logs.log_date, or null if no logs exist yet
   collecting: CollectingRow[];
 }
 
-export function BaselineProgressCard({ loggedDates, today, startedAt, collecting }: Props) {
+export function BaselineProgressCard({ loggedDates, today, firstLoggedDate, collecting }: Props) {
   const totalDays = COLD_START_MIN_LOG_DAYS;
   const todayLogged = loggedDates.includes(today);
   // The "banked" mornings are everything we count as fully complete.
   // Today's bank only exists if today is in loggedDates.
   const banked = todayLogged ? loggedDates.slice(0, -1) : loggedDates;
   const daysBanked = banked.length;
+  // Defensive branch: bank already at or past totalDays. The 7-dot track
+  // collides with itself in this state (slot 7 = banked[6] = today-pulse),
+  // so we render a "baseline complete" prompt instead. This shouldn't be
+  // reached on healthy data — the engine writes cold_start=false the
+  // moment it sees ≥ totalDays distinct days — but a race-seeded or
+  // out-of-order assessment can land us here.
+  if (daysBanked >= totalDays) {
+    return <BaselineCompleteCard daysBanked={daysBanked} todayLogged={todayLogged} />;
+  }
   // Today's slot is right after the banked ones, capped at 7.
   const todayPosition = Math.min(daysBanked + 1, totalDays);
   // The headline / footer count includes today only when it's complete —
@@ -47,6 +56,14 @@ export function BaselineProgressCard({ loggedDates, today, startedAt, collecting
   // are currently working on, with today included after it banks).
   const morningsForCopy = todayLogged ? loggedDates.length : daysBanked + 1;
   const remaining = Math.max(0, totalDays - (todayLogged ? loggedDates.length : daysBanked));
+  // When the bank effectively reset (no logs in window) but the patient
+  // logged at least once before today, suppress the stale "started May 1"
+  // footer and tell the caregiver the bank just restarted. Avoids the
+  // asymmetric "day 1 of 7 · started 22 days ago" reading the audit
+  // flagged. Requires `firstLoggedDate` to be non-null so a brand-new
+  // patient with no logs ever doesn't read as "restarted today."
+  const bankRestarted =
+    daysBanked === 0 && firstLoggedDate !== null && firstLoggedDate !== today;
 
   // Build 7 dot descriptors. Position 1..7 is 1-indexed in the JSX but we
   // store as 0..6 here.
@@ -73,7 +90,7 @@ export function BaselineProgressCard({ loggedDates, today, startedAt, collecting
   });
 
   return (
-    <section className="mx-4 mt-5 flex flex-col gap-4">
+    <section data-testid="baseline-progress-card" className="mx-4 mt-5 flex flex-col gap-4">
       <div
         className="rounded-3xl p-5"
         style={{
@@ -88,10 +105,13 @@ export function BaselineProgressCard({ loggedDates, today, startedAt, collecting
             style={{ color: 'var(--accent-foreground)' }}
           >
             Setup · day {Math.min(morningsForCopy, totalDays)} of {totalDays}
+            {bankRestarted && ' · restarted today'}
           </p>
-          <p className="text-[11px] tabular-nums text-muted-foreground">
-            started {prettyDate(startedAt)}
-          </p>
+          {!bankRestarted && firstLoggedDate !== null && (
+            <p className="text-[11px] tabular-nums text-muted-foreground">
+              started {prettyDate(firstLoggedDate)}
+            </p>
+          )}
         </div>
 
         <ProgressTrack dots={dots} todayPosition={todayPosition} />
@@ -127,6 +147,48 @@ export function BaselineProgressCard({ loggedDates, today, startedAt, collecting
         {collecting.map((row, i) => (
           <CollectingRowView key={row.key} row={row} isLast={i === collecting.length - 1} />
         ))}
+      </div>
+    </section>
+  );
+}
+
+// Defensive render path for the daysBanked >= totalDays state. Used when
+// the bank has already reached COLD_START_MIN_LOG_DAYS but the engine's
+// cold_start flag hasn't flipped yet. Skips the 7-dot track entirely.
+// Eyebrow stays in the "Setup ·" register so it doesn't collide with the
+// dashboard's still-learning header above it — alerts only switch on
+// once the engine writes cold_start=false on today's assessment.
+function BaselineCompleteCard({
+  daysBanked,
+  todayLogged,
+}: {
+  daysBanked: number;
+  todayLogged: boolean;
+}) {
+  return (
+    <section data-testid="baseline-progress-card" className="mx-4 mt-5">
+      <div
+        className="rounded-3xl p-5"
+        style={{
+          background: 'color-mix(in oklab, var(--sage) 11%, var(--card))',
+          border: '1px solid color-mix(in oklab, var(--sage) 28%, transparent)',
+          boxShadow: '0 2px 16px -8px color-mix(in oklab, var(--sage) 38%, transparent)',
+        }}
+      >
+        <p
+          className="text-[10.5px] font-semibold uppercase tracking-wider mb-2"
+          style={{ color: 'var(--accent-foreground)' }}
+        >
+          Setup · {daysBanked} of {COLD_START_MIN_LOG_DAYS} banked
+        </p>
+        <p
+          className="font-display text-[19px] font-medium text-foreground leading-snug"
+          style={{ letterSpacing: '-0.015em' }}
+        >
+          {todayLogged
+            ? "Today's check-in is in. Alerts will switch on once the engine reads it."
+            : "Dictate today's check-in to switch on alerts."}
+        </p>
       </div>
     </section>
   );
