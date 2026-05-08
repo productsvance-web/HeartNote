@@ -264,9 +264,11 @@ export default async function DashboardPage() {
         />
       )}
 
+      {patient && (await getUpcomingVisitChip(supabase, patient.id, today))}
+
       <Link
         href="/trends"
-        className="mx-4 mt-5 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
+        className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
       >
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">See the last two weeks.</p>
@@ -398,6 +400,81 @@ async function getCollectingCounts(
       count: coughDays.size,
     },
   ];
+}
+
+// Surfaces an upcoming cardiology visit on the home screen when one is
+// scheduled within the next 14 days. Renders nothing when no upcoming
+// visit exists or when the next visit is more than 14 days out — beyond
+// that, the home screen doesn't need to be a daily reminder.
+async function getUpcomingVisitChip(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  today: string,
+) {
+  const horizon = isoDateOffset(today, 14);
+  const { data } = await supabase
+    .from('cardiology_visits')
+    .select('id, visit_date, cardiologist_name, visit_kind')
+    .eq('patient_id', patientId)
+    .gte('visit_date', today)
+    .lte('visit_date', horizon)
+    .order('visit_date', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+
+  const daysOut = daysBetween(today, data.visit_date);
+  const sub =
+    daysOut === 0
+      ? 'Today'
+      : daysOut === 1
+        ? 'Tomorrow'
+        : `In ${daysOut} days`;
+
+  return (
+    <Link
+      href={`/visits/${data.id}`}
+      className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4"
+    >
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-foreground">
+          Cardiology · {prettyDateLong(data.visit_date)}
+        </p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {sub} · {data.cardiologist_name ?? 'open the handoff'}
+        </p>
+      </div>
+      <span className="text-xs font-medium" style={{ color: 'var(--accent-foreground)' }}>
+        Open →
+      </span>
+    </Link>
+  );
+}
+
+function daysBetween(from: string, to: string): number {
+  const a = new Date(`${from}T00:00:00Z`).getTime();
+  const b = new Date(`${to}T00:00:00Z`).getTime();
+  return Math.round((b - a) / (1000 * 60 * 60 * 24));
+}
+
+const MONTH_ABBR_DASH = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function prettyDateLong(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  return `${MONTH_ABBR_DASH[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 function isoDateOffset(isoDate: string, deltaDays: number): string {
