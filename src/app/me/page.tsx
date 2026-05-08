@@ -86,10 +86,19 @@ export default async function MePage({
 
       {patient && (
         <section className="mt-4 mx-4 rounded-3xl bg-card shadow-card p-6">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-3">
-            {patient.relationship ?? 'Patient'} on file
-          </p>
-          <p className="font-display text-2xl">{patient.display_name}</p>
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">
+              {patient.relationship ?? 'Patient'} on file
+            </p>
+            <Link
+              href="/me/patient/edit"
+              className="text-[11px] font-semibold underline underline-offset-2"
+              style={{ color: 'var(--accent-foreground)' }}
+            >
+              Edit
+            </Link>
+          </div>
+          <p className="font-display text-2xl mt-2">{patient.display_name}</p>
           <dl className="mt-4 space-y-3 text-sm">
             <Row
               label="Dry weight"
@@ -99,10 +108,6 @@ export default async function MePage({
             <Row label="Cardiologist" value={patient.cardiologist_name ?? '—'} />
             <Row label="Cardiologist phone" value={patient.cardiologist_phone ?? '—'} />
           </dl>
-          <p className="text-xs text-muted-foreground mt-4">
-            Editing patient details is coming next; for now changes happen by re-running the
-            onboarding wizard.
-          </p>
         </section>
       )}
 
