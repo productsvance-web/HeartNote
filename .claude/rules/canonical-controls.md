@@ -27,11 +27,10 @@ The app has shipped multiple incompatible icon registers for similar actions (a 
 
 ### 2. Remove an item from a list (multiple-allowed list)
 
-**Pattern:** red-tinted circle button with a `Minus` glyph at the trailing edge of the row.
+**Pattern:** coral circle button with a `Minus` glyph at the trailing edge of the row.
 
-- Visual: `h-8 w-8 rounded-full` with `bg-status-alert-soft` background and `text-status-alert-foreground` glyph (matching the `--status-alert` palette so the action reads as "this row goes away" without using harsh red).
-- Lucide icon: `Minus` at size 14, strokeWidth 2.4.
-- Hit area: 32×32 minimum.
+- Visual: `inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-destructive`. The glyph is white. The 22px geometry is intentional: it sits flush in the row without dominating, and Apple's 32×32 hit-target floor is met by the surrounding row padding.
+- Lucide icon: `Minus` at size 14, strokeWidth 3, `className="text-white"`.
 - aria-label: `Remove {row identifier}` (e.g., `Remove 8:00 AM dose time`).
 - Press scale: `active:scale-[0.94]`. No bounce.
 
@@ -46,15 +45,15 @@ The app has shipped multiple incompatible icon registers for similar actions (a 
 
 ### 3. Add an item to a list (multiple-allowed list)
 
-**Pattern:** sage-tinted circle button with a `Plus` glyph, placed inline at the bottom of the list (not floated).
+**Pattern:** green circle button with a `Plus` glyph, placed inline at the bottom of the list (not floated). A short text label sits to its right (`Add a Time`, `Add a question`).
 
-- Visual: `h-8 w-8 rounded-full` with `bg-accent` background and `text-accent-foreground` glyph (the existing whisper-sage palette). Matches the cadence add-dose-time button.
-- Lucide icon: `Plus` at size 14, strokeWidth 2.4.
-- Hit area: 32×32 minimum.
-- aria-label: `Add {item type}` (e.g., `Add dose time`).
+- Visual: `inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-status-good`. The glyph is white. Same 22px geometry as Pattern #2 so the two registers read as a matched pair on the same page.
+- Lucide icon: `Plus` at size 14, strokeWidth 3, `className="text-white"`.
+- Label to the right: `text-sm font-semibold text-primary` (e.g., `Add a Time`). The icon is the canonical signal; the label is mandatory supporting text — the icon-only variant exists only when space is constrained.
+- aria-label on the button: `Add {item type}` (e.g., `Add dose time`).
 - Press scale: `active:scale-[0.94]`.
 
-**Reference implementation:** the cadence add-dose-time button.
+**Reference implementation:** the cadence add-dose-time button (`src/app/me/medications/cadence/cadence-fields.tsx`).
 
 **When to use:** adding one row to a list where multiples are allowed.
 
@@ -101,11 +100,9 @@ Deleting an entire entity (account, medication, visit, voice log)
 
 If the new action doesn't fit any of these four kinds, name what's different and ask. Don't invent a fifth register.
 
-## Currently-out-of-canon places (queued for fix in the button-unification phase)
+## Currently-out-of-canon places
 
-- **Visit-prep questions remove** (`src/app/visits/[id]/visit-questions-editor.tsx`) — currently `Trash2` icon. Should be Pattern #2 (red-circle-minus) since questions are a multi-row list, not entity-level destruction.
-- **Visit-prep questions add** — currently a `+ Add a question` text-label button. Should be Pattern #3 (sage-circle-plus, with the "Add a question" label allowed alongside as supporting text).
-- **TodaysMedsList event delete in expansion** (`src/components/heartnote/TodaysMedsList.tsx`) — currently `Trash2` icon to remove a single dose event. This is class-B reversible — `window.confirm()` per Pattern #4 is acceptable, OR change to Pattern #2 (red-circle-minus) if treated as list-row removal. Worth deciding in the unification phase.
+All previously-listed offenders (visit-prep questions add/remove, TodaysMedsList event delete) were migrated in PR #57. The four canonical registers are consistent across the app as of 2026-05-08. New deviations should be flagged here as they're discovered.
 
 ## When a designer/spec asks for a non-canonical control
 
