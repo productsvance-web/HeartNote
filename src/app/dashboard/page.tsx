@@ -73,6 +73,24 @@ export default async function DashboardPage() {
         .maybeSingle()
     : { data: null };
 
+  // Latest LLM-generated reasoning for today's actionable alert (v0.5).
+  // The engine writes a row each time it fires a non-tier-4 assessment;
+  // we read the most recent for today. Null when no reasoning has been
+  // generated yet (e.g. tier_4 day, or the Anthropic call failed and
+  // returned null).
+  const { data: latestAlertToday } = patient
+    ? await supabase
+        .from('alerts')
+        .select('ai_reasoning')
+        .eq('patient_id', patient.id)
+        .gte('created_at', `${today}T00:00:00`)
+        .lte('created_at', `${today}T23:59:59`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+  const aiReasoning = latestAlertToday?.ai_reasoning ?? null;
+
   const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
   const tier = assessment?.tier ?? null;
   const coldStart = assessment?.cold_start === true;
@@ -234,6 +252,7 @@ export default async function DashboardPage() {
           <HeroAlertCard
             tone={tier === 'tier_3_48hr' ? 'watch' : 'alert'}
             triggers={triggers}
+            aiReasoning={aiReasoning}
             weightSeries14d={weightSeries14d}
             weightBaselineLb={weightBaselineLb}
             cardiologistName={cardiologist ?? null}

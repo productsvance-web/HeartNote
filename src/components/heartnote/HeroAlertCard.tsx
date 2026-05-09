@@ -24,6 +24,7 @@ type WeightSeriesPoint = { d: string; v: number };
 interface Props {
   tone: CtaTone;
   triggers: TriggerRow[];
+  aiReasoning?: string | null;
   weightSeries14d: WeightSeriesPoint[] | null;
   weightBaselineLb: number | null;
   cardiologistName: string | null;
@@ -34,6 +35,7 @@ interface Props {
 export function HeroAlertCard({
   tone,
   triggers,
+  aiReasoning,
   weightSeries14d,
   weightBaselineLb,
   cardiologistName,
@@ -98,6 +100,12 @@ export function HeroAlertCard({
           {headline}
         </h2>
       </div>
+
+      {aiReasoning && aiReasoning.trim().length > 0 && (
+        <p className="text-sm text-muted-foreground leading-relaxed -mt-1">
+          {aiReasoning}
+        </p>
+      )}
 
       {showSpark && todayWeight !== null && weightBaselineLb !== null && deltaLb !== null && (
         <div className="flex items-end gap-3.5">

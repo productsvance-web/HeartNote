@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
+import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE, type ReadingField } from '@/lib/clinical/reading-ranges';
 
 // Server action for the manual-edit form. Updates day-level fields on the
@@ -111,7 +112,7 @@ export async function saveLogEdit(
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('caregiver_id')
+    .select('caregiver_id, display_name, dry_weight_lb, normal_pillow_count, nyha_class')
     .eq('id', log.patient_id)
     .single();
   if (!patient || patient.caregiver_id !== user.id) {
@@ -234,6 +235,37 @@ export async function saveLogEdit(
       { onConflict: 'patient_id,log_date' },
     );
     if (upsertErr) return { ok: false, error: upsertErr.message };
+
+    // v0.5 LLM reasoning. Mirrors the voice-log path: actionable tier +
+    // non-empty triggers → generate, insert into alerts. A failed reasoning
+    // call must not block the save; the caregiver already saw their edits
+    // persist on the daily_assessments row.
+    if (
+      assessment.tier !== 'tier_4_log' &&
+      assessment.triggers.length > 0
+    ) {
+      try {
+        const reasoning = await generateAlertReasoning({
+          assessment,
+          patientFirstName: firstWord(patient.display_name),
+          dryWeightLb:
+            patient.dry_weight_lb !== null ? Number(patient.dry_weight_lb) : null,
+          normalPillowCount: patient.normal_pillow_count,
+          nyhaClass: patient.nyha_class ?? null,
+        });
+        await supabase.from('alerts').insert({
+          patient_id: log.patient_id,
+          daily_log_id: data.logId,
+          tier: assessment.tier,
+          trigger_reason: assessment.triggers[0]?.label ?? 'pattern',
+          trigger_data: JSON.parse(JSON.stringify(assessment.triggers)),
+          ai_reasoning: reasoning,
+        });
+      } catch {
+        // Reasoning is enrichment, not blocking. Engine headline is still on
+        // the dashboard via daily_assessments.triggers.
+      }
+    }
   } catch (err) {
     return {
       ok: false,
@@ -245,4 +277,10 @@ export async function saveLogEdit(
   revalidatePath('/dashboard');
   revalidatePath(`/log/${data.logId}/edit`);
   return { ok: true };
+}
+
+function firstWord(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const w = s.trim().split(/\s+/)[0];
+  return w && w.length > 0 ? w : null;
 }

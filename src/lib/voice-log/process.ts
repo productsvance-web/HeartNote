@@ -17,6 +17,7 @@ import { extractWithClaude } from '@/lib/voice-log/extract';
 import { matchMedByDrugName } from '@/lib/medications/match';
 import type { UnmatchedChip } from '@/lib/voice-log/chip';
 import { evaluateAlertTier } from '@/lib/alerts/evaluate';
+import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 
 const ReadingSchema = z.object({
@@ -272,6 +273,44 @@ export async function processVoiceLog(
         if (assessmentError) {
           validationWarnings.push(`assessment upsert failed: ${assessmentError.message}`);
         }
+
+        // 5b. v0.5 LLM reasoning. Skipped on tier_4_log (no actionable
+        //     pattern) or empty triggers. The Anthropic call is wrapped so a
+        //     failed reasoning generation never blocks the dictation from
+        //     completing — the rules-engine headline is still on the
+        //     dashboard via daily_assessments.triggers.
+        if (
+          assessment.tier !== 'tier_4_log' &&
+          assessment.triggers.length > 0
+        ) {
+          try {
+            const reasoning = await generateAlertReasoning({
+              assessment,
+              patientFirstName: firstWord(log.patients.display_name),
+              dryWeightLb: log.patients.dry_weight_lb !== null
+                ? Number(log.patients.dry_weight_lb)
+                : null,
+              normalPillowCount: log.patients.normal_pillow_count,
+              nyhaClass: log.patients.nyha_class ?? null,
+            });
+            const { error: alertError } = await supabase.from('alerts').insert({
+              patient_id: log.patient_id,
+              daily_log_id: logId,
+              tier: assessment.tier,
+              trigger_reason: assessment.triggers[0]?.label ?? 'pattern',
+              trigger_data: JSON.parse(JSON.stringify(assessment.triggers)),
+              ai_reasoning: reasoning,
+            });
+            if (alertError) {
+              validationWarnings.push(`alert insert failed: ${alertError.message}`);
+            }
+          } catch (reasoningErr) {
+            const msg = reasoningErr instanceof Error
+              ? reasoningErr.message
+              : 'reasoning generation failed';
+            validationWarnings.push(`reasoning threw: ${msg}`);
+          }
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : 'alert evaluation failed';
         validationWarnings.push(`alert evaluation threw: ${message}`);
@@ -322,4 +361,10 @@ async function markFailed(logId: string, error: string) {
     .from('daily_logs')
     .update({ processing_status: 'failed', processing_error: error })
     .eq('id', logId);
+}
+
+function firstWord(s: string | null | undefined): string | null {
+  if (!s) return null;
+  const w = s.trim().split(/\s+/)[0];
+  return w && w.length > 0 ? w : null;
 }
