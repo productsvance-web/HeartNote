@@ -2,9 +2,11 @@
 // context for today's dictation. Renders nothing when there's no
 // yesterday log to show; never empty-card.
 //
-// Per design system screens.jsx#VoiceLogScreen, the yesterday card is a
-// muted recap: transcript snippet + tier badge + symptom count, plus an
-// "Edit" link the caregiver can use to fix what the AI misheard.
+// Anatomy: muted recap with the transcript snippet + tier badge +
+// symptom count, plus an "Edit" link the caregiver can use to fix what
+// the AI misheard. The /log screen is not in
+// docs/design/heartnote-home-mockup.html — visual register inherited
+// from the home screen tokens.
 
 import Link from 'next/link';
 import type { YesterdayLog } from '@/lib/voice-log/yesterday';

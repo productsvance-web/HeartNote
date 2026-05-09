@@ -1,7 +1,12 @@
-// Bottom navigation — 3-tab + center FAB, per design-system
-// designs/home-screen.jsx. Home / Log (FAB) / Me. The mic FAB is the
-// permanent surface for the voice log — primary action of the app, lifted
-// out of any one screen so the caregiver can dictate from anywhere.
+// Bottom navigation — 3-tab + center FAB. Home / Log (FAB) / Me. The
+// mic FAB is the permanent surface for the voice log — primary action of
+// the app, lifted out of any one screen so the caregiver can dictate
+// from anywhere.
+//
+// docs/design/heartnote-home-mockup.html shows a 4-flat nav with a
+// History tab; the FAB pattern was kept as a deliberate divergence —
+// killing the FAB loses the always-available log shortcut, and adding a
+// History tab is scope-creep over the existing /trends page.
 
 'use client';
 
