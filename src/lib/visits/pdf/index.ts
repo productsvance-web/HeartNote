@@ -1,9 +1,10 @@
 // Visit-handoff PDF — data loader.
 //
-// One function, one round-trip per slice. The render path (session 2/3) reads
-// the returned shape and walks each section's view straight through. Adherence
-// is intentionally not loaded here — the per-day RPC × 14 days × N meds is
-// N+1; session 3 should add a window RPC and load it then.
+// One round-trip per slice via Promise.all. The render path reads the returned
+// shape and walks each section's view straight through. Adherence is loaded by
+// a sibling helper (`loadAdherenceForWindow`) — concurrent calls of the per-day
+// RPC × 14 days × N meds; not great but acceptable for a one-off PDF download.
+// A windowed RPC is the right cleanup when adherence becomes a hot path.
 //
 // All queries lean on RLS for ownership: the caller passes an authenticated
 // SupabaseClient; failed visibility surfaces as null/empty rather than 500.
@@ -76,8 +77,17 @@ export interface VisitHandoffData {
     dose: string | null;
     form: string | null;
     cadenceKind: string;
+    cycleOnDays: number | null;
+    cycleOffDays: number | null;
+    intervalDays: number | null;
     startedAt: string | null;
     endedAt: string | null;
+    doseTimes: Array<{
+      timeOfDay: string;
+      quantity: number;
+      ordinal: number;
+      appliesToDow: number | null;
+    }>;
   }>;
 }
 
@@ -151,10 +161,38 @@ export async function loadVisitHandoffData(
       .order('log_date', { ascending: false }),
     supabase
       .from('medications')
-      .select('id, drug_name, drug_class, dose, form, cadence_kind, started_at, ended_at')
+      .select(
+        'id, drug_name, drug_class, dose, form, cadence_kind, cycle_on_days, cycle_off_days, interval_days, started_at, ended_at',
+      )
       .eq('patient_id', patient.id)
       .is('stopped_at', null),
   ]);
+
+  const activeMedIds = (medRows ?? []).map((m) => m.id);
+  const { data: doseTimeRows } = activeMedIds.length
+    ? await supabase
+        .from('medication_dose_times')
+        .select('medication_id, time_of_day, quantity, ordinal, applies_to_dow')
+        .in('medication_id', activeMedIds)
+        .order('ordinal', { ascending: true })
+    : { data: [] as Array<{
+        medication_id: string;
+        time_of_day: string;
+        quantity: number;
+        ordinal: number;
+        applies_to_dow: number | null;
+      }> };
+  const doseTimesByMed = new Map<string, VisitHandoffData['activeMedications'][number]['doseTimes']>();
+  for (const r of doseTimeRows ?? []) {
+    const list = doseTimesByMed.get(r.medication_id) ?? [];
+    list.push({
+      timeOfDay: r.time_of_day,
+      quantity: Number(r.quantity),
+      ordinal: r.ordinal,
+      appliesToDow: r.applies_to_dow,
+    });
+    doseTimesByMed.set(r.medication_id, list);
+  }
 
   return {
     visit: {
@@ -209,8 +247,12 @@ export async function loadVisitHandoffData(
         dose: m.dose,
         form: m.form,
         cadenceKind: m.cadence_kind,
+        cycleOnDays: m.cycle_on_days,
+        cycleOffDays: m.cycle_off_days,
+        intervalDays: m.interval_days,
         startedAt: m.started_at,
         endedAt: m.ended_at,
+        doseTimes: doseTimesByMed.get(m.id) ?? [],
       })),
     ),
   };
