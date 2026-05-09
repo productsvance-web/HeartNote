@@ -11,9 +11,11 @@ import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
 import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
 import { HomeAffirmationCard } from '@/components/heartnote/HomeAffirmationCard';
+import { WeeklySynthesisCard } from '@/components/heartnote/WeeklySynthesisCard';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
+import { getWeeklySynthesis } from '@/lib/trends/get-weekly-synthesis';
 import { COLD_START_MIN_LOG_DAYS, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
 import { formatBrandSubject } from '@/lib/dates/format';
 import Link from 'next/link';
@@ -197,6 +199,17 @@ export default async function DashboardPage() {
     }
   }
 
+  const weeklySynthesis = patient
+    ? await getWeeklySynthesis(
+        supabase,
+        patient.id,
+        patient.display_name,
+        today,
+        profile.timezone,
+        patient.normal_pillow_count ?? null,
+      )
+    : null;
+
   const showVitals = willShowVitals && snapshot !== null && baseline !== null;
   const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
   // Affirmation card replaces the silent gap on green days. Gates: log
@@ -255,6 +268,14 @@ export default async function DashboardPage() {
           tz={profile.timezone}
           date={today}
           patientName={patient.display_name}
+        />
+      )}
+
+      {weeklySynthesis && (
+        <WeeklySynthesisCard
+          synthesis={weeklySynthesis}
+          startIso={isoDateOffset(today, -6)}
+          endIso={today}
         />
       )}
 

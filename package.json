@@ -9,7 +9,7 @@
     "start": "next start -H 0.0.0.0 -p 3001",
     "lint": "eslint",
     "test:alerts": "node --test --experimental-strip-types src/lib/alerts/evaluate.test.ts",
-    "test:trends": "node --test --experimental-strip-types src/lib/trends/series.test.ts src/lib/trends/cough-buckets.test.ts",
+    "test:trends": "node --test --experimental-strip-types src/lib/trends/series.test.ts src/lib/trends/cough-buckets.test.ts src/lib/trends/weekly-synthesis.test.ts",
     "test:rxnorm": "node --test --experimental-strip-types src/lib/medications/rxnorm-search.test.ts",
     "test:rxnorm:integration": "node --test --experimental-strip-types src/lib/medications/rxnorm.test.ts",
     "test:rxnorm-ndc": "node --test --experimental-strip-types src/lib/medications/rxnorm-ndc.test.ts",
