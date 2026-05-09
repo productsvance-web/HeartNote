@@ -95,7 +95,9 @@ export async function generateAlertReasoning(args: {
   const cleaned = sanitize(textBlock.text);
   if (!cleaned) return null;
   if (containsForbiddenPhrase(cleaned)) return null;
-  if (cleaned.length > 280) return null;
+  // 240 to match the system-prompt ceiling. Some slop allowed (quotes
+  // stripped via sanitize) but this is the hard cap for the UI block.
+  if (cleaned.length > 240) return null;
   return cleaned;
 }
 
@@ -111,10 +113,14 @@ function renderUserMessage(args: {
   normalPillowCount: number | null;
   nyhaClass: string | null;
 }): string {
+  // Rule IDs (T2.1, T3.4, etc.) are intentionally NOT in the user message —
+  // a model under load will parrot them into the output, which violates
+  // .claude/rules/plain-english-explanations.md. The label is already plain
+  // English; the evidence carries the numeric specifics.
   const triggerLines = args.triggers
     .map(
       (t, i) =>
-        `${i + 1}. [${t.rule_id}] ${t.label}\n   evidence: ${stableStringify(t.evidence)}`,
+        `${i + 1}. ${t.label}\n   evidence: ${stableStringify(t.evidence)}`,
     )
     .join('\n');
 
@@ -142,18 +148,38 @@ function sanitize(raw: string): string {
   return raw.trim().replace(/^["'`]|["'`]$/g, '').trim();
 }
 
-// Last-line defense against a model that ignores the system prompt. The
-// regexes are conservative — errs toward false positives because a missing
-// reasoning is strictly better than a medication-change leak.
+// Last-line defense against a model that ignores the system prompt.
+// Conservative on purpose — false positives drop the reasoning paragraph
+// entirely (caregiver still sees the rule-derived headline), while a false
+// negative leaks medication-change language into a clinical artifact.
+//
+// Categories covered:
+//   - explicit dose verbs (raise/lower/increase/decrease/adjust/change)
+//   - quantity verbs against a med noun (double/halve/hold/skip/another)
+//   - unit-flagged dosing ("X mg," "milligrams")
+//   - start/stop/switch language
+//   - "more/extra/less" before either a med noun OR a known CHF drug class
+//   - rule-IDs (T2.1, T3.4, etc.) — caregivers don't read schema labels
+const MED_NOUN = '(?:dose|dosage|pill|tablet|medication|med|diuretic|lasix|furosemide|metoprolol|carvedilol|spironolactone|entresto|sacubitril|valsartan|lisinopril|losartan|warfarin|coumadin|eliquis|apixaban)';
 const FORBIDDEN_PATTERNS: RegExp[] = [
-  /\b(?:in|de)crease\s+(?:the\s+|her\s+|his\s+)?(?:dose|dosage|med(?:ication)?s?)\b/i,
-  /\b(?:up|down|raise|lower|adjust|change)\s+(?:the\s+|her\s+|his\s+)?(?:dose|dosage|med(?:ication)?s?)\b/i,
-  /\btake\s+(?:more|less|extra)\b/i,
-  /\bdouble\s+(?:the\s+|her\s+|his\s+)?(?:dose|diuretic|pill|medication)\b/i,
-  /\bskip\s+(?:the\s+|her\s+|his\s+)?(?:dose|diuretic|pill|medication)\b/i,
+  // raise / lower / increase / decrease / adjust / change <med>
+  new RegExp(`\\b(?:in|de)crease\\s+(?:the\\s+|her\\s+|his\\s+)?${MED_NOUN}\\b`, 'i'),
+  new RegExp(`\\b(?:up|down|raise|lower|adjust|change|tweak|modify)\\s+(?:the\\s+|her\\s+|his\\s+)?${MED_NOUN}\\b`, 'i'),
+  // double / halve / hold / skip / give another <med>
+  new RegExp(`\\b(?:double|halve|halv|hold|skip|withhold|pause)\\s+(?:the\\s+|her\\s+|his\\s+|tonight'?s\\s+|today'?s\\s+|that\\s+)?${MED_NOUN}\\b`, 'i'),
+  /\b(?:give\s+(?:her|him)\s+|take\s+)?another\s+(?:dose|pill|tablet)\b/i,
+  // more / extra / less / additional + (dose|pill|medication|drug-name)
+  new RegExp(`\\b(?:more|extra|less|additional|extra\\s+\\d+\\s*mg|an?\\s+additional)\\s+(?:of\\s+(?:her|his|the)\\s+)?${MED_NOUN}\\b`, 'i'),
+  /\b(?:more|extra|less|additional)\s+\d+\s*(?:mg|milligrams|milligram)\b/i,
+  // milligram dosing language at all
+  /\b\d+\s*(?:mg|milligrams|milligram)\b/i,
+  // start / stop / switch
   /\bstop\s+taking\b/i,
   /\bstart\s+taking\b/i,
-  /\bswitch\s+(?:to|from)\s+\w+/i,
+  /\bswitch\s+(?:to|from|off|onto)\s+\w+/i,
+  /\b(?:dose|dosage)\s+adjustment\b/i,
+  // rule-IDs leak (T2.1, T3.4, etc.)
+  /\bT\d+\.\d+[a-z]?\b/,
 ];
 
 function containsForbiddenPhrase(text: string): boolean {
