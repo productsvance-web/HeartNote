@@ -9,10 +9,11 @@ import { Mic } from 'lucide-react';
 
 export function DailyPromptHero() {
   return (
+    <div className="mx-4 mt-5 animate-fade-up">
     <Link
       href="/log"
       aria-label="Voice log"
-      className="mx-4 mt-5 block rounded-3xl px-6 pt-7 pb-7 relative overflow-hidden active:scale-[0.99] transition animate-fade-up"
+      className="block rounded-3xl px-6 pt-7 pb-7 relative overflow-hidden active:scale-[0.99] transition"
       style={{
         background: 'var(--card)',
         border: '1.5px solid var(--sage-pale)',
@@ -91,5 +92,15 @@ export function DailyPromptHero() {
         Tap to talk &mdash; I&rsquo;ll capture what&rsquo;s changed and pull together what to ask.
       </p>
     </Link>
+    <div className="mt-3 text-center">
+      <Link
+        href="/log/manual"
+        className="text-[13px] font-semibold underline underline-offset-2"
+        style={{ color: 'var(--sage-deep)' }}
+      >
+        Fill it in instead
+      </Link>
+    </div>
+    </div>
   );
 }

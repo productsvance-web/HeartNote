@@ -4,9 +4,9 @@ Loaded automatically (no path filter). Required reading whenever adding or modif
 
 ## Why this rule exists
 
-The app has shipped multiple incompatible icon registers for similar actions (a Trash2 icon to remove a visit-prep question, an X to clear a medication start date, a green-circle-plus to add a dose time, a red-circle-minus to remove a dose time). That sprawl makes the app feel like four different products stitched together. This file is the canonical register for all four interaction kinds. Diverge only with explicit reason.
+The app has shipped multiple incompatible icon registers for similar actions (a Trash2 icon to remove a visit-prep question, an X to clear a medication start date, a green-circle-plus to add a dose time, a red-circle-minus to remove a dose time). That sprawl makes the app feel like four different products stitched together. This file is the canonical register for all five interaction kinds. Diverge only with explicit reason.
 
-## The four kinds — and the canonical control for each
+## The five kinds — and the canonical control for each
 
 ### 1. Clear a single field value
 
@@ -76,6 +76,26 @@ The app has shipped multiple incompatible icon registers for similar actions (a 
 - Inline `Trash2` icon-only with no confirmation step.
 - An X. The X register is field-clear, not destructive.
 
+### 5. Increment / decrement a numeric value
+
+**Pattern:** white-circle minus / value-chip / white-circle plus, inline horizontal. Optional trailing register #1 X to clear when the value differs from the seed.
+
+- Sub-buttons: `inline-flex h-9 w-9 items-center justify-center rounded-full bg-card border border-border`. Glyph: `Minus` / `Plus` lucide, size 14–16, strokeWidth 2.5, `text-foreground`.
+- Hit target: 36×36 (Apple/WCAG floor 32×32 met). Disabled state at min/max: opacity 30%, no press.
+- Value chip: `inline-flex items-center justify-center min-w-[96px] h-9 rounded-full bg-card border border-border text-base tabular-nums px-4`. Empty state shows the placeholder ("—" or "— lb") in `text-muted-foreground`.
+- Press scale: `active:scale-[0.94]`. No bounce.
+- aria-labels: `Decrement {field name}` / `Increment {field name}` (e.g., `Decrement weight`, `Increment pillow count`).
+- **Clearing a touched value uses register #1**, not a third white circle. The X is size 14, `text-muted-foreground`, 32×32 hit area, rendered inline-trailing the plus button. Only visible when the value is non-default.
+
+**Reference implementation:** `src/components/heartnote/manual-entry/StepperControl.tsx` (used on `/log/manual` for weight + pillow count).
+
+**When to use:** numeric increment/decrement of a single value (weight, pillow count, dose-edit on med rows in PR 2). Distinct from the four other registers.
+
+**Forbidden alternatives for this kind:**
+- A free-text numeric input. Caregivers can fat-finger; ±0.2 lb taps are the discoverable way to land on 182.4.
+- A separate white-circle X inside the stepper. Clearing is register #1; don't ship two X registers visually different.
+- Coral or sage circles for ±. Coral is destructive (#2); sage is constructive-add (#3); steppers are neither — they edit a value in place.
+
 ## Decision flow when adding a new interactive
 
 ```
@@ -96,9 +116,13 @@ Adding one row to a multi-row list
 Deleting an entire entity (account, medication, visit, voice log)
   → Pattern #4: typed-confirmation per destructive-actions.md
   → reference: delete-account-button
+
+Increment/decrement a numeric value
+  → Pattern #5: white-circle stepper (− / value / +) + optional trailing #1 X
+  → reference: /log/manual StepperControl
 ```
 
-If the new action doesn't fit any of these four kinds, name what's different and ask. Don't invent a fifth register.
+If the new action doesn't fit any of these five kinds, name what's different and ask. Don't invent a sixth register.
 
 ## Currently-out-of-canon places
 
