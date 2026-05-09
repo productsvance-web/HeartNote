@@ -104,10 +104,12 @@ If you created or modified anything in `supabase/migrations/`, run `supabase db 
 9. **No half-finished implementations.** Hide unfinished features behind a flag — never ship a dead button.
 10. **Validate inputs at boundaries.** Zod at form fields and API routes.
 11. **Environment variables fail closed.** Missing secret → throw, never substitute a default.
+12. **Design system is spec.** `docs/design/heartnote-home-mockup.html` is the source-of-truth for visual register, component anatomy, and screen composition. **Read the relevant section before creating or modifying any UI component, page, or visual element.** When the design and `.claude/rules/canonical-controls.md` disagree, the design wins by default and the rule file gets updated to match.
 
 ## References
 - Product strategy → `docs/product.md`
 - Build status → `docs/status.md`
+- **Design system → `docs/design/heartnote-home-mockup.html` (read before any UI work)**
 - Clinical research master → `research/chf-source-of-truth.md`
 - Topic deep-dives → `research/01-clinical-thresholds.md`, `02-medications.md`, `03-caregiver-education.md`, `04-caregiver-language.md`, `05-competitor-apps.md`
 - Removed content (history) → `docs/archive/claude-md-history.md` (not loaded; for reference)
