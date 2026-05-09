@@ -40,7 +40,8 @@ export default async function ManualEntryPage() {
 
   // Look up the latest weight reading for the seed value of the stepper.
   // Stepper still starts at "—" (untouched) — this is just so increment
-  // from a sensible base instead of from min.
+  // from a sensible base instead of from min. maybeSingle so a cold-start
+  // patient with no readings doesn't trip a 406.
   const { data: latestWeight } = await supabase
     .from('daily_log_readings')
     .select('value')
@@ -48,7 +49,7 @@ export default async function ManualEntryPage() {
     .eq('field', 'weight_lb')
     .order('recorded_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   return (
     <PhoneShell hideNav>

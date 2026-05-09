@@ -16,7 +16,7 @@ import { getTodayInTimezone } from '@/lib/dates/today';
 //
 // Plan: docs/superpowers/plans/2026-05-09-vitals-manual-entry.md.
 
-const SwellingSeverity = z.union([
+const Severity04 = z.union([
   z.literal(0),
   z.literal(1),
   z.literal(2),
@@ -32,12 +32,12 @@ const PayloadSchema = z.object({
     .nullable(),
   swelling: z
     .object({
-      severity: SwellingSeverity,
+      severity: Severity04,
       region: z.enum(['ankles', 'calves', 'thighs', 'abdomen']).nullable(),
       clearsOvernight: z.boolean(),
     })
     .nullable(),
-  breathingSeverity: SwellingSeverity.nullable(),
+  breathingSeverity: Severity04.nullable(),
   pillowCount: z.number().int().min(0).max(10).nullable(),
   cough: z.enum(['none', 'daytime', 'nocturnal']).nullable(),
 });
@@ -135,16 +135,20 @@ export async function saveManualVitalsEntry(
   const symptomEvents: Array<Record<string, unknown>> = [];
 
   if (data.swelling !== null) {
-    const present = data.swelling.severity > 0;
+    // Per plan L8: explicit "None" for graded symptoms stores
+    // present=true, severity=0 to mirror extract.ts SWELLING anchor
+    // ("0=none"). The caregiver tapped a button — that's an explicit
+    // confirmation of absence, not silence. Body_region and
+    // resolves_overnight are only meaningful when severity > 0.
     const event: Record<string, unknown> = {
       symptom: 'swelling',
-      present,
+      present: true,
       severity: data.swelling.severity,
     };
-    if (present && data.swelling.region) {
+    if (data.swelling.severity > 0 && data.swelling.region) {
       event.body_region = data.swelling.region;
     }
-    if (present && data.swelling.clearsOvernight) {
+    if (data.swelling.severity > 0 && data.swelling.clearsOvernight) {
       event.resolves_overnight = true;
     }
     symptomEvents.push(event);
