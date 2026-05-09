@@ -53,6 +53,9 @@ export default async function DashboardPage() {
 
   const today = getTodayInTimezone(profile.timezone);
 
+  // All of today's daily_logs (sorted latest-first). The downstream alerts
+  // query filters by `daily_log_id IN (these.id)` to anchor "today" via
+  // log_date instead of created_at — see the timezone-bug fix below.
   const { data: todaysLogs } = patient
     ? await supabase
         .from('daily_logs')
@@ -60,7 +63,6 @@ export default async function DashboardPage() {
         .eq('patient_id', patient.id)
         .eq('log_date', today)
         .order('created_at', { ascending: false })
-        .limit(1)
     : { data: null };
   const todaysLog = todaysLogs?.[0] ?? null;
 
@@ -72,6 +74,25 @@ export default async function DashboardPage() {
         .eq('log_date', today)
         .maybeSingle()
     : { data: null };
+
+  // Latest LLM-generated reasoning for today's actionable alert (v0.5).
+  // The engine writes a row each time it fires a non-tier-4 assessment.
+  // Anchor "today" via daily_log_id ∈ today's log IDs — NOT via a created_at
+  // range, which would interpret the date in server time (UTC for Supabase)
+  // and leak yesterday-evening / drop today-evening alerts for a non-UTC
+  // caregiver.
+  const todaysLogIds = (todaysLogs ?? []).map((l) => l.id);
+  const { data: latestAlertToday } = patient && todaysLogIds.length > 0
+    ? await supabase
+        .from('alerts')
+        .select('ai_reasoning')
+        .eq('patient_id', patient.id)
+        .in('daily_log_id', todaysLogIds)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+  const aiReasoning = latestAlertToday?.ai_reasoning ?? null;
 
   const triggers = (assessment?.triggers as TriggerRow[] | null) ?? [];
   const tier = assessment?.tier ?? null;
@@ -234,6 +255,7 @@ export default async function DashboardPage() {
           <HeroAlertCard
             tone={tier === 'tier_3_48hr' ? 'watch' : 'alert'}
             triggers={triggers}
+            aiReasoning={aiReasoning}
             weightSeries14d={weightSeries14d}
             weightBaselineLb={weightBaselineLb}
             cardiologistName={cardiologist ?? null}
