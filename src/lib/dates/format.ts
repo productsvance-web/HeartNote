@@ -69,6 +69,23 @@ function wallClockToUtcMs(isoDate: string, hour: number, minute: number, tz: str
   return candidateMs;
 }
 
+// Brand-header subject: "Friday, May 8" — full weekday + month + day, no
+// uppercasing. Pairs with the patient name in the home brand band per
+// docs/design/heartnote-home-mockup.html § header.
+export function formatBrandSubject(isoDate: string, tz: string): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: tz,
+  }).formatToParts(d);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '';
+  return `${weekday}, ${month} ${day}`;
+}
+
 // Home-screen eyebrow date: "THURSDAY · MAY 7" in caregiver TZ.
 // Anchored at noon UTC so the displayed date matches the input ISO string
 // regardless of the caregiver's TZ offset (otherwise an Eastern caregiver

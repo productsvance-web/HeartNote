@@ -3,26 +3,20 @@ import { Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
+import { BrandHeader } from '@/components/heartnote/BrandHeader';
+import { DailyPromptHero } from '@/components/heartnote/DailyPromptHero';
 import { TodaysMedsCard } from '@/components/heartnote/TodaysMedsCard';
 import { HeroAlertCard } from '@/components/heartnote/HeroAlertCard';
 import { VitalsListCard } from '@/components/heartnote/VitalsListCard';
 import { BaselineProgressCard } from '@/components/heartnote/BaselineProgressCard';
 import { BaselineLogPrompt } from '@/components/heartnote/BaselineLogPrompt';
 import { HomeAffirmationCard } from '@/components/heartnote/HomeAffirmationCard';
-import { countWord } from '@/lib/format/count';
 import type { TriggerRow } from '@/lib/vitals/per-vital-tier';
 import { getTodaySnapshot } from '@/lib/vitals/today-snapshot';
 import { getBaselineContext } from '@/lib/vitals/baseline-context';
 import { COLD_START_MIN_LOG_DAYS, ROLLING_BASELINE_DAYS } from '@/lib/clinical/thresholds';
-import { formatHeaderEyebrow } from '@/lib/dates/format';
+import { formatBrandSubject } from '@/lib/dates/format';
 import Link from 'next/link';
-
-function greet() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 18) return 'Good afternoon';
-  return 'Good evening';
-}
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -47,7 +41,6 @@ export default async function DashboardPage() {
     .single();
 
   const patientName = patient?.display_name ?? 'them';
-  const patientInitial = (patient?.display_name?.trim()[0] ?? '?').toUpperCase();
   const cardiologist = patient?.cardiologist_name;
   const cardiologistPhone = patient?.cardiologist_phone;
 
@@ -142,19 +135,11 @@ export default async function DashboardPage() {
         : 'Days 1–7 are just data. After seven mornings, we can flag the day something feels different.';
     return (
       <PhoneShell>
-        <header className="px-6 pt-8 relative">
-          <PatientInitialAvatar initial={patientInitial} />
-          <p
-            className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
-            style={{ letterSpacing: '0.06em' }}
-          >
-            {formatHeaderEyebrow(today, profile.timezone)}
-          </p>
-          <h1 className="font-display text-3xl text-foreground mt-1 leading-tight pr-16">
-            {greet()}, {profile?.display_name ?? 'there'}.
-          </h1>
-          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{coldStartSubhead}</p>
-        </header>
+        <BrandHeader
+          patientName={patient.display_name}
+          dateText={formatBrandSubject(today, profile.timezone)}
+        />
+        <p className="px-6 mt-1 text-sm text-muted-foreground leading-relaxed">{coldStartSubhead}</p>
 
         <BaselineProgressCard
           loggedDates={loggedDatesForCard}
@@ -214,7 +199,6 @@ export default async function DashboardPage() {
 
   const showVitals = willShowVitals && snapshot !== null && baseline !== null;
   const showHero = patient !== null && logStatus === 'complete' && isAlertHeader;
-  const showSubhead = logStatus === 'complete' && (showVitals || showHero) && todaysLogTime !== null;
   // Affirmation card replaces the silent gap on green days. Gates: log
   // complete, snapshot loaded, engine ran (tier !== null), nothing flagged.
   // Mutually exclusive with showHero.
@@ -222,33 +206,10 @@ export default async function DashboardPage() {
 
   return (
     <PhoneShell>
-      <header className="px-6 pt-8 relative">
-        <PatientInitialAvatar initial={patientInitial} />
-        <p
-          className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground pr-16"
-          style={{ letterSpacing: '0.06em' }}
-        >
-          {formatHeaderEyebrow(today, profile.timezone)}
-        </p>
-        <h1 className="font-display text-3xl text-foreground mt-1 pr-16">
-          {greet()}, {profile?.display_name ?? 'there'}.
-        </h1>
-        {showSubhead && (
-          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-            {patientName === 'them'
-              ? `Today's check-in came in at ${todaysLogTime}.`
-              : `${patientName}'s check-in came in at ${todaysLogTime}.`}
-            {triggers.length > 0 && (
-              <>
-                {' '}
-                <span className="text-foreground font-medium">
-                  {countWord(triggers.length)} thing{triggers.length === 1 ? '' : 's'} changed today.
-                </span>
-              </>
-            )}
-          </p>
-        )}
-      </header>
+      <BrandHeader
+        patientName={patient?.display_name ?? null}
+        dateText={formatBrandSubject(today, profile.timezone)}
+      />
 
       {showHero && (
         <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-5 animate-fade-up">
@@ -265,6 +226,8 @@ export default async function DashboardPage() {
         </section>
       )}
 
+      {!showHero && logStatus !== 'processing' && <DailyPromptHero />}
+
       {logStatus === 'processing' && (
         <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up">
           <div className="flex flex-col items-center gap-3 py-2">
@@ -277,25 +240,6 @@ export default async function DashboardPage() {
             <p className="font-display text-lg">Listening to today&rsquo;s log…</p>
             <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
           </div>
-        </section>
-      )}
-
-      {logStatus === 'none' && !showHero && (
-        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
-          <p className="font-display text-2xl text-foreground">No check-in yet today.</p>
-          <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-            Tap the mic to dictate a 30-second update — sleep, weight, swelling, breath, or anything
-            that feels off.
-          </p>
-        </section>
-      )}
-
-      {logStatus === 'complete' && tier === null && !showHero && (
-        <section className="mt-5 mx-4 rounded-3xl bg-card shadow-card p-6 animate-fade-up text-center">
-          <p className="text-sm text-muted-foreground">
-            Log saved. Today&rsquo;s pattern read isn&rsquo;t available — tap the mic to add another
-            note.
-          </p>
         </section>
       )}
 
@@ -548,23 +492,5 @@ function formatTime(iso: string, tz: string): string {
       hour12: true,
     });
   }
-}
-
-// Sage-tinted patient initial bubble in the header's top-right corner.
-function PatientInitialAvatar({ initial }: { initial: string }) {
-  return (
-    <span
-      aria-hidden
-      className="absolute right-6 top-8 h-[38px] w-[38px] rounded-full flex items-center justify-center font-display text-base font-medium"
-      style={{
-        background: 'color-mix(in oklab, var(--sage) 20%, var(--cream))',
-        border: '1px solid color-mix(in oklab, var(--sage) 35%, transparent)',
-        color: 'var(--accent-foreground)',
-        letterSpacing: '-0.01em',
-      }}
-    >
-      {initial}
-    </span>
-  );
 }
 
