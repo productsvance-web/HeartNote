@@ -76,7 +76,7 @@ export function SymptomTimeline({
                 y={COL_LABEL_HEIGHT - 4}
                 fill={PDF_COLORS.muted}
                 textAnchor="middle"
-                style={{ fontFamily: 'Inter', fontSize: 7 }}
+                style={{ fontFamily: 'Helvetica', fontSize: 7 }}
               >
                 {isLast ? `today (${formatMonthDay(iso)})` : formatMonthDay(iso)}
               </Text>
@@ -94,7 +94,7 @@ export function SymptomTimeline({
                   y={yMid + 2.5}
                   fill={PDF_COLORS.ink}
                   textAnchor="end"
-                  style={{ fontFamily: 'Inter', fontSize: 8 }}
+                  style={{ fontFamily: 'Helvetica', fontSize: 8 }}
                 >
                   {row.label}
                 </Text>

@@ -32,7 +32,7 @@ const styles = StyleSheet.create({
     paddingTop: PAGE_PADDING,
     paddingHorizontal: PAGE_PADDING,
     paddingBottom: PAGE_BOTTOM_PADDING,
-    fontFamily: 'Inter',
+    fontFamily: 'Helvetica',
     color: PDF_COLORS.ink,
     backgroundColor: PDF_COLORS.paper,
   },
