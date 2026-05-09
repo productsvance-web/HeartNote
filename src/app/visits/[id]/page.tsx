@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, FileDown } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
@@ -10,7 +10,6 @@ import { defaultQuestionsForPatient } from '@/lib/visits/default-questions';
 import { VisitQuestionsEditor } from './visit-questions-editor';
 import { VisitNotesEditor } from './visit-notes-editor';
 import { VisitDeleteButton } from './visit-delete-button';
-import { ClientPrintButton } from './client-print-button';
 
 export default async function VisitDetailPage({
   params,
@@ -116,7 +115,13 @@ export default async function VisitDetailPage({
       )}
 
       <section className="mx-4 mt-4 mb-3 print:hidden">
-        <ClientPrintButton />
+        <a
+          href={`/api/visits/${visit.id}/pdf`}
+          className="w-full inline-flex items-center justify-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-sm font-medium active:scale-[0.98] transition"
+        >
+          <FileDown size={15} />
+          Download cardiology PDF
+        </a>
       </section>
 
       <section className="mx-4 mb-6 flex justify-end print:hidden">

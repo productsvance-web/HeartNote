@@ -1,90 +1,43 @@
 // Typography for the visit-handoff PDF.
 //
-// Fraunces — display headings (wordmark, visit-context title, numbered questions).
-// Inter — everything else (body, captions, eyebrows, runners).
-//
-// @fontsource v5 ships .woff/.woff2 only; @react-pdf/renderer v4 accepts both.
-// Font.register is wrapped in a function and called from the render path so
-// module-load doesn't try to resolve binary assets at build time.
+// Uses @react-pdf's built-in standard fonts (Helvetica, Times-Roman) so we
+// don't have to bundle binary font files into the serverless function output.
+// The plan named Inter + Fraunces; that swap is a follow-up that needs the
+// actual font binaries staged in /public/fonts/pdf/ (the @fontsource packages
+// ship .woff/.woff2 only, and Turbopack can't trace require.resolve(woff)
+// through to a bundled asset). Helvetica/Times-Roman render universally and
+// print correctly, which is the only hard requirement of this artifact.
 
-import 'server-only';
-import { createRequire } from 'node:module';
-import { Font } from '@react-pdf/renderer';
-
-const require = createRequire(import.meta.url);
-
-let fontsRegistered = false;
-
+// `registerPdfFonts` exists so the render path has a single, idempotent place
+// to call before rendering — when the font swap to Inter/Fraunces lands, only
+// this function changes.
 export function registerPdfFonts(): void {
-  if (fontsRegistered) return;
-
-  Font.register({
-    family: 'Inter',
-    fonts: [
-      {
-        src: require.resolve('@fontsource/inter/files/inter-latin-400-normal.woff'),
-        fontWeight: 400,
-      },
-      {
-        src: require.resolve('@fontsource/inter/files/inter-latin-500-normal.woff'),
-        fontWeight: 500,
-      },
-      {
-        src: require.resolve('@fontsource/inter/files/inter-latin-700-normal.woff'),
-        fontWeight: 700,
-      },
-      {
-        src: require.resolve('@fontsource/inter/files/inter-latin-400-italic.woff'),
-        fontWeight: 400,
-        fontStyle: 'italic',
-      },
-    ],
-  });
-
-  Font.register({
-    family: 'Fraunces',
-    fonts: [
-      {
-        src: require.resolve('@fontsource/fraunces/files/fraunces-latin-400-normal.woff'),
-        fontWeight: 400,
-      },
-      {
-        src: require.resolve('@fontsource/fraunces/files/fraunces-latin-500-normal.woff'),
-        fontWeight: 500,
-      },
-      {
-        src: require.resolve('@fontsource/fraunces/files/fraunces-latin-600-normal.woff'),
-        fontWeight: 600,
-      },
-    ],
-  });
-
-  fontsRegistered = true;
+  // No-op while we're on the standard 14 PDF fonts.
 }
 
 // Style constants — each maps to a labeled use in the plan's layout spec.
 // Sizes are in pt (the @react-pdf default).
 export const PDF_TEXT = {
-  wordmark: { fontFamily: 'Fraunces', fontSize: 14, fontWeight: 500 },
-  patientName: { fontFamily: 'Inter', fontSize: 11, fontWeight: 700 },
-  patientLine: { fontFamily: 'Inter', fontSize: 9, fontWeight: 400 },
-  generationStamp: { fontFamily: 'Inter', fontSize: 8, fontWeight: 400 },
-  pageNumber: { fontFamily: 'Inter', fontSize: 8, fontWeight: 400 },
-  disclaimer: { fontFamily: 'Inter', fontSize: 7, fontWeight: 400, fontStyle: 'italic' as const },
-  runner: { fontFamily: 'Inter', fontSize: 8, fontWeight: 400 },
-  visitTitle: { fontFamily: 'Fraunces', fontSize: 18, fontWeight: 500 },
-  visitSubtitle: { fontFamily: 'Inter', fontSize: 10, fontWeight: 400 },
+  wordmark: { fontFamily: 'Times-Roman', fontSize: 14, fontWeight: 700 },
+  patientName: { fontFamily: 'Helvetica', fontSize: 11, fontWeight: 700 },
+  patientLine: { fontFamily: 'Helvetica', fontSize: 9, fontWeight: 400 },
+  generationStamp: { fontFamily: 'Helvetica', fontSize: 8, fontWeight: 400 },
+  pageNumber: { fontFamily: 'Helvetica', fontSize: 8, fontWeight: 400 },
+  disclaimer: { fontFamily: 'Helvetica', fontSize: 7, fontWeight: 400, fontStyle: 'italic' as const },
+  runner: { fontFamily: 'Helvetica', fontSize: 8, fontWeight: 400 },
+  visitTitle: { fontFamily: 'Times-Roman', fontSize: 18, fontWeight: 700 },
+  visitSubtitle: { fontFamily: 'Helvetica', fontSize: 10, fontWeight: 400 },
   sectionEyebrow: {
-    fontFamily: 'Inter',
+    fontFamily: 'Helvetica',
     fontSize: 9,
     fontWeight: 700,
     letterSpacing: 0.6,
   },
-  body: { fontFamily: 'Inter', fontSize: 10, fontWeight: 400 },
-  bodyEmphasis: { fontFamily: 'Inter', fontSize: 11, fontWeight: 400 },
-  question: { fontFamily: 'Fraunces', fontSize: 11, fontWeight: 400, lineHeight: 1.4 },
+  body: { fontFamily: 'Helvetica', fontSize: 10, fontWeight: 400 },
+  bodyEmphasis: { fontFamily: 'Helvetica', fontSize: 11, fontWeight: 400 },
+  question: { fontFamily: 'Times-Roman', fontSize: 11, fontWeight: 400, lineHeight: 1.4 },
   watermark: {
-    fontFamily: 'Inter',
+    fontFamily: 'Helvetica',
     fontSize: 36,
     fontWeight: 700,
     letterSpacing: 2,
