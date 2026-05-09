@@ -15,6 +15,13 @@ const NO_STORE_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // @react-pdf/renderer ships with Node-only deps (fontkit, pdfkit) that
+  // Turbopack must NOT bundle into the route's chunk — otherwise the route
+  // 500s at runtime when fontkit's data files can't be found inside the
+  // bundled output. Marking the package as external resolves it from
+  // node_modules at runtime, which is what react-pdf needs on Vercel.
+  serverExternalPackages: ['@react-pdf/renderer'],
+
   // Next.js 16 blocks dev resources (HMR, _next/static) from non-localhost origins
   // by default. Phones on the LAN need their IP allow-listed for the JS bundle
   // to load and React to hydrate. Wildcard the local /24 so this survives

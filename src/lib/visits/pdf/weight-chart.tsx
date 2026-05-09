@@ -266,7 +266,7 @@ function SvgLabel(props: {
       y={props.y}
       fill={props.fill}
       textAnchor={props.align}
-      style={{ fontFamily: 'Inter', fontSize: props.size }}
+      style={{ fontFamily: 'Helvetica', fontSize: props.size }}
     >
       {props.text}
     </Text>
