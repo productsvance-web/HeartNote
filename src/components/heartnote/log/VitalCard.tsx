@@ -1,13 +1,14 @@
-// Card chassis for the five vitals on /log: status dot · label ·
+// Card chassis for the five vitals on /log: status dot · Fraunces label ·
 // context-line · control · helper · corner pip per state.
 //
 // state vs tone: state ('muted'|'heard'|'tapped'|'alert') drives the
-// outline ring + corner pip variant; tone ('calm'|'watch'|'urgent')
-// drives helper-text color. They're independent — a tapped card can
-// have a calm helper, a heard card can have a watch helper, etc.
+// border-color + box-shadow ring + corner pip variant; tone
+// ('calm'|'watch'|'urgent') drives helper-text color. They're independent —
+// a tapped card can have a calm helper, a heard card can have a watch
+// helper, etc.
 //
-// Card visual register matches docs/design/heartnote-log-redesign-mockup.html
-// (vital cards on phone-1).
+// Visual register matches docs/design/heartnote-log-redesign-mockup.html
+// (.vc / .vc-head / .vc-label / .vc-context / .vc-helper / .corner-pip).
 
 'use client';
 
@@ -35,18 +36,31 @@ export function VitalCard({
   children,
   fieldKey,
 }: Props) {
-  // Outline ring per state. Muted = no ring; heard = sage; tapped = warn-line;
-  // alert = alert-line. Color is reinforced by the corner pip's text label.
-  const ringColor = (() => {
+  // Border + ring per state. Mockup uses border-color + box-shadow rather
+  // than outline. Muted = sage-mist (default border, no shadow).
+  const borderColor = (() => {
     switch (state) {
       case 'heard':
-        return 'var(--sage)';
+        return 'color-mix(in oklab, var(--sage) 50%, transparent)';
       case 'tapped':
-        return 'var(--status-watch)';
+        return 'color-mix(in oklab, var(--warn-line) 60%, transparent)';
       case 'alert':
-        return 'var(--status-alert)';
+        return 'color-mix(in oklab, var(--alert-line) 70%, transparent)';
       default:
-        return 'transparent';
+        return 'var(--sage-mist)';
+    }
+  })();
+
+  const ringShadow = (() => {
+    switch (state) {
+      case 'heard':
+        return '0 0 0 3px color-mix(in oklab, var(--sage) 16%, transparent)';
+      case 'tapped':
+        return '0 0 0 3px color-mix(in oklab, var(--warn-line) 18%, transparent)';
+      case 'alert':
+        return '0 0 0 3px color-mix(in oklab, var(--alert-line) 18%, transparent)';
+      default:
+        return 'none';
     }
   })();
 
@@ -63,38 +77,56 @@ export function VitalCard({
     }
   })();
 
+  // Corner-pip styling per mockup. heard = sage-deep + cream-card text;
+  // tapped = warn-line + ink text; alert = alert-line + white text.
   const pipBg = (() => {
     switch (state) {
       case 'heard':
-        return 'var(--sage)';
+        return 'var(--sage-deep)';
       case 'tapped':
-        return 'var(--status-watch)';
+        return 'var(--warn-line)';
       case 'alert':
-        return 'var(--status-alert)';
+        return 'var(--alert-line)';
+      default:
+        return 'transparent';
+    }
+  })();
+  const pipColor = (() => {
+    switch (state) {
+      case 'heard':
+        return 'var(--cream-card)';
+      case 'tapped':
+        return 'var(--foreground)';
+      case 'alert':
+        return '#ffffff';
       default:
         return 'transparent';
     }
   })();
 
+  // Helper text color per tone (mockup .vc-helper{,.calm,.watch,.alert}).
+  // calm uses sage-deep; watch uses warn-ink; alert uses alert-ink+500.
   const helperColor = (() => {
     switch (tone) {
       case 'watch':
-        return 'var(--status-watch-foreground)';
+        return 'var(--warn-ink)';
       case 'urgent':
-        return 'var(--status-alert-foreground)';
+        return 'var(--alert-ink)';
       default:
-        return 'var(--muted-foreground)';
+        return 'var(--sage-deep)';
     }
   })();
+  const helperWeight = tone === 'urgent' ? 500 : 400;
 
+  // Status dot color in the label row, per tone.
   const dotColor = (() => {
     switch (tone) {
       case 'watch':
-        return 'var(--status-watch)';
+        return 'var(--warn-line)';
       case 'urgent':
-        return 'var(--status-alert)';
+        return 'var(--alert-line)';
       default:
-        return 'var(--sage-deep)';
+        return 'var(--sage)';
     }
   })();
 
@@ -103,28 +135,38 @@ export function VitalCard({
       data-state={state}
       data-tone={tone}
       data-field={fieldKey}
-      className="relative rounded-3xl px-5 py-5 transition-all"
+      className="relative transition-all"
       style={{
-        background: 'var(--card)',
-        border: '0.5px solid var(--border)',
-        outline: state === 'muted' ? 'none' : `1.5px solid ${ringColor}`,
-        outlineOffset: state === 'muted' ? 0 : -1,
-        boxShadow: '0 1px 8px color-mix(in oklab, var(--sage) 6%, transparent)',
+        background: 'var(--cream-card)',
+        border: `1px solid ${borderColor}`,
+        borderRadius: 18,
+        padding: '11px 14px 11px',
+        boxShadow: ringShadow,
       }}
     >
       {pipLabel && (
         <span
-          className="absolute -top-2 right-4 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-white"
+          // .corner-pip — 8.5px font, 0.6px tracking, 3×8 padding.
+          className="absolute inline-flex items-center"
           style={{
+            top: -6,
+            right: 14,
+            fontSize: 8.5,
+            fontWeight: 600,
+            letterSpacing: '0.6px',
+            textTransform: 'uppercase',
+            padding: '3px 8px',
+            borderRadius: 999,
+            lineHeight: 1,
             background: pipBg,
-            letterSpacing: '0.08em',
+            color: pipColor,
           }}
         >
           {pipLabel}
         </span>
       )}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="inline-flex items-center" style={{ gap: 7 }}>
           <span
             aria-hidden
             style={{
@@ -133,26 +175,44 @@ export function VitalCard({
               height: 8,
               borderRadius: '50%',
               background: dotColor,
+              flexShrink: 0,
             }}
           />
           <span
-            className="text-[11px] font-semibold uppercase text-foreground"
-            style={{ letterSpacing: '0.08em' }}
+            // .vc-label — Fraunces 14px medium, ink color, slight tighten.
+            className="font-display"
+            style={{
+              fontSize: 14,
+              fontWeight: 500,
+              color: 'var(--foreground)',
+              letterSpacing: '-0.2px',
+            }}
           >
             {label}
           </span>
         </div>
         {contextLine && (
-          <span className="text-[11.5px] text-muted-foreground tabular-nums">
+          <span
+            className="tabular-nums flex-shrink-0 text-right"
+            style={{
+              fontSize: 10.5,
+              color: 'var(--ink-faint)',
+              lineHeight: 1.3,
+            }}
+          >
             {contextLine}
           </span>
         )}
       </div>
-      <div>{children}</div>
+      <div style={{ margin: '9px 0 8px' }}>{children}</div>
       {helper && (
         <p
-          className="mt-3 text-[12.5px] leading-snug"
-          style={{ color: helperColor }}
+          style={{
+            fontSize: 10.5,
+            color: helperColor,
+            fontWeight: helperWeight,
+            lineHeight: 1.4,
+          }}
         >
           {helper}
         </p>

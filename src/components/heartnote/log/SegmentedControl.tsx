@@ -3,6 +3,9 @@
 // alert (tier-1 grade). Per-option `variantOverride` lets a single
 // option (e.g. white_frothy / pink_frothy sputum, dyspnea-at-rest)
 // render in alert tone even when the row default is sage.
+//
+// Visual register matches docs/design/heartnote-log-redesign-mockup.html
+// (.segmented / .seg-btn / .seg-btn.active{,.warn,.alert}).
 
 'use client';
 
@@ -35,27 +38,34 @@ export function SegmentedControl<V extends string | number>({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="flex w-full rounded-full p-1"
+      className="flex w-full rounded-full"
+      // .segmented — cream bg, sage-mist border, 3px outer padding, 2px
+      // gap between pills.
       style={{
-        background: 'color-mix(in oklab, var(--sage-pale) 55%, transparent)',
-        border: '0.5px solid color-mix(in oklab, var(--sage-pale) 80%, transparent)',
+        background: 'var(--cream)',
+        border: '1px solid var(--sage-mist)',
+        padding: 3,
+        gap: 2,
       }}
     >
       {options.map((opt) => {
         const selected = value === opt.value;
         const variant = opt.variantOverride ?? activeVariant;
-        const selectedBg =
+        // Active styles per variant (mockup .seg-btn.active{,.warn,.alert}).
+        // Sage: deep sage bg + cream-card text. Warn: warm-butter bg + warm
+        // ink text. Alert: dusty-coral bg + deep-coral text.
+        const activeBg =
           variant === 'alert'
-            ? 'var(--status-alert)'
+            ? 'var(--alert-bg)'
             : variant === 'warn'
-              ? 'var(--status-watch)'
+              ? 'var(--warn-bg)'
               : 'var(--sage-deep)';
-        const selectedShadow =
+        const activeColor =
           variant === 'alert'
-            ? '0 1px 6px color-mix(in oklab, var(--status-alert) 30%, transparent)'
+            ? 'var(--alert-ink)'
             : variant === 'warn'
-              ? '0 1px 6px color-mix(in oklab, var(--status-watch) 30%, transparent)'
-              : '0 1px 6px color-mix(in oklab, var(--sage-deep) 30%, transparent)';
+              ? 'var(--warn-ink)'
+              : 'var(--cream-card)';
         return (
           <button
             key={String(opt.value)}
@@ -63,12 +73,19 @@ export function SegmentedControl<V extends string | number>({
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(opt.value)}
-            className="flex-1 rounded-full px-2 py-2 text-[13px] font-medium transition active:scale-[0.97]"
+            className="flex-1 rounded-full transition active:scale-[0.97] whitespace-nowrap"
             style={{
-              background: selected ? selectedBg : 'transparent',
-              color: selected ? 'var(--card)' : 'var(--ink-soft, var(--muted-foreground))',
-              boxShadow: selected ? selectedShadow : 'none',
-              minHeight: 36,
+              border: 0,
+              background: selected ? activeBg : 'transparent',
+              color: selected ? activeColor : 'var(--muted-foreground)',
+              padding: '7px 4px',
+              fontFamily: 'var(--font-sans)',
+              fontSize: 11,
+              fontWeight: selected ? 600 : 500,
+              letterSpacing: '0.1px',
+              boxShadow: selected
+                ? '0 1px 3px rgba(60, 50, 40, 0.10)'
+                : 'none',
             }}
           >
             {opt.label}

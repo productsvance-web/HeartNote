@@ -1,10 +1,10 @@
-// Card for graded symptoms inside the SymptomsModal: status dot · label ·
-// optional context line · segmented control · helper. Shares the chassis
-// shape with VitalCard but the control is a SegmentedControl instead of
-// a stepper.
+// Card for graded symptoms inside the SymptomsModal: status dot · Fraunces
+// label · optional context line · segmented control · helper. Shares the
+// chassis shape with VitalCard but the control is a SegmentedControl
+// instead of a stepper.
 //
 // The `state` prop is the same VitalCardState ('muted'|'heard'|'tapped'|'alert')
-// — drives outline ring + corner pip the same way.
+// — drives border-color + box-shadow ring + corner pip the same way.
 
 'use client';
 
@@ -43,16 +43,29 @@ export function SymptomGradedCard<V extends string | number>({
   activeVariant,
   fieldKey,
 }: Props<V>) {
-  const ringColor = (() => {
+  const borderColor = (() => {
     switch (state) {
       case 'heard':
-        return 'var(--sage)';
+        return 'color-mix(in oklab, var(--sage) 50%, transparent)';
       case 'tapped':
-        return 'var(--status-watch)';
+        return 'color-mix(in oklab, var(--warn-line) 60%, transparent)';
       case 'alert':
-        return 'var(--status-alert)';
+        return 'color-mix(in oklab, var(--alert-line) 70%, transparent)';
       default:
-        return 'transparent';
+        return 'var(--sage-mist)';
+    }
+  })();
+
+  const ringShadow = (() => {
+    switch (state) {
+      case 'heard':
+        return '0 0 0 3px color-mix(in oklab, var(--sage) 16%, transparent)';
+      case 'tapped':
+        return '0 0 0 3px color-mix(in oklab, var(--warn-line) 18%, transparent)';
+      case 'alert':
+        return '0 0 0 3px color-mix(in oklab, var(--alert-line) 18%, transparent)';
+      default:
+        return 'none';
     }
   })();
 
@@ -72,11 +85,23 @@ export function SymptomGradedCard<V extends string | number>({
   const pipBg = (() => {
     switch (state) {
       case 'heard':
-        return 'var(--sage)';
+        return 'var(--sage-deep)';
       case 'tapped':
-        return 'var(--status-watch)';
+        return 'var(--warn-line)';
       case 'alert':
-        return 'var(--status-alert)';
+        return 'var(--alert-line)';
+      default:
+        return 'transparent';
+    }
+  })();
+  const pipColor = (() => {
+    switch (state) {
+      case 'heard':
+        return 'var(--cream-card)';
+      case 'tapped':
+        return 'var(--foreground)';
+      case 'alert':
+        return '#ffffff';
       default:
         return 'transparent';
     }
@@ -85,22 +110,23 @@ export function SymptomGradedCard<V extends string | number>({
   const helperColor = (() => {
     switch (tone) {
       case 'watch':
-        return 'var(--status-watch-foreground)';
+        return 'var(--warn-ink)';
       case 'urgent':
-        return 'var(--status-alert-foreground)';
+        return 'var(--alert-ink)';
       default:
-        return 'var(--muted-foreground)';
+        return 'var(--sage-deep)';
     }
   })();
+  const helperWeight = tone === 'urgent' ? 500 : 400;
 
   const dotColor = (() => {
     switch (tone) {
       case 'watch':
-        return 'var(--status-watch)';
+        return 'var(--warn-line)';
       case 'urgent':
-        return 'var(--status-alert)';
+        return 'var(--alert-line)';
       default:
-        return 'var(--sage-deep)';
+        return 'var(--sage)';
     }
   })();
 
@@ -109,24 +135,37 @@ export function SymptomGradedCard<V extends string | number>({
       data-state={state}
       data-tone={tone}
       data-field={fieldKey}
-      className="relative rounded-3xl px-5 py-5"
+      className="relative"
       style={{
-        background: 'var(--card)',
-        border: '0.5px solid var(--border)',
-        outline: state === 'muted' ? 'none' : `1.5px solid ${ringColor}`,
-        outlineOffset: state === 'muted' ? 0 : -1,
+        background: 'var(--cream-card)',
+        border: `1px solid ${borderColor}`,
+        borderRadius: 18,
+        padding: '11px 14px 11px',
+        boxShadow: ringShadow,
       }}
     >
       {pipLabel && (
         <span
-          className="absolute -top-2 right-4 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-white"
-          style={{ background: pipBg, letterSpacing: '0.08em' }}
+          className="absolute inline-flex items-center"
+          style={{
+            top: -6,
+            right: 14,
+            fontSize: 8.5,
+            fontWeight: 600,
+            letterSpacing: '0.6px',
+            textTransform: 'uppercase',
+            padding: '3px 8px',
+            borderRadius: 999,
+            lineHeight: 1,
+            background: pipBg,
+            color: pipColor,
+          }}
         >
           {pipLabel}
         </span>
       )}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="inline-flex items-center" style={{ gap: 7 }}>
           <span
             aria-hidden
             style={{
@@ -135,28 +174,52 @@ export function SymptomGradedCard<V extends string | number>({
               height: 8,
               borderRadius: '50%',
               background: dotColor,
+              flexShrink: 0,
             }}
           />
           <span
-            className="text-[11px] font-semibold uppercase text-foreground"
-            style={{ letterSpacing: '0.08em' }}
+            className="font-display"
+            style={{
+              fontSize: 14,
+              fontWeight: 500,
+              color: 'var(--foreground)',
+              letterSpacing: '-0.2px',
+            }}
           >
             {label}
           </span>
         </div>
         {contextLine && (
-          <span className="text-[11.5px] text-muted-foreground">{contextLine}</span>
+          <span
+            className="flex-shrink-0 text-right"
+            style={{
+              fontSize: 10.5,
+              color: 'var(--ink-faint)',
+              lineHeight: 1.3,
+            }}
+          >
+            {contextLine}
+          </span>
         )}
       </div>
-      <SegmentedControl
-        options={options}
-        value={value}
-        onChange={onChange}
-        ariaLabel={label}
-        activeVariant={activeVariant}
-      />
+      <div style={{ margin: '9px 0 8px' }}>
+        <SegmentedControl
+          options={options}
+          value={value}
+          onChange={onChange}
+          ariaLabel={label}
+          activeVariant={activeVariant}
+        />
+      </div>
       {helper && (
-        <p className="mt-3 text-[12.5px] leading-snug" style={{ color: helperColor }}>
+        <p
+          style={{
+            fontSize: 10.5,
+            color: helperColor,
+            fontWeight: helperWeight,
+            lineHeight: 1.4,
+          }}
+        >
           {helper}
         </p>
       )}

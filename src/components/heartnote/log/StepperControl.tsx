@@ -1,8 +1,10 @@
-// Numeric stepper — minus / value-chip / plus. White-circle sub-buttons,
-// 36×36 hit. Optional trailing register-#1 X (size 14, muted) when value
-// is non-default. Used for weight + pillow count on /log/manual.
+// Numeric stepper — minus / value-chip / plus. White-circle 36×36 sub-buttons,
+// large Fraunces 30px value with dotted underline, optional unit suffix.
+// Trailing register-#1 X (size 14, muted) renders when value is non-default.
 //
-// Canonical register #5 per .claude/rules/canonical-controls.md.
+// Visual register matches docs/design/heartnote-log-redesign-mockup.html
+// (.stepper / .step-btn / .step-value). Canonical register #5 per
+// .claude/rules/canonical-controls.md.
 
 'use client';
 
@@ -36,14 +38,15 @@ export function StepperControl({
   onChange,
   onClear,
 }: Props) {
-  const display =
+  // Display: when formatValue is provided, use it (e.g. "182.4"). Otherwise
+  // fall back to a stringified value. The unit (if any) renders separately
+  // as a smaller Inter span via the .unit child below.
+  const numericDisplay =
     value === null
       ? placeholder
       : formatValue
         ? formatValue(value)
-        : unit
-          ? `${value} ${unit}`
-          : String(value);
+        : String(value);
 
   const canClear =
     onClear !== undefined && value !== null && value !== defaultValue;
@@ -60,9 +63,9 @@ export function StepperControl({
   const decDisabled = value !== null && value <= min;
   const incDisabled = value !== null && value >= max;
 
-  // Tap-to-type on the value chip. Tapping the chip swaps it for a numeric
-  // input; blur or Enter parses + clamps + commits. Paste strips non-digits
-  // and a single decimal before parsing so "184 lb" → 184.
+  // Tap-to-type on the value chip. Tapping swaps it for a numeric input;
+  // blur or Enter parses + clamps + commits. The input inherits Fraunces
+  // 30px so the value doesn't visually shrink during edit.
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string>('');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -99,13 +102,13 @@ export function StepperControl({
   };
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center justify-between gap-3">
       <CircleButton
         ariaLabel={`Decrement ${fieldLabel}`}
         onClick={decrement}
         disabled={decDisabled}
       >
-        <Minus size={16} strokeWidth={2.5} />
+        <Minus size={14} strokeWidth={2.5} />
       </CircleButton>
 
       {editing ? (
@@ -132,14 +135,15 @@ export function StepperControl({
               setEditing(false);
             }
           }}
-          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4 text-center"
+          // Inherit Fraunces 30px so the chip doesn't shrink during edit.
+          className="font-display flex-1 text-center bg-transparent border-0 outline-0 tabular-nums"
           style={{
-            minWidth: 96,
-            height: 36,
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
+            fontSize: 30,
+            fontWeight: 400,
+            lineHeight: 1,
+            letterSpacing: '-1px',
             color: 'var(--foreground)',
-            fontWeight: 500,
+            padding: '4px 4px 6px',
           }}
         />
       ) : (
@@ -147,17 +151,49 @@ export function StepperControl({
           type="button"
           onClick={beginEdit}
           aria-label={`Edit ${fieldLabel}`}
-          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4 transition active:scale-[0.97]"
+          // Big serif value chip with dotted underline. flex:1 means it
+          // expands to fill the space between the ± buttons.
+          className="font-display relative flex-1 text-center tabular-nums cursor-text"
           style={{
-            minWidth: 96,
-            height: 36,
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
+            fontSize: 30,
+            fontWeight: 400,
+            lineHeight: 1,
+            letterSpacing: '-1px',
             color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-            fontWeight: value === null ? 400 : 500,
+            padding: '4px 4px 6px',
+            borderRadius: 8,
           }}
         >
-          {display}
+          {numericDisplay}
+          {unit && value !== null && (
+            <span
+              // Unit suffix in Inter 12px ink-soft, vertical-align nudged.
+              style={{
+                fontFamily: 'var(--font-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--muted-foreground)',
+                marginLeft: 5,
+                letterSpacing: '0.1px',
+                verticalAlign: '2px',
+              }}
+            >
+              {unit}
+            </span>
+          )}
+          {/* Dotted underline (mockup .step-value::after). Fades to 50% */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute"
+            style={{
+              left: '30%',
+              right: '30%',
+              bottom: 1,
+              height: 1,
+              borderBottom: '1px dotted var(--ink-faint)',
+              opacity: 0.5,
+            }}
+          />
         </button>
       )}
 
@@ -166,7 +202,7 @@ export function StepperControl({
         onClick={increment}
         disabled={incDisabled}
       >
-        <Plus size={16} strokeWidth={2.5} />
+        <Plus size={14} strokeWidth={2.5} />
       </CircleButton>
 
       {canClear && (
@@ -214,14 +250,13 @@ function CircleButton({
       aria-label={ariaLabel}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30"
+      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0"
       style={{
         width: 36,
         height: 36,
-        background: 'var(--card)',
-        border: '1px solid var(--border)',
+        background: 'var(--cream)',
+        border: '1px solid var(--sage-mist)',
         color: 'var(--foreground)',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
       }}
     >
       {children}

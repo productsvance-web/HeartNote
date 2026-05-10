@@ -1,11 +1,13 @@
-// Dual-stepper for blood pressure: two adjacent half-steppers (Sys / Dia)
-// with ±1 increment each side. Compact 26×26 glyph variant of canonical
-// register #5 (per design mockup phone-1 dual-stepper); 32×32 hit-target
-// floor preserved via padding.
+// Dual-stepper for blood pressure: two adjacent half-stepper cards (Sys / Dia)
+// with ±1 increment each side. Each half is its own cream card with a
+// sage-mist border + 14px radius (mockup .stepper-half). Sys/Dia label
+// sits at the trailing edge of each half. No "/" separator between halves.
 //
-// Trailing register #1 X is OPTIONAL on the dual-stepper because clearing
-// one half without the other rarely makes sense. Caregivers typically tap
-// both numbers together via the chip-tap-to-type or both ± buttons.
+// Trailing register #1 X is OPTIONAL on the dual-stepper — caregivers
+// typically tap both numbers together.
+//
+// Visual register matches docs/design/heartnote-log-redesign-mockup.html
+// (.stepper-dual / .stepper-half / .step-btn / .step-value / .half-label).
 
 'use client';
 
@@ -56,11 +58,11 @@ export function DualStepperControl({
     (systolic !== defaultSystolic || diastolic !== defaultDiastolic);
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2">
       <Half
         label="Systolic"
+        shortLabel="sys"
         value={systolic}
-        suffix="sys"
         min={sysMin}
         max={sysMax}
         onDec={sysDecrement}
@@ -69,11 +71,10 @@ export function DualStepperControl({
         decDisabled={systolic !== null && systolic <= sysMin}
         incDisabled={systolic !== null && systolic >= sysMax}
       />
-      <span className="text-base font-medium text-muted-foreground">/</span>
       <Half
         label="Diastolic"
+        shortLabel="dia"
         value={diastolic}
-        suffix="dia"
         min={diaMin}
         max={diaMax}
         onDec={diaDecrement}
@@ -87,7 +88,7 @@ export function DualStepperControl({
           type="button"
           aria-label="Clear blood pressure"
           onClick={onClear}
-          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition"
+          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition flex-shrink-0"
           style={{ width: 32, height: 32 }}
         >
           <X size={14} strokeWidth={2} />
@@ -99,8 +100,8 @@ export function DualStepperControl({
 
 function Half({
   label,
+  shortLabel,
   value,
-  suffix,
   min,
   max,
   onDec,
@@ -110,8 +111,8 @@ function Half({
   incDisabled,
 }: {
   label: string;
+  shortLabel: string;
   value: number | null;
-  suffix: string;
   min: number;
   max: number;
   onDec: () => void;
@@ -155,13 +156,22 @@ function Half({
   };
 
   return (
-    <div className="flex items-center gap-1.5">
+    // .stepper-half — its own cream card, sage-mist border, 14px radius.
+    <div
+      className="flex flex-1 items-center justify-between gap-1"
+      style={{
+        background: 'var(--cream)',
+        border: '1px solid var(--sage-mist)',
+        borderRadius: 14,
+        padding: '5px 8px',
+      }}
+    >
       <CompactCircle
         ariaLabel={`Decrement ${label}`}
         onClick={onDec}
         disabled={decDisabled}
       >
-        <Minus size={14} strokeWidth={2.5} />
+        <Minus size={11} strokeWidth={2.5} />
       </CompactCircle>
       {editing ? (
         <input
@@ -187,31 +197,29 @@ function Half({
               setEditing(false);
             }
           }}
-          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-3 text-center"
+          className="font-display flex-1 min-w-0 text-center bg-transparent border-0 outline-0 tabular-nums"
           style={{
-            minWidth: 60,
-            height: 32,
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
+            fontSize: 22,
+            fontWeight: 400,
+            lineHeight: 1,
+            letterSpacing: '-1px',
             color: 'var(--foreground)',
-            fontWeight: 500,
+            padding: '3px 3px 4px',
           }}
-          data-suffix={suffix}
         />
       ) : (
         <button
           type="button"
           onClick={beginEdit}
           aria-label={`${label} value`}
-          data-suffix={suffix}
-          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-3 transition active:scale-[0.97]"
+          className="font-display flex-1 min-w-0 text-center tabular-nums cursor-text"
           style={{
-            minWidth: 60,
-            height: 32,
-            background: 'var(--card)',
-            border: '1px solid var(--border)',
+            fontSize: 22,
+            fontWeight: 400,
+            lineHeight: 1,
+            letterSpacing: '-1px',
             color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-            fontWeight: value === null ? 400 : 500,
+            padding: '3px 3px 4px',
           }}
         >
           {value === null ? '—' : value}
@@ -222,8 +230,21 @@ function Half({
         onClick={onInc}
         disabled={incDisabled}
       >
-        <Plus size={14} strokeWidth={2.5} />
+        <Plus size={11} strokeWidth={2.5} />
       </CompactCircle>
+      {/* .half-label — Sys / Dia tag at the trailing edge in tiny ink-faint. */}
+      <span
+        aria-hidden
+        className="flex-shrink-0 uppercase font-semibold"
+        style={{
+          fontSize: 9,
+          letterSpacing: '0.6px',
+          color: 'var(--ink-faint)',
+          marginLeft: 2,
+        }}
+      >
+        {shortLabel}
+      </span>
     </div>
   );
 }
@@ -249,15 +270,14 @@ function CompactCircle({
   onClick: () => void;
   disabled?: boolean;
 }) {
+  // 32×32 hit-target wraps a 26×26 visual circle to satisfy WCAG floor.
   return (
     <button
       type="button"
       aria-label={ariaLabel}
       onClick={onClick}
       disabled={disabled}
-      // 32×32 hit target wraps a 26×26 visual circle to match the
-      // mockup's compact dual-stepper.
-      className="inline-flex items-center justify-center transition active:scale-[0.94] disabled:opacity-30"
+      className="inline-flex items-center justify-center transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0"
       style={{ width: 32, height: 32 }}
     >
       <span
@@ -265,10 +285,9 @@ function CompactCircle({
         style={{
           width: 26,
           height: 26,
-          background: 'var(--card)',
-          border: '1px solid var(--border)',
+          background: 'transparent',
+          border: '1px solid var(--sage-mist)',
           color: 'var(--foreground)',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
         }}
       >
         {children}
