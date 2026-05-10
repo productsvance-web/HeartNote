@@ -59,6 +59,25 @@ function endOfDayMs(dayIso: string, tz: string): number {
   return iso ? Date.parse(iso) : Date.now();
 }
 
+// End of the (Sun-Sat) week containing dayIso = next Sunday midnight.
+function endOfWeekMs(dayIso: string, tz: string): number {
+  const dow = dowOfDay(dayIso, tz); // 0 = Sun, 6 = Sat
+  const daysToNextSun = dow === 0 ? 7 : 7 - dow;
+  const nextSun = isoOffset(dayIso, daysToNextSun);
+  const iso = isoFromWallClock(`${nextSun}T00:00`, tz);
+  return iso ? Date.parse(iso) : Date.now();
+}
+
+// End of the calendar month containing dayIso = first of next month.
+function endOfMonthMs(dayIso: string, tz: string): number {
+  const [y, m] = dayIso.split('-').map(Number);
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  const firstOfNext = `${ny}-${String(nm).padStart(2, '0')}-01`;
+  const iso = isoFromWallClock(`${firstOfNext}T00:00`, tz);
+  return iso ? Date.parse(iso) : Date.now();
+}
+
 function isoDateOf(ms: number, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -68,16 +87,82 @@ function isoDateOf(ms: number, tz: string): string {
   }).format(new Date(ms));
 }
 
-// Default end-of-window: end of the day containing the latest reading,
-// or end of today if no data yet. So D opens on the day the user last
-// weighed in — not on a blank "today" if they haven't logged today.
-function defaultEndFor(
+function dowOfDay(dayIso: string, tz: string): number {
+  const d = new Date(`${dayIso}T12:00:00Z`);
+  const name = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+  }).format(d);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
+}
+
+// Default end-of-window for the given period, anchored to the latest
+// reading (or today if no data). D / W / M snap to the end of the
+// containing day / week / month so the visible window aligns with the
+// natural calendar unit; 6M / Y are rolling (windows always end at
+// today's end).
+function defaultEndForPeriod(
+  period: WindowPeriod,
   latestMs: number | null,
   today: string,
   tz: string,
 ): number {
-  if (latestMs === null) return endOfDayMs(today, tz);
-  return endOfDayMs(isoDateOf(latestMs, tz), tz);
+  const anchorMs = latestMs ?? Date.now();
+  const dayIso = latestMs === null ? today : isoDateOf(anchorMs, tz);
+  switch (period) {
+    case 'D':
+      return endOfDayMs(dayIso, tz);
+    case 'W':
+      return endOfWeekMs(dayIso, tz);
+    case 'M':
+      return endOfMonthMs(dayIso, tz);
+    case '6M':
+    case 'Y':
+      return endOfDayMs(today, tz);
+  }
+}
+
+// Smallest valid endMs — clamped so the user can't scrub to a window
+// that no longer contains any data.
+function backwardBoundForPeriod(
+  period: WindowPeriod,
+  oldestMs: number | null,
+  today: string,
+  tz: string,
+): number {
+  if (oldestMs === null) return endOfDayMs(today, tz);
+  const dayIso = isoDateOf(oldestMs, tz);
+  switch (period) {
+    case 'D':
+      return endOfDayMs(dayIso, tz);
+    case 'W':
+      return endOfWeekMs(dayIso, tz);
+    case 'M':
+      return endOfMonthMs(dayIso, tz);
+    case '6M':
+    case 'Y':
+      return endOfDayMs(dayIso, tz);
+  }
+}
+
+// Largest valid endMs — clamped so the user can't scrub past today
+// (or, for D/W/M, past the end of today's day/week/month).
+function forwardBoundForPeriod(
+  period: WindowPeriod,
+  today: string,
+  tz: string,
+): number {
+  switch (period) {
+    case 'D':
+      return endOfDayMs(today, tz);
+    case 'W':
+      return endOfWeekMs(today, tz);
+    case 'M':
+      return endOfMonthMs(today, tz);
+    case '6M':
+    case 'Y':
+      return endOfDayMs(today, tz);
+  }
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -109,37 +194,32 @@ export function WeightTrendView({
     [allReadings],
   );
 
-  // Default endMs = end of the latest reading's day. If there's no data,
-  // end of today.
-  const defaultEnd = useMemo(
-    () => defaultEndFor(latestMs, today, timezone),
-    [latestMs, today, timezone],
-  );
+  const [period, setPeriodRaw] = useState<WindowPeriod>('D');
 
-  // Forward bound: user can scrub forward to today (real-time), even if
-  // no data exists in those days. Backward bound: user cannot scrub past
-  // the day the oldest reading was logged. With no data, both bounds
-  // collapse to end-of-today and scrub is effectively disabled.
+  // Period-aware default + bounds. D snaps to day boundaries; W to
+  // weeks (Sun-Sat); M to calendar months. 6M/Y are rolling.
+  const defaultEnd = useMemo(
+    () => defaultEndForPeriod(period, latestMs, today, timezone),
+    [period, latestMs, today, timezone],
+  );
   const forwardBound = useMemo(
-    () => endOfDayMs(today, timezone),
-    [today, timezone],
+    () => forwardBoundForPeriod(period, today, timezone),
+    [period, today, timezone],
   );
   const backwardBound = useMemo(
-    () =>
-      oldestMs !== null
-        ? endOfDayMs(isoDateOf(oldestMs, timezone), timezone)
-        : forwardBound,
-    [oldestMs, timezone, forwardBound],
+    () => backwardBoundForPeriod(period, oldestMs, today, timezone),
+    [period, oldestMs, today, timezone],
   );
 
-  const [period, setPeriodRaw] = useState<WindowPeriod>('D');
-  const [endMs, setEndMs] = useState(defaultEnd);
+  const [endMs, setEndMs] = useState(() =>
+    defaultEndForPeriod('D', latestMs, today, timezone),
+  );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEnd);
+    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -208,11 +288,10 @@ export function WeightTrendView({
       return;
     }
 
-    // W / M / 6M: swipe-paging. Each chart-width drag = one full
-    // window-step (preserves week / month boundaries). Drag past 50%
-    // threshold = step; smaller drags hold position. The user's rule:
-    // "weeks scrub in entire weeks."
-    const threshold = w * 0.5;
+    // W / M / 6M: swipe-paging. Each chart-width drag past a 25% threshold
+    // = one full window-step. Preserves week / month boundaries (the
+    // user's rule: "weeks scrub in entire weeks").
+    const threshold = w * 0.25;
     if (Math.abs(dx) < threshold) {
       setEndMs(clamp(startEnd, backwardBound, forwardBound));
       return;
@@ -376,6 +455,10 @@ export function WeightTrendView({
               yMin={yScale.min}
               yMax={yScale.max}
               yTicks={yScale.ticks}
+              // W shows dots only — readings within a single week are
+              // independent weigh-ins, not a continuous trend. D / M /
+              // 6M / Y connect the dots.
+              showLine={period !== 'W'}
             />
           </div>
           {/* X axis labels are absolutely positioned at the same x-coordinate

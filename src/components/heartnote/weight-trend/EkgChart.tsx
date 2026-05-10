@@ -28,6 +28,9 @@ interface Props {
   yMax: number;
   yTicks: number[];
   height?: number;
+  // When false, render dots only (no connecting line). W mode uses
+  // false because intra-week weigh-ins aren't a continuous trend.
+  showLine?: boolean;
 }
 
 const W = 280;
@@ -45,6 +48,7 @@ export function EkgChart({
   yMax,
   yTicks,
   height = 132,
+  showLine = true,
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
@@ -164,7 +168,7 @@ export function EkgChart({
           adjacent-reading segments don't paint over the y-axis labels
           or outside the chart. */}
       <g clipPath={`url(#${clipId})`}>
-        {path && (
+        {showLine && path && (
           <path
             d={path}
             fill="none"
