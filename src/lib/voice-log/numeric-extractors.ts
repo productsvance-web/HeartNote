@@ -75,7 +75,7 @@ const PILLOW_WORD_RE =
 // the algorithm from attributing a stray digit ("for 5 minutes") to a
 // vital field.
 const FIELD_RANGE: Record<FieldKey, [number, number]> = {
-  weight_lb: [50, 700],
+  weight_lb: [50, 1000],
   resting_hr: [30, 220],
   spo2: [50, 100],
   pillow_count: [0, 20],

@@ -4,9 +4,9 @@ Loaded automatically (no path filter). Required reading whenever adding or modif
 
 ## Why this rule exists
 
-The app has shipped multiple incompatible icon registers for similar actions (a Trash2 icon to remove a visit-prep question, an X to clear a medication start date, a green-circle-plus to add a dose time, a red-circle-minus to remove a dose time). That sprawl makes the app feel like four different products stitched together. This file is the canonical register for all five interaction kinds. Diverge only with explicit reason.
+The app has shipped multiple incompatible icon registers for similar actions (a Trash2 icon to remove a visit-prep question, an X to clear a medication start date, a green-circle-plus to add a dose time, a red-circle-minus to remove a dose time). That sprawl makes the app feel like four different products stitched together. This file is the canonical register for all six interaction kinds. Diverge only with explicit reason.
 
-## The five kinds — and the canonical control for each
+## The six kinds — and the canonical control for each
 
 ### 1. Clear a single field value
 
@@ -104,6 +104,26 @@ half without the other rarely makes sense.
 - A separate white-circle X inside the stepper. Clearing is register #1; don't ship two X registers visually different.
 - Coral or sage circles for ±. Coral is destructive (#2); sage is constructive-add (#3); steppers are neither — they edit a value in place.
 
+### 6. Floating utility button (Apple-Weather-style bottom-bar)
+
+**Pattern:** translucent cream circle (46×46), thin ink border, lucide glyph centered, fixed to a corner of the page, with backdrop blur. Used for page-level utility actions that DO NOT fit the four list/value registers — the equivalent of Apple Weather's "add to my locations" button.
+
+- Visual: `inline-flex items-center justify-center rounded-full`. Width / height 46. Background `rgba(251, 247, 240, 0.55)` (translucent cream-card). Border `1px solid color-mix(in oklab, var(--ink) 22%, transparent)`. Color `var(--ink-soft)`. `backdrop-filter: blur(8px)` (and `-webkit-` prefix). Press scale `active:scale-95`.
+- Lucide icon: any single-action verb glyph at size 20, strokeWidth 1.6.
+- Position: `fixed`, bottom-right of the page (28px right padding, 22px from bottom). The pointer-events trick (parent `pointer-events-none`, button `pointer-events-auto`) lets the button float above scroll content without blocking the page.
+- aria-label: descriptive verb (e.g., `Add weight`, `Tap to record`, `Open symptoms`).
+
+**Reference implementations:**
+- `src/components/heartnote/weight-trend/WeightTrendView.tsx` — the "+" Add weight button on /trends/weight.
+- `docs/design/heartnote-log-redesign-mockup.html` — the mic and ear/symptom buttons on /log (mockup; not yet implemented in src/).
+
+**When to use:** page-level utility actions that don't fit the inline list/value registers — adding a new entity to the page (a weight reading, a voice log), opening a related modal (the symptom sheet), or initiating a recording session. The button affords "do something at the page level" rather than "modify this specific row/value."
+
+**Forbidden alternatives for this kind:**
+- A solid sage-circle plus (register #3). That's for adding rows to a visible list. The bottom-bar button initiates a separate flow (a sheet) — different affordance.
+- A coral pill button (register #4). The bottom-bar utility is constructive, not destructive.
+- Multiple bottom-bar buttons in different visual styles on the same page. If a page needs more than one, both must use this register.
+
 ## Decision flow when adding a new interactive
 
 ```
@@ -128,9 +148,13 @@ Deleting an entire entity (account, medication, visit, voice log)
 Increment/decrement a numeric value
   → Pattern #5: white-circle stepper (− / value / +) + optional trailing #1 X
   → reference: /log/manual StepperControl
+
+Page-level utility action (open a sheet, add an entity, start a flow)
+  → Pattern #6: floating utility button (translucent cream, backdrop blur)
+  → reference: /trends/weight Add-weight button
 ```
 
-If the new action doesn't fit any of these five kinds, name what's different and ask. Don't invent a sixth register.
+If the new action doesn't fit any of these six kinds, name what's different and ask. Don't invent a seventh register.
 
 ## Currently-out-of-canon places
 
