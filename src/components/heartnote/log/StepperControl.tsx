@@ -1,15 +1,17 @@
-// Numeric stepper — minus / value-chip / plus. White-circle 36×36 sub-buttons,
-// large Fraunces 30px value with dotted underline, optional unit suffix.
-// Trailing register-#1 X (size 14, muted) renders when value is non-default.
+// Numeric stepper — minus / NumberChip / plus, with optional trailing
+// register-#1 X to clear when the value differs from the seed.
+//
+// The chip itself is one component (NumberChip) with a single render
+// path; this file just composes the surrounding ± buttons + clear X.
 //
 // Visual register matches docs/design/heartnote-log-redesign-mockup.html
-// (.stepper / .step-btn / .step-value). Canonical register #5 per
+// (.stepper / .step-btn). Canonical register #5 per
 // .claude/rules/canonical-controls.md.
 
 'use client';
 
 import { Minus, Plus, X } from 'lucide-react';
-import { useNumericInput } from './use-numeric-input';
+import { NumberChip } from './NumberChip';
 import { useHoldRepeat } from './use-hold-repeat';
 
 interface Props {
@@ -24,13 +26,10 @@ interface Props {
   placeholder?: string;
   onChange: (v: number) => void;
   onClear?: () => void;
-  // When true, the tap-to-type input only accepts digits (no decimal). Used
-  // for pillows / HR / SpO2 — caregivers don't pick "98.5 bpm".
+  // Whole-number variant — used for pillows / HR / SpO2.
   integer?: boolean;
-  // Optional tighter floors for the tap-to-type input. The stepper's ±
-  // buttons still respect `min`/`max` (those mirror DB validity); these
-  // exist to stop someone typing clinically-incompatible values like
-  // "55%" SpO2. Defaults to min/max.
+  // Optional tighter input floors (vs. min/max which mirror DB validity).
+  // Stop someone typing clinically-incompatible values like "55%" SpO2.
   inputMin?: number;
   inputMax?: number;
 }
@@ -51,18 +50,6 @@ export function StepperControl({
   inputMin,
   inputMax,
 }: Props) {
-  // Display: when formatValue is provided, use it (e.g. "182.4 lb"). The
-  // formatted value already includes the unit when relevant; we render the
-  // unit suffix separately ONLY when the caller passed `unit` and didn't
-  // bake it into formatValue. To stop the unit from disappearing during
-  // tap-to-type (B1), we render the unit alongside the input as well.
-  const numericDisplay =
-    value === null
-      ? placeholder
-      : formatValue
-        ? formatValue(value)
-        : String(value);
-
   const canClear =
     onClear !== undefined && value !== null && value !== defaultValue;
 
@@ -81,30 +68,6 @@ export function StepperControl({
   const decDisabled = value !== null && value <= min;
   const incDisabled = value !== null && value >= max;
 
-  const { editing, draft, setDraft, inputRef, beginEdit, finishEdit, sanitize } =
-    useNumericInput(value, { integer });
-
-  const commitDraft = () => {
-    const cleaned = sanitize(draft);
-    if (cleaned === '') {
-      // Empty → leave value unchanged. Caregiver who wants to clear has
-      // the trailing X.
-      finishEdit();
-      return;
-    }
-    const parsed = Number(cleaned);
-    if (!Number.isFinite(parsed)) {
-      finishEdit();
-      return;
-    }
-    const lo = inputMin ?? min;
-    const hi = inputMax ?? max;
-    const clamped = Math.min(hi, Math.max(lo, parsed));
-    const rounded = integer ? Math.round(clamped) : +clamped.toFixed(2);
-    onChange(rounded);
-    finishEdit();
-  };
-
   return (
     <div className="flex items-center justify-between gap-3">
       <CircleButton
@@ -115,159 +78,17 @@ export function StepperControl({
         <Minus size={14} strokeWidth={2.5} />
       </CircleButton>
 
-      {editing ? (
-        // Mirror the read-only chip exactly — flex-1 wrapper, baseline-flex
-        // centered, the input auto-sizes to its content via the `size`
-        // attribute so the digits land in the same horizontal slot they
-        // occupied as text. Unit sits inline to the right just like read
-        // mode. Dotted underline persists.
-        <div
-          className="font-display relative flex-1 flex items-baseline justify-center tabular-nums"
-          style={{
-            fontSize: 30,
-            fontWeight: 400,
-            lineHeight: 1,
-            letterSpacing: '-1px',
-            color: 'var(--foreground)',
-            padding: '4px 4px 6px',
-            borderRadius: 8,
-          }}
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            inputMode={integer ? 'numeric' : 'decimal'}
-            pattern={integer ? '[0-9]*' : '[0-9.]*'}
-            value={draft}
-            aria-label={`Edit ${fieldLabel}`}
-            // size=N renders an input N characters wide. We clamp to a
-            // sensible minimum so a one-digit draft doesn't become tiny.
-            size={Math.max(2, draft.length || 3)}
-            onChange={(e) => setDraft(e.target.value)}
-            onPaste={(e) => {
-              e.preventDefault();
-              const text = e.clipboardData.getData('text');
-              setDraft(sanitize(text));
-            }}
-            onBlur={commitDraft}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                commitDraft();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                finishEdit();
-              }
-            }}
-            // Inherit Fraunces 30px from the parent. Center-aligned so the
-            // digits center within the auto-sized input — same visual
-            // position they occupied in read mode. Explicit height: 1em
-            // overrides the browser's UA-default min-height on <input>
-            // (typically taller than the text), which was making the card
-            // grow vertically when entering edit mode.
-            className="bg-transparent border-0 outline-0 text-center"
-            style={{
-              fontFamily: 'inherit',
-              fontSize: 'inherit',
-              fontWeight: 'inherit',
-              lineHeight: 1,
-              letterSpacing: 'inherit',
-              color: 'inherit',
-              fontVariantNumeric: 'inherit',
-              padding: 0,
-              width: 'auto',
-              height: '1em',
-              boxSizing: 'content-box',
-            }}
-          />
-          {unit && (
-            <span
-              style={{
-                fontFamily: 'var(--font-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--muted-foreground)',
-                marginLeft: 5,
-                letterSpacing: '0.1px',
-                verticalAlign: '2px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {unit}
-            </span>
-          )}
-          {/* Dotted underline persists during edit so the chip doesn't
-              visually morph mid-tap. */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute"
-            style={{
-              left: '30%',
-              right: '30%',
-              bottom: 1,
-              height: 1,
-              borderBottom: '1px dotted var(--ink-faint)',
-              opacity: 0.5,
-            }}
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          // Init draft with the formatted display so e.g. "182.0" doesn't
-          // collapse to "182" on click. select-all on focus makes any
-          // typing replace it, so this doesn't slow anyone down.
-          onClick={() =>
-            beginEdit(
-              value !== null && formatValue ? formatValue(value) : undefined,
-            )
-          }
-          aria-label={`Edit ${fieldLabel}`}
-          // Big serif value chip with dotted underline. flex:1 means it
-          // expands to fill the space between the ± buttons.
-          className="font-display relative flex-1 text-center tabular-nums cursor-text"
-          style={{
-            fontSize: 30,
-            fontWeight: 400,
-            lineHeight: 1,
-            letterSpacing: '-1px',
-            color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-            padding: '4px 4px 6px',
-            borderRadius: 8,
-          }}
-        >
-          {numericDisplay}
-          {unit && value !== null && (
-            <span
-              // Unit suffix in Inter 12px ink-soft, vertical-align nudged.
-              style={{
-                fontFamily: 'var(--font-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--muted-foreground)',
-                marginLeft: 5,
-                letterSpacing: '0.1px',
-                verticalAlign: '2px',
-              }}
-            >
-              {unit}
-            </span>
-          )}
-          {/* Dotted underline (mockup .step-value::after). Fades to 50% */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute"
-            style={{
-              left: '30%',
-              right: '30%',
-              bottom: 1,
-              height: 1,
-              borderBottom: '1px dotted var(--ink-faint)',
-              opacity: 0.5,
-            }}
-          />
-        </button>
-      )}
+      <NumberChip
+        value={value}
+        formatValue={formatValue}
+        unit={unit}
+        placeholder={placeholder}
+        integer={integer}
+        inputMin={inputMin ?? min}
+        inputMax={inputMax ?? max}
+        onChange={onChange}
+        ariaLabel={`Edit ${fieldLabel}`}
+      />
 
       <CircleButton
         ariaLabel={`Increment ${fieldLabel}`}
@@ -282,7 +103,7 @@ export function StepperControl({
           type="button"
           aria-label={`Clear ${fieldLabel}`}
           onClick={onClear}
-          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition"
+          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition flex-shrink-0"
           style={{ width: 32, height: 32 }}
         >
           <X size={14} strokeWidth={2} />

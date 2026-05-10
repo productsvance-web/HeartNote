@@ -15,7 +15,7 @@
 
 import { Minus, Plus, X } from 'lucide-react';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
-import { useNumericInput } from './use-numeric-input';
+import { NumberChip } from './NumberChip';
 import { useHoldRepeat } from './use-hold-repeat';
 
 // Tighter clinical floors for the tap-to-type input. The stepper buttons
@@ -132,28 +132,8 @@ function Half({
   decDisabled: boolean;
   incDisabled: boolean;
 }) {
-  // Tap-to-type per half. Integer-only (BP is always whole numbers).
-  const { editing, draft, setDraft, inputRef, beginEdit, finishEdit, sanitize } =
-    useNumericInput(value, { integer: true });
-
   const decHold = useHoldRepeat(onDec);
   const incHold = useHoldRepeat(onInc);
-
-  const commitDraft = () => {
-    const cleaned = sanitize(draft);
-    if (cleaned === '') {
-      finishEdit();
-      return;
-    }
-    const parsed = Number(cleaned);
-    if (!Number.isFinite(parsed)) {
-      finishEdit();
-      return;
-    }
-    const clamped = Math.min(inputMax, Math.max(inputMin, Math.round(parsed)));
-    onCommit(clamped);
-    finishEdit();
-  };
 
   return (
     // .stepper-half — its own cream card, sage-mist border, 14px radius.
@@ -173,58 +153,16 @@ function Half({
       >
         <Minus size={11} strokeWidth={2.5} />
       </CompactCircle>
-      {editing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          value={draft}
-          aria-label={`Edit ${label}`}
-          onChange={(e) => setDraft(e.target.value)}
-          onPaste={(e) => {
-            e.preventDefault();
-            const text = e.clipboardData.getData('text');
-            setDraft(sanitize(text));
-          }}
-          onBlur={commitDraft}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              commitDraft();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              finishEdit();
-            }
-          }}
-          className="font-display flex-1 min-w-0 text-center bg-transparent border-0 outline-0 tabular-nums"
-          style={{
-            fontSize: 22,
-            fontWeight: 400,
-            lineHeight: 1,
-            letterSpacing: '-1px',
-            color: 'var(--foreground)',
-            padding: '3px 3px 4px',
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => beginEdit()}
-          aria-label={`${label} value`}
-          className="font-display flex-1 min-w-0 text-center tabular-nums cursor-text"
-          style={{
-            fontSize: 22,
-            fontWeight: 400,
-            lineHeight: 1,
-            letterSpacing: '-1px',
-            color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-            padding: '3px 3px 4px',
-          }}
-        >
-          {value === null ? '—' : value}
-        </button>
-      )}
+      <NumberChip
+        value={value}
+        integer
+        inputMin={inputMin}
+        inputMax={inputMax}
+        onChange={onCommit}
+        ariaLabel={`Edit ${label}`}
+        fontSize={22}
+        showDottedUnderline={false}
+      />
       <CompactCircle
         ariaLabel={`Increment ${label}`}
         disabled={incDisabled}
