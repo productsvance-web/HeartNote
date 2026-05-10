@@ -210,7 +210,7 @@ function Half({
       ) : (
         <button
           type="button"
-          onClick={beginEdit}
+          onClick={() => beginEdit()}
           aria-label={`${label} value`}
           className="font-display flex-1 min-w-0 text-center tabular-nums cursor-text"
           style={{
