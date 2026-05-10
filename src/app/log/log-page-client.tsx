@@ -197,19 +197,6 @@ export function LogPageClient({ context }: Props) {
     return out;
   });
 
-  // Mid-session re-hydration for tier-1 cognition. router.refresh() updates
-  // context.symptoms.cognitionChange without remounting the client; the
-  // useState initializer above only runs at mount. When voice extraction
-  // surfaces severity 4 ('severe') after the page is already open, light
-  // the in-modal alert pip without waiting for a reload.
-  // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
-  useEffect(() => {
-    if (context.symptoms.cognitionChange !== 'severe') return;
-    setSymptomsTouch((s) =>
-      s.cognitionChange === 'alert' ? s : { ...s, cognitionChange: 'alert' },
-    );
-  }, [context.symptoms.cognitionChange]);
-
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
 
