@@ -50,10 +50,11 @@ export function WeightTrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  // Hero displays the most-recent reading in the currently selected
-  // window when present, else the most-recent ever — so the page never
-  // reads "—" when data exists in another window.
-  const hero = slice.length > 0 ? slice[slice.length - 1] : latestEver;
+  // Hero strictly reflects the selected window. If the user picked D
+  // and nothing was logged today, the hero is "—" — anything else
+  // (e.g., showing the most-recent-ever value with a "0 readings today"
+  // subhead) reads contradictory.
+  const hero = slice.length > 0 ? slice[slice.length - 1] : null;
 
   const intraDay = intraDayRangeFor(slice, today, timezone);
 
