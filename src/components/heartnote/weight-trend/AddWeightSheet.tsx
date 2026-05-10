@@ -10,10 +10,11 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { VitalsRow } from '@/components/heartnote/manual-entry/VitalsRow';
 import { StepperControl } from '@/components/heartnote/manual-entry/StepperControl';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
+import { isoOffset } from '@/lib/dates/iso-offset';
 
 export type AddWeightInput = {
   weightLb: number;
@@ -44,23 +45,37 @@ export function AddWeightSheet({
   const [time, setTime] = useState(() => currentTimeHHMM(timezone));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Idempotency guard. The disabled-attribute lag between tap and React
+  // commit lets a fast double-tap (especially synthesized touch+click on
+  // Safari) fire the action twice. Without this, we'd insert two parent
+  // logs + two readings on a single user intent.
+  const submittingRef = useRef(false);
 
   const minDate = isoOffset(today, -MIN_BACKDATE_DAYS);
   const canSave = weight !== null && !pending;
 
   const submit = async () => {
     if (weight === null) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setPending(true);
     setError(null);
-    const result = await onSave({
-      weightLb: weight,
-      recordedAtIsoLocal: `${date}T${time}`,
-    });
-    setPending(false);
-    if (result.ok) {
-      onClose();
-    } else {
-      setError(result.error);
+    try {
+      const result = await onSave({
+        weightLb: weight,
+        recordedAtIsoLocal: `${date}T${time}`,
+      });
+      if (result.ok) {
+        onClose();
+      } else {
+        setError(result.error);
+        setPending(false);
+        submittingRef.current = false;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save.');
+      setPending(false);
+      submittingRef.current = false;
     }
   };
 
@@ -206,10 +221,4 @@ function currentTimeHHMM(tz: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(new Date());
-}
-
-function isoOffset(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }

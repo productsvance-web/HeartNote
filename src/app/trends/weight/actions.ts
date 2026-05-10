@@ -18,6 +18,7 @@ import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
+import { isoOffset } from '@/lib/dates/iso-offset';
 
 const MIN_BACKDATE_DAYS = 400;
 
@@ -205,10 +206,4 @@ function firstWord(s: string | null | undefined): string | null {
   if (!s) return null;
   const w = s.trim().split(/\s+/)[0];
   return w && w.length > 0 ? w : null;
-}
-
-function isoOffset(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }

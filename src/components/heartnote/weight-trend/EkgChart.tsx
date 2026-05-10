@@ -11,6 +11,10 @@ type AxisLabel = { x: number; label: string };
 interface Props {
   data: WeightReading[];
   period: WindowPeriod;
+  // Patient timezone — required so D-period x-positioning uses the
+  // patient's wall-clock hour, not the caregiver's browser-local hour.
+  // Caregiver and patient can be in different tz (caregiver traveling).
+  timezone: string;
   xAxisLabels: AxisLabel[];
   yMin: number;
   yMax: number;
@@ -27,6 +31,7 @@ const PAD_B = 16;
 export function EkgChart({
   data,
   period,
+  timezone,
   xAxisLabels,
   yMin,
   yMax,
@@ -36,7 +41,7 @@ export function EkgChart({
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
 
-  const xs = data.map((r) => xPositionFor(r, data, period, innerW));
+  const xs = data.map((r) => xPositionFor(r, data, period, innerW, timezone));
   const ys = data.map(
     (r) => PAD_T + (1 - (r.value - yMin) / (yMax - yMin)) * innerH,
   );
@@ -142,10 +147,19 @@ function xPositionFor(
   all: WeightReading[],
   period: WindowPeriod,
   innerW: number,
+  timezone: string,
 ): number {
   if (period === 'D') {
-    const dt = new Date(r.recorded_at);
-    const hours = dt.getHours() + dt.getMinutes() / 60;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date(r.recorded_at));
+    let h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+    if (h === 24) h = 0;
+    const mi = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+    const hours = h + mi / 60;
     return PAD_L + (hours / 24) * innerW;
   }
   const i = all.indexOf(r);

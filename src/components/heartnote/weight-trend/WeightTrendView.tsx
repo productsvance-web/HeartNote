@@ -19,6 +19,7 @@ import {
   type WeightReading,
   type WindowPeriod,
 } from '@/lib/trends/weight-window';
+import { isoOffset } from '@/lib/dates/iso-offset';
 import { addWeightReading } from '@/app/trends/weight/actions';
 
 interface Props {
@@ -216,6 +217,7 @@ export function WeightTrendView({
             <EkgChart
               data={slice}
               period={period}
+              timezone={timezone}
               xAxisLabels={xLabels}
               yMin={yScale.min}
               yMax={yScale.max}
@@ -294,7 +296,7 @@ export function WeightTrendView({
                 className="text-right text-[11px] text-muted-foreground"
                 style={{ lineHeight: 1.5, maxWidth: 140 }}
               >
-                {timeLabelFor(morningFasted, timezone)}
+                {fastedMetaFor(morningFasted, today, timezone)}
               </div>
             </div>
           </div>
@@ -471,12 +473,6 @@ function xLabelsFor(
   }
 }
 
-function isoOffset(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 function weekdayLabel(iso: string): string {
   const d = new Date(`${iso}T12:00:00Z`);
   return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(d);
@@ -503,6 +499,33 @@ function timeLabelFor(r: WeightReading, tz: string): string {
     minute: '2-digit',
     hour12: true,
   }).format(d);
+}
+
+function dateInTz(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(iso));
+}
+
+// Morning-fasted card meta. When the latest fasted reading isn't from
+// today, append the weekday so the caregiver doesn't read the time as
+// "this morning."
+function fastedMetaFor(
+  r: WeightReading,
+  today: string,
+  tz: string,
+): string {
+  const t = timeLabelFor(r, tz);
+  const day = dateInTz(r.recorded_at, tz);
+  if (day === today) return `${t} today`;
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+  }).format(new Date(r.recorded_at));
+  return `${t} · ${weekday}`;
 }
 
 function tripleStats(

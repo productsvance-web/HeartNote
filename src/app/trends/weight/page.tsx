@@ -5,6 +5,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import { isoOffset } from '@/lib/dates/iso-offset';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { WeightTrendView } from '@/components/heartnote/weight-trend/WeightTrendView';
 import type { WeightReading } from '@/lib/trends/weight-window';
@@ -64,12 +65,6 @@ export default async function WeightTrendPage() {
       />
     </PhoneShell>
   );
-}
-
-function isoOffset(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 function firstWord(s: string | null | undefined): string | null {
