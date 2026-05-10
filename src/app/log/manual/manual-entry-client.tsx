@@ -8,7 +8,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { VitalsRow } from '@/components/heartnote/manual-entry/VitalsRow';
 import { SegmentedControl } from '@/components/heartnote/manual-entry/SegmentedControl';
-import { StepperControl } from '@/components/heartnote/manual-entry/StepperControl';
+import { StepperControl } from '@/components/heartnote/log/StepperControl';
 import {
   saveManualVitalsEntry,
   type SaveManualVitalsInput,
