@@ -27,6 +27,7 @@ import {
   type SaveLogResult,
 } from './save-actions';
 import { resolveHelperText } from '@/lib/log/helper-text';
+import { SPO2_TIER_1_911 } from '@/lib/clinical/thresholds';
 import { extractNumericTiles } from '@/lib/voice-log/numeric-extractors';
 import { segmentEndsWithStopPhrase } from '@/lib/voice-log/match-keyterms';
 import {
@@ -318,13 +319,15 @@ export function LogPageClient({ context }: Props) {
     setVitals((s) => ({ ...s, spo2Pct: v }));
     setVitalsTouch((s) => ({
       ...s,
-      // H2: SpO2 ≤ 88 is tier-1 (T1.7a). Any non-null below threshold lights
-      // the alert outline directly.
+      // H2: SpO2 < SPO2_TIER_1_911 is tier-1 (T1.7a). Strict < matches the
+      // engine (evaluate.ts:258) and the regression test (evaluate.test.ts:208
+      // — "spo2 at SPO2_TIER_1_911 does NOT fire T1.7a").
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — SpO2 < 88%.
       spo2:
-        v === null ? 'muted' : v <= 88 ? 'alert' : 'tapped',
+        v === null ? 'muted' : v < SPO2_TIER_1_911 ? 'alert' : 'tapped',
     }));
-    // Crossing the 88% line moves tier — bypass the debounce.
-    scheduleSave(v !== null && v <= 88);
+    // Crossing the threshold moves tier — bypass the debounce.
+    scheduleSave(v !== null && v < SPO2_TIER_1_911);
   };
 
   // ─── Symptoms handler ────────────────────────────────────────────────────
