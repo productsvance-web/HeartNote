@@ -9,6 +9,7 @@
 
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, X } from 'lucide-react';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 
@@ -60,8 +61,11 @@ export function DualStepperControl({
         label="Systolic"
         value={systolic}
         suffix="sys"
+        min={sysMin}
+        max={sysMax}
         onDec={sysDecrement}
         onInc={sysIncrement}
+        onCommit={(v) => onChange(v, diastolic)}
         decDisabled={systolic !== null && systolic <= sysMin}
         incDisabled={systolic !== null && systolic >= sysMax}
       />
@@ -70,8 +74,11 @@ export function DualStepperControl({
         label="Diastolic"
         value={diastolic}
         suffix="dia"
+        min={diaMin}
+        max={diaMax}
         onDec={diaDecrement}
         onInc={diaIncrement}
+        onCommit={(v) => onChange(systolic, v)}
         decDisabled={diastolic !== null && diastolic <= diaMin}
         incDisabled={diastolic !== null && diastolic >= diaMax}
       />
@@ -94,19 +101,59 @@ function Half({
   label,
   value,
   suffix,
+  min,
+  max,
   onDec,
   onInc,
+  onCommit,
   decDisabled,
   incDisabled,
 }: {
   label: string;
   value: number | null;
   suffix: string;
+  min: number;
+  max: number;
   onDec: () => void;
   onInc: () => void;
+  onCommit: (v: number) => void;
   decDisabled: boolean;
   incDisabled: boolean;
 }) {
+  // Tap-to-type on each half. Same sanitize/clamp/commit shape as
+  // StepperControl. Empty draft on commit keeps the existing value.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  const beginEdit = () => {
+    setDraft(value === null ? '' : String(value));
+    setEditing(true);
+  };
+
+  const commitDraft = () => {
+    const cleaned = sanitizeNumeric(draft);
+    if (cleaned === '') {
+      setEditing(false);
+      return;
+    }
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed)) {
+      setEditing(false);
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, Math.round(parsed)));
+    onCommit(clamped);
+    setEditing(false);
+  };
+
   return (
     <div className="flex items-center gap-1.5">
       <CompactCircle
@@ -116,21 +163,60 @@ function Half({
       >
         <Minus size={14} strokeWidth={2.5} />
       </CompactCircle>
-      <span
-        className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-3"
-        style={{
-          minWidth: 60,
-          height: 32,
-          background: 'var(--card)',
-          border: '1px solid var(--border)',
-          color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-          fontWeight: value === null ? 400 : 500,
-        }}
-        aria-label={`${label} value`}
-        data-suffix={suffix}
-      >
-        {value === null ? '—' : value}
-      </span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9.]*"
+          value={draft}
+          aria-label={`Edit ${label}`}
+          onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            e.preventDefault();
+            const text = e.clipboardData.getData('text');
+            setDraft(sanitizeNumeric(text));
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitDraft();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setEditing(false);
+            }
+          }}
+          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-3 text-center"
+          style={{
+            minWidth: 60,
+            height: 32,
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            color: 'var(--foreground)',
+            fontWeight: 500,
+          }}
+          data-suffix={suffix}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={beginEdit}
+          aria-label={`${label} value`}
+          data-suffix={suffix}
+          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-3 transition active:scale-[0.97]"
+          style={{
+            minWidth: 60,
+            height: 32,
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
+            fontWeight: value === null ? 400 : 500,
+          }}
+        >
+          {value === null ? '—' : value}
+        </button>
+      )}
       <CompactCircle
         ariaLabel={`Increment ${label}`}
         onClick={onInc}
@@ -139,6 +225,16 @@ function Half({
         <Plus size={14} strokeWidth={2.5} />
       </CompactCircle>
     </div>
+  );
+}
+
+function sanitizeNumeric(input: string): string {
+  const stripped = input.replace(/[^0-9.]/g, '');
+  const firstDot = stripped.indexOf('.');
+  if (firstDot === -1) return stripped;
+  return (
+    stripped.slice(0, firstDot + 1) +
+    stripped.slice(firstDot + 1).replace(/\./g, '')
   );
 }
 

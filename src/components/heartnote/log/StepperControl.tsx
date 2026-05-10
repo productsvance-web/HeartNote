@@ -6,6 +6,7 @@
 
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, X } from 'lucide-react';
 
 interface Props {
@@ -59,6 +60,44 @@ export function StepperControl({
   const decDisabled = value !== null && value <= min;
   const incDisabled = value !== null && value >= max;
 
+  // Tap-to-type on the value chip. Tapping the chip swaps it for a numeric
+  // input; blur or Enter parses + clamps + commits. Paste strips non-digits
+  // and a single decimal before parsing so "184 lb" → 184.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  const beginEdit = () => {
+    setDraft(value === null ? '' : String(value));
+    setEditing(true);
+  };
+
+  const commitDraft = () => {
+    const cleaned = sanitizeNumeric(draft);
+    if (cleaned === '') {
+      // Empty → leave value unchanged. Caregiver who wants to clear has
+      // the trailing X.
+      setEditing(false);
+      return;
+    }
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed)) {
+      setEditing(false);
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    const rounded = +clamped.toFixed(2);
+    onChange(rounded);
+    setEditing(false);
+  };
+
   return (
     <div className="flex items-center gap-3">
       <CircleButton
@@ -69,19 +108,58 @@ export function StepperControl({
         <Minus size={16} strokeWidth={2.5} />
       </CircleButton>
 
-      <span
-        className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4"
-        style={{
-          minWidth: 96,
-          height: 36,
-          background: 'var(--card)',
-          border: '1px solid var(--border)',
-          color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-          fontWeight: value === null ? 400 : 500,
-        }}
-      >
-        {display}
-      </span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="decimal"
+          pattern="[0-9.]*"
+          value={draft}
+          aria-label={`Edit ${fieldLabel}`}
+          onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            e.preventDefault();
+            const text = e.clipboardData.getData('text');
+            setDraft(sanitizeNumeric(text));
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitDraft();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setEditing(false);
+            }
+          }}
+          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4 text-center"
+          style={{
+            minWidth: 96,
+            height: 36,
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            color: 'var(--foreground)',
+            fontWeight: 500,
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={beginEdit}
+          aria-label={`Edit ${fieldLabel}`}
+          className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4 transition active:scale-[0.97]"
+          style={{
+            minWidth: 96,
+            height: 36,
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
+            fontWeight: value === null ? 400 : 500,
+          }}
+        >
+          {display}
+        </button>
+      )}
 
       <CircleButton
         ariaLabel={`Increment ${fieldLabel}`}
@@ -103,6 +181,19 @@ export function StepperControl({
         </button>
       )}
     </div>
+  );
+}
+
+// Strip everything except digits and a single decimal point. "184 lb" → "184".
+// "2.5 kg paste-blob" → "2.5". Multiple decimals collapse to one (keeps the
+// first), so "1.2.3" → "1.23".
+function sanitizeNumeric(input: string): string {
+  const stripped = input.replace(/[^0-9.]/g, '');
+  const firstDot = stripped.indexOf('.');
+  if (firstDot === -1) return stripped;
+  return (
+    stripped.slice(0, firstDot + 1) +
+    stripped.slice(firstDot + 1).replace(/\./g, '')
   );
 }
 
