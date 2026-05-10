@@ -28,6 +28,7 @@ import {
 } from './save-actions';
 import { resolveHelperText } from '@/lib/log/helper-text';
 import { extractNumericTiles } from '@/lib/voice-log/numeric-extractors';
+import { segmentEndsWithStopPhrase } from '@/lib/voice-log/match-keyterms';
 import {
   openDeepgramClient,
   type DeepgramClient,
@@ -45,6 +46,7 @@ import {
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 const MAX_RECORD_SECONDS = 120;
+const VOICE_STOP_SILENCE_GATE_MS = 1000;
 
 type RecordingStatus =
   | 'idle'
@@ -102,6 +104,14 @@ export function LogPageClient({ context }: Props) {
   const timerRef = useRef<number | null>(null);
   const finalsRef = useRef<string[]>([]);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  // Auto-stop on a trailing stop-phrase ("end note", "I'm done", etc.):
+  // we re-render whenever a new final arrives so the watcher effect runs.
+  const [finalsTick, setFinalsTick] = useState(0);
+  const lastFinalAtRef = useRef<number>(0);
+  const voiceStopTimerRef = useRef<number | null>(null);
+  // One-attempt reconnect budget per recording session. Reset on every
+  // startRecording.
+  const reconnectedOnceRef = useRef<boolean>(false);
 
   // ─── Vitals + symptoms state ─────────────────────────────────────────────
   const [vitals, setVitals] = useState<VitalsValueState>(() => ({
@@ -352,6 +362,17 @@ export function LogPageClient({ context }: Props) {
     }
     streamRef.current = stream;
 
+    // Permission revoked mid-session. Wire onended on each track so the
+    // OS-level mic-off triggers stopRecording with a reason. Read recording
+    // state via refs (the closure here captures click-time state).
+    stream.getTracks().forEach((t) => {
+      t.onended = () => {
+        if (streamRef.current) {
+          void stopRecording('Mic was turned off — saving what you said.');
+        }
+      };
+    });
+
     if (voiceLogId) {
       await discardEmptyVoiceLog({ logId: voiceLogId });
     }
@@ -367,50 +388,11 @@ export function LogPageClient({ context }: Props) {
     }
     setVoiceLogId(startResult.logId);
 
-    // Open Deepgram session.
-    let token: string;
-    try {
-      const tokRes = await fetch('/api/voice-log/deepgram-token', { method: 'POST' });
-      if (!tokRes.ok) {
-        const j = (await tokRes.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `token mint failed (${tokRes.status})`);
-      }
-      const j = (await tokRes.json()) as { token: string };
-      token = j.token;
-    } catch (err) {
-      stream.getTracks().forEach((t) => t.stop());
-      setRecordingStatus('error');
-      setRecordingError(
-        err instanceof Error
-          ? `Voice log temporarily unavailable: ${err.message}`
-          : 'Voice log temporarily unavailable.',
-      );
-      return;
-    }
-
     finalsRef.current = [];
-    const dg = openDeepgramClient(token, stream, {
-      onTranscript: ({ isFinal, text }) => {
-        if (isFinal) {
-          finalsRef.current = [...finalsRef.current, text];
-          // Live regex extraction for vitals — fills with state='heard'
-          // ONLY if the field is not already 'tapped' (R1).
-          const live = extractNumericTiles(finalsRef.current.join(' '));
-          applyLiveExtraction(live);
-        }
-      },
-      onError: () => {
-        /* drop */
-      },
-      onClose: (code) => {
-        if (code === 1000) return;
-        // Mid-record drop — best-effort: stop and save what we have.
-        if (streamRef.current) {
-          void stopRecording('Connection lost — saving what you said.');
-        }
-      },
-    });
-    dgClientRef.current = dg;
+    reconnectedOnceRef.current = false;
+
+    const opened = await openSession(stream);
+    if (!opened) return; // openSession surfaced its own error state
 
     setRecordingStatus('recording');
     void acquireWakeLock();
@@ -428,11 +410,90 @@ export function LogPageClient({ context }: Props) {
     }, 1000);
   }
 
+  // Mints a Deepgram token, opens the WebSocket, wires the transcript +
+  // close + error callbacks. Returns true on success, false on failure
+  // (in which case it has already updated status/error). Reused by both
+  // initial start and the one-shot reconnect.
+  async function openSession(stream: MediaStream): Promise<boolean> {
+    let token: string;
+    try {
+      const tokRes = await fetch('/api/voice-log/deepgram-token', {
+        method: 'POST',
+      });
+      if (!tokRes.ok) {
+        const j = (await tokRes.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `token mint failed (${tokRes.status})`);
+      }
+      const j = (await tokRes.json()) as { token: string };
+      token = j.token;
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop());
+      setRecordingStatus('error');
+      setRecordingError(
+        err instanceof Error
+          ? `Voice log temporarily unavailable: ${err.message}`
+          : 'Voice log temporarily unavailable.',
+      );
+      return false;
+    }
+
+    const dg = openDeepgramClient(token, stream, {
+      onTranscript: ({ isFinal, text }) => {
+        if (isFinal) {
+          finalsRef.current = [...finalsRef.current, text];
+          lastFinalAtRef.current = Date.now();
+          // Bump tick to drive the stop-phrase watcher effect.
+          setFinalsTick((n) => n + 1);
+          // Live regex extraction for vitals — fills with state='heard'
+          // ONLY if the field is not already 'tapped' (R1).
+          const live = extractNumericTiles(finalsRef.current.join(' '));
+          applyLiveExtraction(live);
+        }
+      },
+      onError: () => {
+        /* drop */
+      },
+      onClose: (code) => {
+        // 1000 = normal close (we initiated). Anything else mid-recording
+        // is a drop. Try one reconnect with a fresh token; if that also
+        // fails, stop and submit what we have. Recording state is read
+        // via refs because this callback closes over the openSession-time
+        // `recordingStatus` (typically 'requesting-mic').
+        if (code === 1000) return;
+        if (!streamRef.current || !timerRef.current) return;
+        if (reconnectedOnceRef.current) {
+          void stopRecording('Connection lost — saving what you said.');
+          return;
+        }
+        reconnectedOnceRef.current = true;
+        void attemptReconnect();
+      },
+    });
+    dgClientRef.current = dg;
+    return true;
+  }
+
+  async function attemptReconnect() {
+    const stream = streamRef.current;
+    if (!stream) {
+      void stopRecording('Connection lost — saving what you said.');
+      return;
+    }
+    const ok = await openSession(stream);
+    if (!ok) {
+      void stopRecording('Connection lost — saving what you said.');
+    }
+  }
+
   async function stopRecording(reasonNote?: string) {
     if (!streamRef.current && !timerRef.current) return;
     if (timerRef.current) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    if (voiceStopTimerRef.current) {
+      window.clearTimeout(voiceStopTimerRef.current);
+      voiceStopTimerRef.current = null;
     }
     dgClientRef.current?.close();
     dgClientRef.current = null;
@@ -549,6 +610,35 @@ export function LogPageClient({ context }: Props) {
       void releaseWakeLock();
     };
   }, []);
+
+  // Voice-stop watcher: when the latest final ends with a stop phrase AND
+  // no newer final arrives within VOICE_STOP_SILENCE_GATE_MS, fire stop.
+  // Re-runs on every final via finalsTick; the trigger-final's timestamp
+  // is captured in the closure so a newer final aborts the timer.
+  useEffect(() => {
+    if (recordingStatus !== 'recording') return;
+
+    const lastFinal = finalsRef.current[finalsRef.current.length - 1];
+    if (!lastFinal || !segmentEndsWithStopPhrase(lastFinal)) return;
+
+    const triggerTimestamp = lastFinalAtRef.current;
+
+    if (voiceStopTimerRef.current) window.clearTimeout(voiceStopTimerRef.current);
+    voiceStopTimerRef.current = window.setTimeout(() => {
+      // Newer final arrived → abort. Equal → no further speech, fire stop.
+      if (lastFinalAtRef.current === triggerTimestamp) {
+        void stopRecording();
+      }
+    }, VOICE_STOP_SILENCE_GATE_MS);
+
+    return () => {
+      if (voiceStopTimerRef.current) {
+        window.clearTimeout(voiceStopTimerRef.current);
+        voiceStopTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finalsTick, recordingStatus]);
 
   // Visibility change while recording → graceful stop (preserves the
   // existing voice-log behavior).
