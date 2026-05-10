@@ -1,0 +1,1727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HeartNote — /log redesign (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #F5EFE6;
+    --cream-card: #FBF7F0;
+    --cream-soft: #EFE7D9;
+    --sage: #7E9080;
+    --sage-deep: #5A6B5C;
+    --sage-pale: #C9D3C5;
+    --sage-mist: #E1E7DC;
+    --ink: #3D332A;
+    --ink-soft: #6B5E52;
+    --ink-faint: #A89A8B;
+    --warn-bg: #F2E3C5;
+    --warn-ink: #8A6A35;
+    --warn-line: #C49C5A;
+    --calm-bg: #EFE7D9;
+    --calm-ink: #6B5E52;
+    --alert-bg: #ECD2C7;
+    --alert-ink: #8C4A36;
+    --alert-line: #C46A4A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background:
+      radial-gradient(1400px 700px at 50% -10%, #ECE3D2 0%, #D4CCBE 60%, #C5BCAC 100%);
+    min-height: 100vh;
+    color: var(--ink);
+    padding: 56px 24px 80px;
+  }
+
+  /* Gallery head */
+  .gallery-head {
+    max-width: 880px;
+    margin: 0 auto 36px;
+    text-align: center;
+  }
+  .eyebrow {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .gallery-head h1 {
+    font-family: 'Fraunces', serif;
+    font-size: 40px;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -1px;
+    color: var(--ink);
+  }
+  .gallery-head h1 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--sage-deep);
+  }
+  .gallery-head p {
+    margin-top: 14px;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* Row sub-head */
+  .row-head {
+    max-width: 880px;
+    margin: 56px auto 24px;
+    text-align: center;
+  }
+  .row-head .eb {
+    font-family: 'Inter', sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .row-head h2 {
+    margin-top: 8px;
+    font-family: 'Fraunces', serif;
+    font-size: 26px;
+    font-weight: 400;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+    line-height: 1.15;
+  }
+  .row-head h2 em { font-style: italic; color: var(--sage-deep); font-weight: 300; }
+  .row-head p {
+    margin-top: 8px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    max-width: 540px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.5;
+  }
+
+  .gallery {
+    display: flex;
+    gap: 36px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .phone-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    transform: translateY(var(--offset, 0));
+  }
+  .phone-label {
+    font-family: 'Fraunces', serif;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: -0.2px;
+    color: var(--ink);
+    text-align: center;
+  }
+  .phone-label small {
+    display: block;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.4px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+    text-transform: uppercase;
+  }
+
+  .phone {
+    width: 380px;
+    background: var(--cream);
+    border-radius: 44px;
+    box-shadow:
+      0 30px 80px rgba(60, 50, 40, 0.25),
+      0 0 0 11px #1c1c1c,
+      0 0 0 13px #2a2a2a;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .phone--short { height: 940px; }
+  .phone--full-heard { height: 1100px; }
+  .notch {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 124px;
+    height: 28px;
+    background: #1c1c1c;
+    border-radius: 0 0 16px 16px;
+    z-index: 10;
+  }
+  .status-bar {
+    padding: 14px 26px 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  /* Page header */
+  .page-head { padding: 10px 22px 0; }
+  .back-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .back-row svg { width: 12px; height: 12px; }
+  .page-eyebrow {
+    margin-top: 18px;
+    font-family: 'Inter', sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+  }
+  .page-headline {
+    margin-top: 5px;
+    font-family: 'Fraunces', serif;
+    font-size: 28px;
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+  }
+  .page-headline em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--sage-deep);
+  }
+  .page-subhead {
+    margin-top: 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink-soft);
+  }
+
+  .scroll {
+    flex: 1;
+    overflow: hidden;
+    padding: 16px 18px 92px;
+  }
+
+  /* Expanded transcript card with edge gradient mask */
+  .transcript-card {
+    margin-top: 4px;
+    background:
+      radial-gradient(circle at 12% 8%, rgba(255,255,255,0.55), transparent 55%),
+      linear-gradient(180deg, var(--sage-mist) 0%, color-mix(in oklab, var(--sage-mist) 55%, var(--cream-card)) 100%);
+    border: 1px solid color-mix(in oklab, var(--sage) 28%, transparent);
+    border-radius: 24px;
+    padding: 18px 22px 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .transcript-card .eb {
+    font-size: 10.5px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 12px;
+  }
+  .transcript-card .eb svg { width: 12px; height: 12px; }
+  .transcript-body {
+    font-family: 'Fraunces', serif;
+    font-size: 17.5px;
+    line-height: 1.55;
+    color: var(--ink);
+    font-style: italic;
+    letter-spacing: -0.1px;
+    max-height: 240px;
+    overflow: hidden;
+    -webkit-mask-image:
+      linear-gradient(180deg, #000 0%, #000 62%, transparent 100%),
+      linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+            mask-image:
+      linear-gradient(180deg, #000 0%, #000 62%, transparent 100%),
+      linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+    -webkit-mask-composite: source-in;
+            mask-composite: intersect;
+  }
+  .transcript-body::before { content: '“'; margin-right: 1px; }
+  .transcript-body::after  { content: '”'; margin-left: 1px; }
+
+  /* Bottom bar — small Apple-Weather-style utility buttons */
+  .bottom-bar {
+    position: absolute;
+    bottom: 22px;
+    left: 0;
+    right: 0;
+    padding: 0 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 6;
+    pointer-events: none;
+  }
+  .bottom-bar > * { pointer-events: auto; }
+  .bb-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(251, 247, 240, 0.55);
+    border: 1px solid color-mix(in oklab, var(--ink) 22%, transparent);
+    color: var(--ink-soft);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    padding: 0;
+    -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+  }
+  .bb-btn:active { transform: scale(0.94); }
+  .bb-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.6;
+  }
+  .bb-btn.heard {
+    background: var(--sage-deep);
+    border-color: var(--sage-deep);
+    color: white;
+  }
+
+  /* Symptom modal — sheet that slides up over the vitals view */
+  .phone--modal { height: 1100px; }
+  .modal-backdrop {
+    position: absolute;
+    top: 34px;
+    left: 0;
+    right: 0;
+    height: 70px;
+    padding: 14px 22px 0;
+    background: color-mix(in oklab, var(--cream) 78%, var(--ink) 14%);
+    overflow: hidden;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .modal-backdrop > * { opacity: 0.5; }
+  .modal-backdrop .back-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .modal-backdrop .back-row svg { width: 12px; height: 12px; }
+  .modal-backdrop .page-eyebrow {
+    margin-top: 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+  }
+
+  .modal-sheet {
+    position: absolute;
+    top: 96px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--cream-card);
+    border-radius: 26px 26px 0 0;
+    box-shadow: 0 -10px 30px rgba(28, 28, 28, 0.16);
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .modal-grip {
+    width: 38px;
+    height: 5px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--ink) 22%, transparent);
+    margin: 8px auto 6px;
+    flex-shrink: 0;
+  }
+
+  .modal-head {
+    flex-shrink: 0;
+    padding: 4px 22px 14px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 14px;
+    border-bottom: 1px solid var(--sage-mist);
+  }
+  .modal-head .page-eyebrow {
+    margin-top: 0;
+    margin-bottom: 4px;
+  }
+  .modal-title {
+    font-family: 'Fraunces', serif;
+    font-size: 24px;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -0.5px;
+    color: var(--ink);
+  }
+  .modal-title em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--sage-deep);
+  }
+  .modal-close {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: color-mix(in oklab, var(--ink) 7%, transparent);
+    border: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-soft);
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0;
+  }
+  .modal-close:active { transform: scale(0.94); }
+  .modal-close svg {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2.4;
+  }
+
+  .modal-scroll {
+    flex: 1;
+    overflow: hidden;
+    padding: 14px 18px 0;
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 88%, transparent 100%);
+            mask-image: linear-gradient(180deg, #000 0%, #000 88%, transparent 100%);
+  }
+
+  .modal-footer {
+    flex-shrink: 0;
+    padding: 12px 18px 16px;
+    border-top: 1px solid var(--sage-mist);
+    background: var(--cream-card);
+  }
+  .modal-footer .source-line {
+    margin-top: 0;
+  }
+
+  .section-divider {
+    margin: 18px 4px 10px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    border-top: 1px solid var(--sage-mist);
+    padding-top: 14px;
+  }
+  .section-divider .title {
+    font-family: 'Fraunces', serif;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.2px;
+  }
+  .section-divider .right {
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .section-divider .right.sage { color: var(--sage-deep); }
+
+  /* Vital card chassis */
+  .vc {
+    background: var(--cream-card);
+    border: 1px solid var(--sage-mist);
+    border-radius: 18px;
+    padding: 11px 14px 11px;
+    margin-bottom: 9px;
+    position: relative;
+  }
+  .vc.muted { opacity: 0.66; }
+  .vc.heard {
+    border-color: color-mix(in oklab, var(--sage) 50%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--sage) 16%, transparent);
+  }
+  .vc.tapped {
+    border-color: color-mix(in oklab, var(--warn-line) 60%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--warn-line) 18%, transparent);
+  }
+  .vc.alert {
+    border-color: color-mix(in oklab, var(--alert-line) 70%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--alert-line) 18%, transparent);
+  }
+  .vc-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .vc-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: 'Fraunces', serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.2px;
+  }
+  .vc-label .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .vc-label .dot.calm  { background: var(--sage); }
+  .vc-label .dot.watch { background: var(--warn-line); }
+  .vc-label .dot.alert { background: var(--alert-line); }
+  .vc-context {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    text-align: right;
+    line-height: 1.3;
+    flex-shrink: 0;
+  }
+  .vc-control { margin: 9px 0 8px; }
+  .vc-helper {
+    font-size: 10.5px;
+    color: var(--ink-soft);
+    line-height: 1.4;
+  }
+  .vc-helper.watch { color: var(--warn-ink); }
+  .vc-helper.calm  { color: var(--sage-deep); }
+  .vc-helper.alert { color: var(--alert-ink); font-weight: 500; }
+
+  /* Compact yes/no card variant */
+  .vc--yn { padding: 10px 14px 10px; }
+  .vc--yn .vc-question {
+    font-family: 'Fraunces', serif;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.1px;
+    line-height: 1.3;
+  }
+  .vc--yn .vc-row {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .vc--yn .vc-row .vc-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--sage);
+    flex-shrink: 0;
+  }
+  .vc--yn .vc-row .vc-dot.watch { background: var(--warn-line); }
+  .vc--yn .vc-row .vc-dot.alert { background: var(--alert-line); }
+
+  /* Corner pip */
+  .corner-pip {
+    position: absolute;
+    top: -6px;
+    right: 14px;
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    line-height: 1;
+  }
+  .corner-pip svg { width: 9px; height: 9px; }
+  .corner-pip.heard  { background: var(--sage-deep);  color: var(--cream-card); }
+  .corner-pip.tapped { background: var(--warn-line);  color: var(--ink); }
+  .corner-pip.alert  { background: var(--alert-line); color: white; }
+
+  /* Stepper */
+  .stepper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .step-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--cream);
+    border: 1px solid var(--sage-mist);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .step-btn:active { transform: scale(0.94); }
+  .step-btn svg { width: 14px; height: 14px; }
+  .step-value {
+    font-family: 'Fraunces', serif;
+    font-size: 30px;
+    font-weight: 400;
+    color: var(--ink);
+    line-height: 1;
+    letter-spacing: -1px;
+    flex: 1;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    padding: 4px 4px 6px;
+    border-radius: 8px;
+    position: relative;
+  }
+  .step-value::after {
+    content: '';
+    position: absolute;
+    left: 30%;
+    right: 30%;
+    bottom: 1px;
+    height: 1px;
+    border-bottom: 1px dotted var(--ink-faint);
+    opacity: 0.5;
+  }
+  .step-value .unit {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    margin-left: 5px;
+    letter-spacing: 0.1px;
+    vertical-align: 2px;
+  }
+
+  /* Stepper — dual (BP) */
+  .stepper-dual {
+    display: flex;
+    gap: 8px;
+  }
+  .stepper-dual .stepper-half {
+    flex: 1;
+    background: var(--cream);
+    border: 1px solid var(--sage-mist);
+    border-radius: 14px;
+    padding: 5px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .stepper-dual .step-btn {
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    border: 1px solid var(--sage-mist);
+  }
+  .stepper-dual .step-btn svg { width: 11px; height: 11px; }
+  .stepper-dual .step-value {
+    font-size: 22px;
+    flex: 1;
+    padding: 3px 3px 4px;
+  }
+  .stepper-dual .step-value::after { display: none; }
+  .stepper-dual .half-label {
+    font-size: 9px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+
+  /* Segmented */
+  .segmented {
+    display: flex;
+    background: var(--cream);
+    border: 1px solid var(--sage-mist);
+    border-radius: 999px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .seg-btn {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    padding: 7px 4px;
+    border-radius: 999px;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    letter-spacing: 0.1px;
+    white-space: nowrap;
+  }
+  .seg-btn.active {
+    background: var(--sage-deep);
+    color: var(--cream-card);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(60, 50, 40, 0.10);
+  }
+  .seg-btn.active.warn  { background: var(--warn-bg);  color: var(--warn-ink); }
+  .seg-btn.active.alert { background: var(--alert-bg); color: var(--alert-ink); }
+
+  /* Yes/No control */
+  .yesno {
+    display: flex;
+    gap: 6px;
+    flex: 1;
+    max-width: 200px;
+  }
+  .yesno-btn {
+    flex: 1;
+    border: 1px solid var(--sage-mist);
+    background: transparent;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    cursor: pointer;
+    letter-spacing: 0.2px;
+  }
+  .yesno-btn.active {
+    background: var(--sage-deep);
+    color: var(--cream-card);
+    border-color: var(--sage-deep);
+    font-weight: 600;
+  }
+  .yesno-btn.active.alert {
+    background: var(--alert-bg);
+    color: var(--alert-ink);
+    border-color: var(--alert-line);
+  }
+  .yesno-btn.active.watch {
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+    border-color: var(--warn-line);
+  }
+
+  /* Compound — inline 2-row toggles */
+  .compound-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 0;
+  }
+  .compound-row + .compound-row { border-top: 1px solid var(--sage-mist); }
+  .compound-q {
+    font-size: 12.5px;
+    color: var(--ink);
+    line-height: 1.3;
+    flex: 1;
+  }
+  .compound-q .dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--sage);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .compound-q .dot.watch { background: var(--warn-line); }
+
+  /* Source line */
+  .source-line {
+    margin-top: 12px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    line-height: 1.5;
+    font-style: italic;
+  }
+  .source-line b { font-style: normal; font-weight: 600; color: var(--ink-soft); }
+
+  /* Footer caption */
+  .footer {
+    max-width: 760px;
+    margin: 64px auto 0;
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .footer strong { color: var(--ink); font-weight: 600; }
+  .legend {
+    margin-top: 18px;
+    display: inline-flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+  }
+  .economy {
+    margin: 26px auto 0;
+    max-width: 640px;
+    background: rgba(255,255,255,0.35);
+    border: 1px solid rgba(126, 144, 128, 0.18);
+    border-radius: 14px;
+    padding: 18px 22px;
+    text-align: left;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+  }
+  .economy h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    margin-bottom: 8px;
+    letter-spacing: -0.1px;
+  }
+  .economy ul { list-style: none; padding: 0; }
+  .economy li { padding: 3px 0; display: flex; gap: 10px; }
+  .economy li b { color: var(--ink); font-weight: 600; min-width: 110px; flex-shrink: 0; }
+
+  @media (max-width: 880px) {
+    .gallery { gap: 24px; }
+    .phone-wrap { transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="gallery-head">
+  <div class="eyebrow">HeartNote &middot; /log redesign &middot; 2026-05-09</div>
+  <h1>Voice <em>or</em> tap. <em>Five</em> vitals up front; symptoms <em>behind</em> the listener.</h1>
+  <p>One log page. Five vitals — weight, pillows, BP, heart rate, SpO&#8322; — sit on the main view. The fourteen graded symptoms and red-flag checks live behind the listener button at the bottom-right; they open in a focused modal. Voice fills both surfaces; tapping any value overrides it.</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- ROW 1: focused-five voice → tap narrative                    -->
+<!-- ============================================================ -->
+<div class="row-head">
+  <div class="eb">Row 1</div>
+  <h2>The voice <em>&rarr;</em> tap story.</h2>
+  <p>Same chassis on every card &mdash; status dot &middot; label &middot; control &middot; helper. Idle on the left, after a 30-second voice log plus a manual cuff reading on the right. Two utility buttons at the bottom: mic, and the symptom listener that turns sage when something was heard.</p>
+</div>
+
+<div class="gallery">
+
+  <!-- Phone 1 — Before idle -->
+  <div class="phone-wrap" style="--offset: 14px;">
+    <div class="phone phone--short">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="page-head">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12</div>
+        <div class="page-headline">What's <em>different</em> today?</div>
+        <div class="page-subhead">Speak for 30 seconds, or tap any card. Symptoms live behind the listener button.</div>
+      </div>
+
+      <div class="scroll">
+
+        <div class="section-divider">
+          <div class="title">Vitals</div>
+          <div class="right">yesterday's values held</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Weight</div><div class="vc-context">vs. baseline 178.0 lb</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">178.0<span class="unit">lb</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">Yesterday's reading. Speak or tap to update.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Pillows tonight</div><div class="vc-context">orthopnea proxy</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">1<span class="unit">tonight</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">Held at 1 pillow for the past week.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Blood pressure</div><div class="vc-context">cuff &middot; if measured</div></div>
+          <div class="vc-control"><div class="stepper-dual">
+            <div class="stepper-half">
+              <span class="half-label">Sys</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">122</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div class="stepper-half">
+              <span class="half-label">Dia</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">76</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+          </div></div>
+          <div class="vc-helper">Last cuff reading from yesterday.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Heart rate</div><div class="vc-context">resting bpm</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">70<span class="unit">bpm</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">In her usual 66&ndash;92 band.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Oxygen &middot; SpO&#8322;</div><div class="vc-context">pulse-ox &middot; if measured</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">95<span class="unit">%</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">88% is the call-today floor; she's well above.</div>
+        </div>
+
+        <div class="source-line">
+          <b>Yesterday's values shown</b> &middot; speak or tap to commit today's reading.
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <button class="bb-btn" aria-label="Tap to record">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"/>
+            <path d="M12 19v3"/>
+          </svg>
+        </button>
+        <button class="bb-btn" aria-label="Open symptoms">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="7" r="3.5"/>
+            <path d="M5 21a7 7 0 0 1 14 0"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="phone-label">Before<small>Idle &middot; yesterday's values held</small></div>
+  </div>
+
+  <!-- Phone 2 — After voice + tapped cuff readings -->
+  <div class="phone-wrap" style="--offset: -16px;">
+    <div class="phone phone--full-heard">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="page-head">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12 &middot; 8:04 PM</div>
+      </div>
+
+      <div class="scroll">
+
+        <div class="transcript-card">
+          <div class="eb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+            From voice &middot; 8:04 PM
+          </div>
+          <div class="transcript-body">She's at one-eighty-two-four today, oxygen ninety-six, slept on two pillows last night. Ankles a little swollen, no cough.</div>
+        </div>
+
+        <div class="section-divider">
+          <div class="title">Vitals</div>
+          <div class="right sage">3 from voice &middot; 2 from cuff</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Weight</div><div class="vc-context">vs. baseline 178.0 lb</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">182.4<span class="unit">lb</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">&#9650; 4.4 lb in 14 days &mdash; worth watching for water gain.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Pillows tonight</div><div class="vc-context">orthopnea proxy</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">2<span class="unit">tonight</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">Up from 1 last week &middot; slow orthopnea creep.</div>
+        </div>
+
+        <div class="vc tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Blood pressure</div><div class="vc-context">cuff &middot; just now</div></div>
+          <div class="vc-control"><div class="stepper-dual">
+            <div class="stepper-half">
+              <span class="half-label">Sys</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">124</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div class="stepper-half">
+              <span class="half-label">Dia</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">78</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+          </div></div>
+          <div class="vc-helper calm">In her usual band.</div>
+        </div>
+
+        <div class="vc tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Heart rate</div><div class="vc-context">resting bpm</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">70<span class="unit">bpm</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper calm">In her usual 66&ndash;92 band.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Oxygen &middot; SpO&#8322;</div><div class="vc-context">pulse-ox &middot; mentioned in voice</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">96<span class="unit">%</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper calm">Well above her 88% call-today floor.</div>
+        </div>
+
+        <div class="source-line">
+          <b>5 of 5 vitals captured</b> &middot; weight trending watch &middot; symptoms heard from voice are tucked behind the listener button below.
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <button class="bb-btn" aria-label="Tap to record">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"/>
+            <path d="M12 19v3"/>
+          </svg>
+        </button>
+        <button class="bb-btn heard" aria-label="Symptoms heard, tap to expand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/>
+            <path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="phone-label">After<small>3 from voice &middot; 2 from cuff &middot; symptoms behind the ear</small></div>
+  </div>
+</div>
+
+
+<!-- ============================================================ -->
+<!-- ROW 2: full surface — every signal HeartNote tracks         -->
+<!-- ============================================================ -->
+<div class="row-head">
+  <div class="eb">Row 2</div>
+  <h2>Empty <em>vs.</em> all-active.</h2>
+  <p>Same five-vitals chassis, two scenarios. Nothing logged for the day on the left; worst-case voice log with red-flag signals on the right. Both keep symptoms tucked behind the listener &mdash; tapping the ear opens the symptom modal.</p>
+</div>
+
+<div class="gallery">
+
+  <!-- ============ PHONE 3 — EMPTY: nothing logged for the day ============ -->
+  <div class="phone-wrap" style="--offset: 14px;">
+    <div class="phone phone--short">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="page-head">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12</div>
+        <div class="page-headline">Nothing logged <em>yet</em> today.</div>
+        <div class="page-subhead">Speak once and the vitals fill themselves &mdash; or tap any card. Symptoms live behind the listener button at the bottom-right.</div>
+      </div>
+
+      <div class="scroll">
+
+        <div class="section-divider">
+          <div class="title">Vitals</div>
+          <div class="right">yesterday's values held</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Weight</div><div class="vc-context">vs. baseline 178.0 lb</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">178.0<span class="unit">lb</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">Held from yesterday. Tap value to type, or &plusmn;0.2 lb to fine-tune.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Pillows tonight</div><div class="vc-context">orthopnea proxy</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">1<span class="unit">tonight</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">Held at 1 for the past week.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Blood pressure</div><div class="vc-context">cuff &middot; if measured</div></div>
+          <div class="vc-control"><div class="stepper-dual">
+            <div class="stepper-half">
+              <span class="half-label">Sys</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">128</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div class="stepper-half">
+              <span class="half-label">Dia</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">76</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+          </div></div>
+          <div class="vc-helper">Last cuff reading &middot; tap either number to type.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Heart rate</div><div class="vc-context">resting bpm</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">76<span class="unit">bpm</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">In her usual 66&ndash;92 band.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Oxygen &middot; SpO&#8322;</div><div class="vc-context">pulse-ox &middot; if measured</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">96<span class="unit">%</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper">88% is the call-today floor; she's well above.</div>
+        </div>
+
+        <div class="source-line">
+          <b>0 vitals logged today</b> &middot; speak or tap to start. Symptoms open in their own modal.
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <button class="bb-btn" aria-label="Tap to record">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"/>
+            <path d="M12 19v3"/>
+          </svg>
+        </button>
+        <button class="bb-btn" aria-label="Open symptoms">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="7" r="3.5"/>
+            <path d="M5 21a7 7 0 0 1 14 0"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="phone-label">Empty<small>Nothing logged &middot; defaults shown</small></div>
+  </div>
+
+
+  <!-- ============ PHONE 4 — ALL ACTIVE: every field has a value ============ -->
+  <div class="phone-wrap" style="--offset: -16px;">
+    <div class="phone phone--full-heard">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="page-head">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12 &middot; 8:04 PM</div>
+      </div>
+
+      <div class="scroll">
+
+        <div class="transcript-card">
+          <div class="eb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+            From voice &middot; 8:04 PM
+          </div>
+          <div class="transcript-body">She's at one-eighty-four-six, sleeping on three pillows, woke up at four AM gasping. Calves and ankles swollen, very tired all day, barely ate, urine's been less than usual. Her chest hurt this morning, she fainted in the kitchen, her lips looked blue, hands are cold, and she said "I don't feel right." Pulse-ox read ninety-one.</div>
+        </div>
+
+        <!-- ===== Vitals ===== -->
+        <div class="section-divider">
+          <div class="title">Vitals</div>
+          <div class="right sage">5 / 5 captured</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Weight</div><div class="vc-context">vs. baseline 178.0 lb</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">184.6<span class="unit">lb</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">&#9650; 6.6 lb in 14 days &mdash; water gain pattern.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Pillows tonight</div><div class="vc-context">orthopnea proxy</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">3<span class="unit">tonight</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">Up from 1 last week &middot; orthopnea creep.</div>
+        </div>
+
+        <div class="vc tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Blood pressure</div><div class="vc-context">cuff &middot; just now</div></div>
+          <div class="vc-control"><div class="stepper-dual">
+            <div class="stepper-half">
+              <span class="half-label">Sys</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">102</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <div class="stepper-half">
+              <span class="half-label">Dia</span>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+              <div class="step-value">64</div>
+              <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+          </div></div>
+          <div class="vc-helper watch">Lower than her 130/80 usual.</div>
+        </div>
+
+        <div class="vc tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Heart rate</div><div class="vc-context">resting bpm</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">102<span class="unit">bpm</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">26 bpm above her usual band.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Oxygen &middot; SpO&#8322;</div><div class="vc-context">pulse-ox &middot; just now</div></div>
+          <div class="vc-control"><div class="stepper">
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <div class="step-value">91<span class="unit">%</span></div>
+            <button class="step-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </div></div>
+          <div class="vc-helper watch">Below her usual 95% &middot; 88% is the call-today floor.</div>
+        </div>
+
+        <div class="source-line">
+          <b>5 / 5 vitals captured</b> &middot; symptoms heard from voice are tucked behind the listener button below &mdash; tap to expand.
+        </div>
+      </div>
+
+      <div class="bottom-bar">
+        <button class="bb-btn" aria-label="Tap to record">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M19 11v1a7 7 0 0 1-14 0v-1"/>
+            <path d="M12 19v3"/>
+          </svg>
+        </button>
+        <button class="bb-btn heard" aria-label="Symptoms heard, tap to expand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/>
+            <path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="phone-label">All active<small>Vitals up front &middot; symptoms behind the ear</small></div>
+  </div>
+</div>
+
+
+<!-- ============================================================ -->
+<!-- ROW 3: the symptom modal — opened from the listener button   -->
+<!-- ============================================================ -->
+<div class="row-head">
+  <div class="eb">Row 3</div>
+  <h2>The symptom <em>modal.</em></h2>
+  <p>Tap the human icon (or the ear, when voice has already heard something) at the bottom-right of any vitals view; this sheet slides up over the page. Eight graded symptoms plus six red-flag yes / no checks &mdash; cards scroll inside the sheet. Empty (left) and worst-case voice fill (right).</p>
+</div>
+
+<div class="gallery">
+
+  <!-- ============ PHONE 5 — SYMPTOM MODAL: empty ============ -->
+  <div class="phone-wrap" style="--offset: 14px;">
+    <div class="phone phone--modal">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="modal-backdrop">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12</div>
+      </div>
+
+      <div class="modal-sheet">
+      <div class="modal-grip"></div>
+
+      <div class="modal-head">
+        <div>
+          <div class="page-eyebrow">Symptoms &middot; day 12</div>
+          <div class="modal-title">Today's <em>symptoms.</em></div>
+        </div>
+        <button class="modal-close" aria-label="Close symptoms">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-scroll">
+
+        <div class="section-divider">
+          <div class="title">Graded symptoms</div>
+          <div class="right">7 fields &middot; one tap each</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Breathing</div><div class="vc-context">dyspnea on exertion</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active">Normal</button>
+            <button class="seg-btn">Stairs</button>
+            <button class="seg-btn">Flat walk</button>
+            <button class="seg-btn">ADLs</button>
+          </div></div>
+          <div class="vc-helper">No shortness of breath today.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Cough</div><div class="vc-context">esp. nighttime</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active">No cough</button>
+            <button class="seg-btn">Daytime</button>
+            <button class="seg-btn">Nocturnal</button>
+          </div></div>
+          <div class="vc-helper">Sputum-color question appears only when cough is present.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Swelling</div><div class="vc-context">ankles &rarr; calves &rarr; abdomen</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active">None</button>
+            <button class="seg-btn">Mild</button>
+            <button class="seg-btn">Moderate</button>
+            <button class="seg-btn">Severe</button>
+          </div></div>
+          <div class="vc-helper">No swelling reported in 7 days.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Fatigue</div><div class="vc-context">today's overall energy</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active">Normal</button>
+            <button class="seg-btn">Mild</button>
+            <button class="seg-btn">Moderate</button>
+            <button class="seg-btn">Severe</button>
+          </div></div>
+          <div class="vc-helper">Energy at her usual baseline.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Mental clarity</div><div class="vc-context">cognition / fog</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active">Clear</button>
+            <button class="seg-btn">A little foggy</button>
+            <button class="seg-btn">Confused</button>
+          </div></div>
+          <div class="vc-helper">No new fog or confusion today.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Appetite</div><div class="vc-context">vs. her usual</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Decreased</button>
+            <button class="seg-btn active">Normal</button>
+            <button class="seg-btn">Increased</button>
+          </div></div>
+          <div class="vc-helper">Eating about the same as usual.</div>
+        </div>
+
+        <div class="vc muted">
+          <div class="vc-head"><div class="vc-label"><span class="dot calm"></span>Urine output</div><div class="vc-context">vs. her usual</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Decreased</button>
+            <button class="seg-btn active">Normal</button>
+            <button class="seg-btn">Increased</button>
+          </div></div>
+          <div class="vc-helper">Going to the bathroom about as much as usual.</div>
+        </div>
+
+        <div class="section-divider">
+          <div class="title">Red-flag check</div>
+          <div class="right">6 quick yes / no</div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>New chest pain or pressure today?</div>
+          <div class="vc-row">
+            <div class="vc-helper">Tap "Yes" only if it's new today.</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>Did she faint or nearly faint?</div>
+          <div class="vc-row">
+            <div class="vc-helper">Includes &ldquo;blacked out for a moment.&rdquo;</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>Lips or fingertips look bluish?</div>
+          <div class="vc-row">
+            <div class="vc-helper">Cyanosis &mdash; even briefly.</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>Did she wake up gasping for breath?</div>
+          <div class="vc-row">
+            <div class="vc-helper">PND &mdash; the 1&ndash;3 hour wake-up.</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>Filled up after only a few bites?</div>
+          <div class="vc-row">
+            <div class="vc-helper">Early satiety &mdash; new today.</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn muted">
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;vertical-align:middle;"></span>Hands or feet cold or clammy?</div>
+          <div class="vc-row">
+            <div class="vc-helper">Cool extremities at rest.</div>
+            <div class="yesno"><button class="yesno-btn">Yes</button><button class="yesno-btn active">No</button></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <div class="source-line">
+          <b>0 of 14 symptoms reported today</b> &middot; defaults shown &middot; scroll for red-flag check.
+        </div>
+      </div>
+      </div>
+    </div>
+    <div class="phone-label">Modal &middot; empty<small>Defaults shown &middot; opens over the vitals view</small></div>
+  </div>
+
+
+  <!-- ============ PHONE 6 — SYMPTOM MODAL: worst-case voice fill ============ -->
+  <div class="phone-wrap" style="--offset: -16px;">
+    <div class="phone phone--modal">
+      <div class="notch"></div>
+      <div class="status-bar"><span>9:41</span><span>● ● ●</span></div>
+
+      <div class="modal-backdrop">
+        <div class="back-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18L9 12l6-6"/></svg>
+          Home
+        </div>
+        <div class="page-eyebrow">Voice log &middot; day 12 &middot; 8:04 PM</div>
+      </div>
+
+      <div class="modal-sheet">
+      <div class="modal-grip"></div>
+
+      <div class="modal-head">
+        <div>
+          <div class="page-eyebrow">Symptoms &middot; 8:04 PM</div>
+          <div class="modal-title">Today's <em>symptoms.</em></div>
+        </div>
+        <button class="modal-close" aria-label="Close symptoms">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-scroll">
+
+        <div class="section-divider">
+          <div class="title">Graded symptoms</div>
+          <div class="right sage">8 / 8 captured</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Breathing</div><div class="vc-context">dyspnea on exertion</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Normal</button>
+            <button class="seg-btn">Stairs</button>
+            <button class="seg-btn">Flat walk</button>
+            <button class="seg-btn active warn">ADLs</button>
+          </div></div>
+          <div class="vc-helper watch">Short of breath getting dressed today.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Cough</div><div class="vc-context">esp. nighttime</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">No cough</button>
+            <button class="seg-btn">Daytime</button>
+            <button class="seg-btn active warn">Nocturnal</button>
+          </div></div>
+          <div class="vc-helper watch">Coughing at night &middot; sputum question revealed below.</div>
+        </div>
+
+        <div class="vc tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Sputum color</div><div class="vc-context">if coughing</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Clear</button>
+            <button class="seg-btn active warn">White</button>
+            <button class="seg-btn">Pink-frothy</button>
+          </div></div>
+          <div class="vc-helper watch">Pink-frothy is a 911-territory signal &mdash; tap if seen.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Swelling</div><div class="vc-context">ankles &rarr; calves &rarr; abdomen</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">None</button>
+            <button class="seg-btn">Mild</button>
+            <button class="seg-btn active warn">Moderate</button>
+            <button class="seg-btn">Severe</button>
+          </div></div>
+          <div class="vc-helper watch">Ankles and calves &middot; up from yesterday's mild.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Fatigue</div><div class="vc-context">today's overall energy</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Normal</button>
+            <button class="seg-btn">Mild</button>
+            <button class="seg-btn">Moderate</button>
+            <button class="seg-btn active warn">Severe</button>
+          </div></div>
+          <div class="vc-helper watch">Worn out all day.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Mental clarity</div><div class="vc-context">cognition / fog</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn">Clear</button>
+            <button class="seg-btn active warn">A little foggy</button>
+            <button class="seg-btn">Confused</button>
+          </div></div>
+          <div class="vc-helper watch">"I don't feel right" &mdash; mild fog reported.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Appetite</div><div class="vc-context">vs. her usual</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active warn">Decreased</button>
+            <button class="seg-btn">Normal</button>
+            <button class="seg-btn">Increased</button>
+          </div></div>
+          <div class="vc-helper watch">Barely ate today.</div>
+        </div>
+
+        <div class="vc heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-head"><div class="vc-label"><span class="dot watch"></span>Urine output</div><div class="vc-context">vs. her usual</div></div>
+          <div class="vc-control"><div class="segmented">
+            <button class="seg-btn active warn">Decreased</button>
+            <button class="seg-btn">Normal</button>
+            <button class="seg-btn">Increased</button>
+          </div></div>
+          <div class="vc-helper watch">Less than usual today.</div>
+        </div>
+
+        <div class="section-divider">
+          <div class="title">Red-flag check</div>
+          <div class="right sage">6 / 6 captured</div>
+        </div>
+
+        <div class="vc vc--yn alert">
+          <div class="corner-pip alert">Alert</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--alert-line);margin-right:6px;vertical-align:middle;"></span>New chest pain or pressure today?</div>
+          <div class="vc-row">
+            <div class="vc-helper alert">Call the cardiologist now.</div>
+            <div class="yesno"><button class="yesno-btn active alert">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn alert">
+          <div class="corner-pip alert">Alert</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--alert-line);margin-right:6px;vertical-align:middle;"></span>Did she faint or nearly faint?</div>
+          <div class="vc-row">
+            <div class="vc-helper alert">Call the cardiologist now.</div>
+            <div class="yesno"><button class="yesno-btn active alert">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn alert">
+          <div class="corner-pip alert">Alert</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--alert-line);margin-right:6px;vertical-align:middle;"></span>Lips or fingertips look bluish?</div>
+          <div class="vc-row">
+            <div class="vc-helper alert">Call the cardiologist now.</div>
+            <div class="yesno"><button class="yesno-btn active alert">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn tapped">
+          <div class="corner-pip tapped">Tapped</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn-line);margin-right:6px;vertical-align:middle;"></span>Did she wake up gasping for breath?</div>
+          <div class="vc-row">
+            <div class="vc-helper watch">Call the cardiologist today.</div>
+            <div class="yesno"><button class="yesno-btn active watch">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn-line);margin-right:6px;vertical-align:middle;"></span>Filled up after only a few bites?</div>
+          <div class="vc-row">
+            <div class="vc-helper watch">Early satiety &middot; tracked.</div>
+            <div class="yesno"><button class="yesno-btn active watch">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+        <div class="vc vc--yn heard">
+          <div class="corner-pip heard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>Heard</div>
+          <div class="vc-question"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn-line);margin-right:6px;vertical-align:middle;"></span>Hands or feet cold or clammy?</div>
+          <div class="vc-row">
+            <div class="vc-helper watch">Cool extremities at rest.</div>
+            <div class="yesno"><button class="yesno-btn active watch">Yes</button><button class="yesno-btn">No</button></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <div class="source-line">
+          <b>14 / 14 symptoms captured</b> &middot; 12 from voice &middot; 2 tapped &middot; 3 alert-tier flags require a call now.
+        </div>
+      </div>
+      </div>
+    </div>
+    <div class="phone-label">Modal &middot; all active<small>Worst-case voice fill &middot; opens over the vitals view</small></div>
+  </div>
+</div>
+
+<div class="footer">
+  <strong>HeartNote &middot; /log redesign (mockup)</strong><br>
+  Five vitals up front; fourteen symptoms tucked behind the listener button at the bottom-right of every screen. Voice fills both surfaces; tapping any value overrides it. The &ldquo;Heard&rdquo; pip shows which values came from speech versus the keypad, so a misheard &ldquo;two-eighty-two&rdquo; is easy to catch and correct.
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--sage-mist);border:1px solid var(--sage);"></span> heard from voice</span>
+    <span><span class="swatch" style="background:var(--warn-bg);border:1px solid var(--warn-line);"></span> caregiver tapped</span>
+    <span><span class="swatch" style="background:var(--alert-bg);border:1px solid var(--alert-line);"></span> tier-1 alert</span>
+    <span><span class="swatch" style="background:var(--cream-card);border:1px solid var(--sage-mist);"></span> default / yesterday</span>
+  </div>
+
+  <div class="economy">
+    <h3>Click economy &mdash; one tap per value</h3>
+    <ul>
+      <li><b>Numeric stepper</b><span>tap the value to open a numeric keypad &middot; 1 tap to commit. &plusmn;0.2 lb buttons for fine-tune.</span></li>
+      <li><b>Severity scale</b><span>1 tap on the level (None &middot; Mild &middot; Moderate &middot; Severe) &mdash; no slider, no draggable bar.</span></li>
+      <li><b>Yes / No</b><span>1 tap to flip. Default is the safe answer (&ldquo;No&rdquo; for red-flags, &ldquo;Normal&rdquo; for severity).</span></li>
+      <li><b>Voice</b><span>0 taps. One sentence covers most days. Voice values get a sage &ldquo;Heard&rdquo; pip; tapping overrides and marks the card &ldquo;Tapped.&rdquo;</span></li>
+    </ul>
+  </div>
+
+  <p style="margin-top:22px;font-size:12px;color:#6B5E52;line-height:1.55;max-width:640px;margin-left:auto;margin-right:auto;">
+    <strong style="color:#3D332A;">Behavior notes (not visible in this static mockup):</strong>
+    on first open the vitals are muted with yesterday's values &mdash; one spoken sentence or one tap commits today's reading and brightens the card. Symptoms (Breathing, Swelling, Cough, Sputum, Appetite, Fatigue, Mental clarity, Urine) and the red-flag check (chest pain, fainting, bluish lips, gasping wake-up, plus the &ldquo;other quick checks&rdquo; couplet) live in the symptom modal &mdash; tap the ear button at the bottom-right to expand. When voice picks up a symptom while the modal is closed, the ear button shifts from a faint hairline outline to a solid sage fill so the caregiver can see something landed. Tier-1 alert cards (chest pain, fainted, blue lips) flipping to Yes trigger a separate call-the-cardiologist banner above the page in the existing alert-chip system. Tapping any card during recording stops voice from overwriting that field.
+  </p>
+</div>
+
+</body>
+</html>
