@@ -109,7 +109,7 @@ test.describe('/trends/weight', () => {
     await expect(page.getByRole('link', { name: /Back to trends/i })).toBeVisible();
   });
 
-  test('+ button opens sheet, increment + save commits a new reading', async ({ page }) => {
+  test('+ button opens sheet, type + save commits a new reading', async ({ page }) => {
     await seedOneWeight(patientId, 182.0);
     const before = await readWeightCount(patientId);
 
@@ -123,15 +123,43 @@ test.describe('/trends/weight', () => {
     const dialog = page.getByRole('dialog', { name: 'Add weight reading' });
     await expect(dialog).toBeVisible({ timeout: 10_000 });
 
-    // Stepper seeds at 182.0; one increment lands on 182.2.
-    await dialog.getByRole('button', { name: 'Increment weight' }).click();
-    await expect(dialog.getByText('182.2 lb')).toBeVisible();
+    // Type a value directly into the editable chip (covers the new
+    // "edit any digit" behavior). The chip is the only inputmode=decimal
+    // input in the sheet.
+    const chip = dialog.locator('input[inputmode="decimal"]');
+    await chip.fill('184.6');
 
     // Save commits.
     await dialog.getByRole('button', { name: 'Save' }).click();
 
-    // DB row count went up by exactly 1 — that's the source of truth.
-    await expect.poll(() => readWeightCount(patientId), { timeout: 15_000 }).toBe(before + 1);
+    // DB row count went up by exactly 1, with the typed value present.
+    await expect
+      .poll(() => readWeightCount(patientId), { timeout: 15_000 })
+      .toBe(before + 1);
+    const { data } = await admin()
+      .from('daily_log_readings')
+      .select('value')
+      .eq('patient_id', patientId)
+      .eq('field', 'weight_lb');
+    const values = (data ?? []).map((r) => Number(r.value));
+    expect(values.some((v) => Math.abs(v - 184.6) < 0.05)).toBe(true);
+  });
+
+  test('increment button advances the value by one tap', async ({ page }) => {
+    await seedOneWeight(patientId, 200.0);
+
+    await page.goto('/trends/weight', { waitUntil: 'networkidle' });
+    await page.getByRole('button', { name: 'Add weight' }).click({ force: true });
+    const dialog = page.getByRole('dialog', { name: 'Add weight reading' });
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+    const chip = dialog.locator('input[inputmode="decimal"]');
+    await chip.fill('200.0');
+
+    await dialog.getByRole('button', { name: 'Increment weight' }).click();
+
+    // The chip's input value updates after the +. STEP is 0.1.
+    await expect(chip).toHaveValue('200.1');
   });
 
   test('sheet Cancel closes without writing', async ({ page }) => {

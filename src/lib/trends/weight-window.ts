@@ -55,37 +55,6 @@ export function windowSliceFor(
     .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
 }
 
-export function morningFastedFor(
-  slice: WeightReading[],
-  tz: string,
-): WeightReading | null {
-  if (slice.length === 0) return null;
-  const byDay = new Map<string, WeightReading[]>();
-  for (const r of slice) {
-    const day = isoDateInTz(new Date(r.recorded_at), tz);
-    if (!byDay.has(day)) byDay.set(day, []);
-    byDay.get(day)!.push(r);
-  }
-  const days = [...byDay.keys()].sort().reverse();
-  for (const day of days) {
-    const before = byDay
-      .get(day)!
-      .filter((r) => {
-        const hour = Number(
-          new Intl.DateTimeFormat('en-US', {
-            timeZone: tz,
-            hour: 'numeric',
-            hour12: false,
-          }).format(new Date(r.recorded_at)),
-        );
-        return hour < 12;
-      })
-      .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
-    if (before.length > 0) return before[0];
-  }
-  return null;
-}
-
 export function intraDayRangeFor(
   slice: WeightReading[],
   today: string,

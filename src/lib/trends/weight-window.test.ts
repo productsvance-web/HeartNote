@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 
 import {
   windowSliceFor,
-  morningFastedFor,
   intraDayRangeFor,
   type WeightReading,
 } from './weight-window.ts';
@@ -75,30 +74,6 @@ describe('windowSliceFor', () => {
 
   it('returns empty array on empty input', () => {
     assert.deepEqual(windowSliceFor('W', '2026-05-09', []), []);
-  });
-});
-
-describe('morningFastedFor', () => {
-  it('returns the earliest reading before noon on the most-recent day with one', () => {
-    const slice = [
-      r('2026-05-08T07:30:00-07:00', 180.5),
-      r('2026-05-09T07:02:00-07:00', 181.8),
-      r('2026-05-09T11:00:00-07:00', 182.0),
-      r('2026-05-09T15:14:00-07:00', 182.6),
-    ];
-    assert.equal(morningFastedFor(slice, TZ)?.value, 181.8);
-  });
-
-  it('returns null when no reading on most-recent day is before noon', () => {
-    const slice = [
-      r('2026-05-09T13:00:00-07:00', 182.0),
-      r('2026-05-09T15:00:00-07:00', 182.6),
-    ];
-    assert.equal(morningFastedFor(slice, TZ), null);
-  });
-
-  it('returns null on empty slice', () => {
-    assert.equal(morningFastedFor([], TZ), null);
   });
 });
 

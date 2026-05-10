@@ -14,7 +14,6 @@ import { EkgChart } from './EkgChart';
 import { AddWeightSheet, type AddWeightInput } from './AddWeightSheet';
 import {
   windowSliceFor,
-  morningFastedFor,
   intraDayRangeFor,
   type WeightReading,
   type WindowPeriod,
@@ -26,6 +25,7 @@ interface Props {
   patientFirstName: string;
   timezone: string;
   today: string;
+  baselineLb: number | null;
   allReadings: WeightReading[];
 }
 
@@ -35,6 +35,7 @@ export function WeightTrendView({
   patientFirstName,
   timezone,
   today,
+  baselineLb,
   allReadings,
 }: Props) {
   const router = useRouter();
@@ -55,7 +56,6 @@ export function WeightTrendView({
   const hero = slice.length > 0 ? slice[slice.length - 1] : latestEver;
 
   const intraDay = intraDayRangeFor(slice, today, timezone);
-  const morningFasted = morningFastedFor(slice, timezone);
 
   const yScale = useMemo(() => yScaleFor(slice, hero), [slice, hero]);
   const yTicks = useMemo(
@@ -254,54 +254,6 @@ export function WeightTrendView({
           )}
         </div>
 
-        {/* Lead stat — morning fasted */}
-        {morningFasted && (
-          <div
-            className="mt-5 rounded-2xl px-4 pt-3.5 pb-4"
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <p
-              className="text-[9.5px] font-semibold uppercase mb-2.5"
-              style={{ letterSpacing: '1.3px', color: 'var(--sage-deep)' }}
-            >
-              Morning fasted · trend signal
-            </p>
-            <div className="flex items-end justify-between gap-3.5">
-              <div
-                className="font-display text-foreground"
-                style={{
-                  fontSize: 34,
-                  lineHeight: 1,
-                  letterSpacing: '-1px',
-                  fontWeight: 400,
-                }}
-              >
-                {morningFasted.value.toFixed(1)}
-                <span
-                  className="text-muted-foreground"
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    letterSpacing: '0.2px',
-                    marginLeft: 4,
-                  }}
-                >
-                  lb
-                </span>
-              </div>
-              <div
-                className="text-right text-[11px] text-muted-foreground"
-                style={{ lineHeight: 1.5, maxWidth: 140 }}
-              >
-                {fastedMetaFor(morningFasted, today, timezone)}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Stats trio */}
         {slice.length > 0 && (
           <div
@@ -396,7 +348,7 @@ export function WeightTrendView({
         <AddWeightSheet
           onClose={() => setSheetOpen(false)}
           seedValue={latestEver?.value ?? null}
-          today={today}
+          baselineLb={baselineLb}
           timezone={timezone}
           onSave={onSave}
         />
@@ -508,32 +460,6 @@ function timeLabelFor(r: WeightReading, tz: string): string {
   }).format(d);
 }
 
-function dateInTz(iso: string, tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(iso));
-}
-
-// Morning-fasted card meta. When the latest fasted reading isn't from
-// today, append the weekday so the caregiver doesn't read the time as
-// "this morning."
-function fastedMetaFor(
-  r: WeightReading,
-  today: string,
-  tz: string,
-): string {
-  const t = timeLabelFor(r, tz);
-  const day = dateInTz(r.recorded_at, tz);
-  if (day === today) return `${t} today`;
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(new Date(r.recorded_at));
-  return `${t} · ${weekday}`;
-}
 
 function tripleStats(
   slice: WeightReading[],

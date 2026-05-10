@@ -10,7 +10,9 @@ import { PhoneShell } from '@/components/heartnote/PhoneShell';
 import { WeightTrendView } from '@/components/heartnote/weight-trend/WeightTrendView';
 import type { WeightReading } from '@/lib/trends/weight-window';
 
-const FETCH_DAYS = 400; // ~13 months — covers the Y window comfortably.
+// Rolling 12 months. 366 covers leap years; the Y window helper trims
+// further to the patient-tz calendar.
+const FETCH_DAYS = 366;
 
 export default async function WeightTrendPage() {
   const supabase = await createClient();
@@ -28,7 +30,7 @@ export default async function WeightTrendPage() {
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('id, display_name')
+    .select('id, display_name, dry_weight_lb')
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -55,12 +57,16 @@ export default async function WeightTrendPage() {
 
   const firstName = firstWord(patient.display_name) ?? 'Mom';
 
+  const baselineLb =
+    patient.dry_weight_lb !== null ? Number(patient.dry_weight_lb) : null;
+
   return (
     <PhoneShell hideNav>
       <WeightTrendView
         patientFirstName={firstName}
         timezone={profile.timezone}
         today={today}
+        baselineLb={baselineLb}
         allReadings={allReadings}
       />
     </PhoneShell>

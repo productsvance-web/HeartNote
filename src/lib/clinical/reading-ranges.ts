@@ -1,6 +1,6 @@
 // Per-field validation ranges for caregiver-reported vitals. Mirrors
-// the DB CHECK constraints in
-// supabase/migrations/20260501041617_voice_log_multi_readings.sql.
+// the DB CHECK constraints set by the most recent migration that
+// touches them (currently 20260510000000_weight_max_1000.sql).
 //
 // Single source for both server-side zod refines and client-side picker
 // validation — re-declaring these constants in two TS files invited drift
@@ -10,7 +10,7 @@
 export type ReadingField = 'weight_lb' | 'resting_hr' | 'spo2' | 'systolic_bp' | 'diastolic_bp';
 
 export const READING_RANGE: Record<ReadingField, [number, number]> = {
-  weight_lb: [50, 700],
+  weight_lb: [50, 1000],
   resting_hr: [30, 220],
   spo2: [50, 100],
   systolic_bp: [60, 250],
