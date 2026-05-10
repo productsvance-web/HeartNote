@@ -329,7 +329,12 @@ export function SymptomsModal({
                 { value: 1, label: 'Mild' },
                 { value: 2, label: 'Moderate', variantOverride: 'warn' },
                 { value: 3, label: 'Severe', variantOverride: 'warn' },
-                { value: 4, label: 'Anasarca', variantOverride: 'alert' },
+                // cited: research/chf-source-of-truth.md §5 — decompensation
+                // progression "ankles → calves → abdomen." Plain English for
+                // anasarca: "all over the body, including the belly." No
+                // tier-1 swelling rule fires in evaluate.ts; T2.6 is the
+                // strongest swelling-only rule (tier-2). Variant 'warn'.
+                { value: 4, label: 'Belly+body', variantOverride: 'warn' },
               ]}
               value={symptoms.swellingSeverity}
               onChange={(v) => onChange({ swellingSeverity: v as number })}
@@ -374,7 +379,12 @@ export function SymptomsModal({
                 { value: 1, label: 'Mild' },
                 { value: 2, label: 'Moderate' },
                 { value: 3, label: 'Severe', variantOverride: 'warn' },
-                { value: 4, label: "Can't move", variantOverride: 'alert' },
+                // cited: research/chf-source-of-truth.md §2 — fatigue is not
+                // in Tier 1 (no engine rule fires tier-1 on fatigue alone).
+                // T2.14 fires on fatigue + cold/clammy compound; T2.7 fires
+                // on activity_step_change='severe_change' (set via voice,
+                // not via the fatigue tap). Variant 'warn', not 'alert'.
+                { value: 4, label: "Can't move", variantOverride: 'warn' },
               ]}
               value={symptoms.fatigueSeverity}
               onChange={(v) => onChange({ fatigueSeverity: v as number })}
@@ -456,7 +466,10 @@ export function SymptomsModal({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
             <SymptomYesNoCard
-              question="Chest pain or pressure?"
+              // cited: research/chf-source-of-truth.md §2 Tier 1 — NEW chest
+              // pain. Chronic angina is not tier-1; the "new today" qualifier
+              // keeps the caregiver from over-flagging known stable pain.
+              question="New chest pain or pressure today?"
               state={touchState.chestPain ?? 'muted'}
               tone={symptoms.chestPain ? 'urgent' : 'calm'}
               value={symptoms.chestPain}
@@ -484,7 +497,10 @@ export function SymptomsModal({
             />
 
             <SymptomYesNoCard
-              question="Fainted?"
+              // cited: research/chf-source-of-truth.md §2 Tier 1 — syncope.
+              // Mockup line 1574: "Did she faint or nearly faint?" Clinical
+              // convention includes near-syncope ("blacked out for a moment").
+              question="Did she faint or nearly faint?"
               state={touchState.syncope ?? 'muted'}
               tone={symptoms.syncope ? 'urgent' : 'calm'}
               value={symptoms.syncope}
@@ -514,7 +530,10 @@ export function SymptomsModal({
             />
 
             <SymptomYesNoCard
-              question="Woke up gasping for air (PND)?"
+              // cited: research/chf-source-of-truth.md §2 Tier 2 — PND. Plain
+              // English: don't trail-load the medical term when the question
+              // already names what the caregiver observed. Mockup line 1590.
+              question="Did she wake up gasping for breath?"
               state={touchState.pnd ?? 'muted'}
               tone={symptoms.pnd ? 'watch' : 'calm'}
               value={symptoms.pnd}
