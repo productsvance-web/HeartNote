@@ -339,35 +339,21 @@ export function SymptomsModal({
               value={symptoms.swellingSeverity}
               onChange={(v) => onChange({ swellingSeverity: v as number })}
               fieldKey="swelling_severity"
+              followUp={
+                symptoms.swellingSeverity !== null &&
+                symptoms.swellingSeverity > 0 ? (
+                  <SwellingFollowUps
+                    region={symptoms.swellingRegion}
+                    resolvesOvernight={symptoms.swellingResolvesOvernight}
+                    onChangeRegion={(v) => onChange({ swellingRegion: v })}
+                    onChangeResolves={(v) =>
+                      onChange({ swellingResolvesOvernight: v })
+                    }
+                  />
+                ) : null
+              }
             />
 
-            {symptoms.swellingSeverity !== null && symptoms.swellingSeverity > 0 && (
-              <>
-                <SymptomGradedCard
-                  label="Where"
-                  state={touchState.swellingRegion ?? 'muted'}
-                  tone="calm"
-                  helper="Where the swelling is most visible."
-                  options={[
-                    { value: 'ankles', label: 'Ankles' },
-                    { value: 'calves', label: 'Calves' },
-                    { value: 'thighs', label: 'Thighs' },
-                    { value: 'abdomen', label: 'Abdomen', variantOverride: 'warn' },
-                  ]}
-                  value={symptoms.swellingRegion}
-                  onChange={(v) =>
-                    onChange({ swellingRegion: v as SymptomState['swellingRegion'] })
-                  }
-                  fieldKey="swelling_region"
-                />
-                <YesNoRow
-                  label="Resolves overnight?"
-                  value={symptoms.swellingResolvesOvernight}
-                  onChange={(v) => onChange({ swellingResolvesOvernight: v })}
-                  fieldKey="swelling_resolves_overnight"
-                />
-              </>
-            )}
 
             <SymptomGradedCard
               label="Energy"
@@ -741,51 +727,83 @@ function ChestPainCharacterInput({
   );
 }
 
-// Compact yes/no row used for swelling resolves-overnight follow-up.
-function YesNoRow({
-  label,
-  value,
-  onChange,
-  fieldKey,
+// Inline follow-ups for the Swelling card. Renders the body-region picker
+// and the resolves-overnight question inside the parent card's `followUp`
+// slot — same chassis pattern as chest pain (character text) and dizziness
+// (postural enum). Eliminates the prior three-card splay (Swelling / Where
+// / Resolves overnight as siblings) that made it hard to tell which symptom
+// the secondary cards belonged to.
+function SwellingFollowUps({
+  region,
+  resolvesOvernight,
+  onChangeRegion,
+  onChangeResolves,
 }: {
-  label: string;
-  value: boolean | null;
-  onChange: (v: boolean) => void;
-  fieldKey: string;
+  region: SymptomState['swellingRegion'];
+  resolvesOvernight: boolean | null;
+  onChangeRegion: (v: SymptomState['swellingRegion']) => void;
+  onChangeResolves: (v: boolean) => void;
 }) {
   return (
-    <section
-      data-field={fieldKey}
-      style={{
-        background: 'var(--cream-card)',
-        border: '1px solid var(--sage-mist)',
-        borderRadius: 18,
-        padding: '10px 14px',
-      }}
-    >
-      <p
-        className="font-display"
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <FollowUpField label="Where">
+        <SegmentedControl
+          options={[
+            { value: 'ankles', label: 'Ankles' },
+            { value: 'calves', label: 'Calves' },
+            { value: 'thighs', label: 'Thighs' },
+            { value: 'abdomen', label: 'Abdomen', variantOverride: 'warn' },
+          ]}
+          value={region}
+          onChange={(v) => onChangeRegion(v as SymptomState['swellingRegion'])}
+          ariaLabel="Swelling location"
+        />
+      </FollowUpField>
+      <FollowUpField label="Was she back to normal by morning?">
+        <SegmentedControl
+          options={[
+            // cited: research/chf-source-of-truth.md §2 Tier 2 (T2.6) vs §2
+            // Tier 3 (T3.3). "No" (still swollen in the morning) is the more
+            // urgent same-day signal; warn-tag the more-urgent answer to
+            // match the dizziness postural pattern.
+            { value: 'no', label: 'No', variantOverride: 'warn' },
+            { value: 'yes', label: 'Yes' },
+          ]}
+          value={
+            resolvesOvernight === null ? null : resolvesOvernight ? 'yes' : 'no'
+          }
+          onChange={(v) => onChangeResolves(v === 'yes')}
+          ariaLabel="Was she back to normal by morning?"
+        />
+      </FollowUpField>
+    </div>
+  );
+}
+
+// Tiny labeled wrapper for follow-up fields. Mirrors the
+// ChestPainCharacterInput label register (10.5px ink-faint label on top,
+// control below) so all follow-ups in the modal read with the same
+// visual hierarchy.
+function FollowUpField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col" style={{ gap: 6 }}>
+      <span
         style={{
-          fontSize: 13.5,
-          fontWeight: 500,
-          color: 'var(--foreground)',
-          letterSpacing: '-0.1px',
-          lineHeight: 1.3,
+          fontSize: 10.5,
+          color: 'var(--ink-faint)',
+          letterSpacing: '0.2px',
+          fontFamily: 'var(--font-sans)',
         }}
       >
         {label}
-      </p>
-      <div style={{ marginTop: 8 }}>
-        <SegmentedControl
-          options={[
-            { value: 'no', label: 'No' },
-            { value: 'yes', label: 'Yes' },
-          ]}
-          value={value === null ? null : value ? 'yes' : 'no'}
-          onChange={(v) => onChange(v === 'yes')}
-          ariaLabel={label}
-        />
-      </div>
-    </section>
+      </span>
+      {children}
+    </label>
   );
 }
