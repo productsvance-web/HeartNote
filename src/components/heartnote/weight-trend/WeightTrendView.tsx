@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, Plus } from 'lucide-react';
 import { EkgChart } from './EkgChart';
 import { AddWeightSheet, type AddWeightInput } from './AddWeightSheet';
 import { InfoMenu } from './InfoMenu';
@@ -168,18 +168,6 @@ export function WeightTrendView({
   );
 
   const hasAnyReadings = allReadings.length > 0;
-
-  // Chevron stepping. Each tap moves endMs by one full window-width.
-  // Clamped to [backwardBound, forwardBound] so the user can't scrub
-  // past the oldest reading (back) or past today (forward).
-  const canBack = period !== 'Y' && hasAnyReadings && endMs > backwardBound;
-  const canForward = period !== 'Y' && hasAnyReadings && endMs < forwardBound;
-  const stepEnd = (dir: -1 | 1) => {
-    setEndMs((curr) => {
-      const span = windowSpanMs(period);
-      return clamp(curr + dir * span, backwardBound, forwardBound);
-    });
-  };
 
   // Drag-to-scrub (Apple Health style). pointerdown on the chart starts
   // a drag; pointermove translates endMs by (-dx / chartWidth) × span.
@@ -358,51 +346,6 @@ export function WeightTrendView({
             ))}
           </div>
 
-          {/* Chevron stepper row. Drag is the primary affordance; chevrons
-              are the discoverable / accessible alternative. */}
-          {period !== 'Y' && (
-            <div className="flex items-center justify-between mt-1 mb-2 px-1">
-              <button
-                type="button"
-                aria-label="Older window"
-                onClick={() => stepEnd(-1)}
-                disabled={!canBack}
-                className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
-                style={{
-                  width: 28,
-                  height: 28,
-                  background: 'transparent',
-                  color: 'var(--foreground)',
-                  border: 'none',
-                }}
-              >
-                <ChevronLeft size={16} strokeWidth={2} />
-              </button>
-              <span
-                className="text-[11px] text-muted-foreground tabular-nums"
-                style={{ letterSpacing: '0.2px' }}
-              >
-                {hintFor(period)}
-              </span>
-              <button
-                type="button"
-                aria-label="Newer window"
-                onClick={() => stepEnd(1)}
-                disabled={!canForward}
-                className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
-                style={{
-                  width: 28,
-                  height: 28,
-                  background: 'transparent',
-                  color: 'var(--foreground)',
-                  border: 'none',
-                }}
-              >
-                <ChevronRight size={16} strokeWidth={2} />
-              </button>
-            </div>
-          )}
-
           {/* Chart container — the drag handler lives here. The SVG inside
               uses an aspect-ratio box so it scales uniformly and never
               stretches on wide viewports. */}
@@ -431,13 +374,20 @@ export function WeightTrendView({
               yTicks={yScale.ticks}
             />
           </div>
-          <div className="flex justify-between mt-1.5 px-1">
+          {/* X axis labels sit flush under the chart so the eye can
+              connect each label to its vertical gridline. Tight margin,
+              right-padding matches the chart's PAD_R reservation for
+              y-axis labels (32px on a 280-unit canvas → ~11.4% of width). */}
+          <div
+            className="flex justify-between"
+            style={{ marginTop: -2, paddingLeft: 2, paddingRight: '11.4%' }}
+          >
             {xLabels.map((l, i) => (
               <span
                 key={i}
                 className="text-muted-foreground"
                 style={{
-                  fontSize: 8.5,
+                  fontSize: 9,
                   letterSpacing: '0.2px',
                   fontWeight: 500,
                 }}
@@ -732,13 +682,6 @@ function dayTimeLabel(ms: number, tz: string): string {
   if (dayKey === todayKey) return `Today, ${time}`;
   if (dayKey === yesterdayKey) return `Yesterday, ${time}`;
   return `${shortDateLabel(ms, tz)}, ${time}`;
-}
-
-// ─── Chevron-row hint ────────────────────────────────────────────────────────
-
-function hintFor(period: WindowPeriod): string {
-  if (period === 'D') return 'drag or use ◀ ▶';
-  return 'drag or use ◀ ▶';
 }
 
 // ─── Stats trio ──────────────────────────────────────────────────────────────
