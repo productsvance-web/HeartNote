@@ -52,12 +52,36 @@ function windowSpanMs(period: WindowPeriod): number {
   }
 }
 
-// Default window's right edge: tomorrow midnight in patient tz, so the
-// D-mode window naturally contains today midnight → today's end.
-function defaultEndMs(today: string, tz: string): number {
-  const tomorrow = isoOffset(today, 1);
-  const iso = isoFromWallClock(`${tomorrow}T00:00`, tz);
+// End-of-day midnight in patient tz, given a YYYY-MM-DD calendar date.
+function endOfDayMs(dayIso: string, tz: string): number {
+  const next = isoOffset(dayIso, 1);
+  const iso = isoFromWallClock(`${next}T00:00`, tz);
   return iso ? Date.parse(iso) : Date.now();
+}
+
+function isoDateOf(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+}
+
+// Default end-of-window: end of the day containing the latest reading,
+// or end of today if no data yet. So D opens on the day the user last
+// weighed in — not on a blank "today" if they haven't logged today.
+function defaultEndFor(
+  latestMs: number | null,
+  today: string,
+  tz: string,
+): number {
+  if (latestMs === null) return endOfDayMs(today, tz);
+  return endOfDayMs(isoDateOf(latestMs, tz), tz);
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
 }
 
 export function WeightTrendView({
@@ -68,10 +92,46 @@ export function WeightTrendView({
   allReadings,
 }: Props) {
   const router = useRouter();
+
+  // Anchor + bounds derived from the data, not from "today".
+  const latestMs = useMemo(
+    () =>
+      allReadings.length > 0
+        ? Date.parse(allReadings[allReadings.length - 1].recorded_at)
+        : null,
+    [allReadings],
+  );
+  const oldestMs = useMemo(
+    () =>
+      allReadings.length > 0
+        ? Date.parse(allReadings[0].recorded_at)
+        : null,
+    [allReadings],
+  );
+
+  // Default endMs = end of the latest reading's day. If there's no data,
+  // end of today.
   const defaultEnd = useMemo(
-    () => defaultEndMs(today, timezone),
+    () => defaultEndFor(latestMs, today, timezone),
+    [latestMs, today, timezone],
+  );
+
+  // Forward bound: user can scrub forward to today (real-time), even if
+  // no data exists in those days. Backward bound: user cannot scrub past
+  // the day the oldest reading was logged. With no data, both bounds
+  // collapse to end-of-today and scrub is effectively disabled.
+  const forwardBound = useMemo(
+    () => endOfDayMs(today, timezone),
     [today, timezone],
   );
+  const backwardBound = useMemo(
+    () =>
+      oldestMs !== null
+        ? endOfDayMs(isoDateOf(oldestMs, timezone), timezone)
+        : forwardBound,
+    [oldestMs, timezone, forwardBound],
+  );
+
   const [period, setPeriodRaw] = useState<WindowPeriod>('D');
   const [endMs, setEndMs] = useState(defaultEnd);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -83,7 +143,6 @@ export function WeightTrendView({
   };
 
   const startMs = endMs - windowSpanMs(period);
-  const isAtDefault = Math.abs(endMs - defaultEnd) < 60_000;
 
   const slice = useMemo(() => {
     return allReadings.filter((r) => {
@@ -104,28 +163,21 @@ export function WeightTrendView({
   );
 
   const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, isAtDefault, timezone),
-    [period, startMs, endMs, isAtDefault, timezone],
+    () => subheadFor(period, startMs, endMs, timezone),
+    [period, startMs, endMs, timezone],
   );
 
   const hasAnyReadings = allReadings.length > 0;
-  const oldestMs = useMemo(
-    () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[0].recorded_at)
-        : Number.POSITIVE_INFINITY,
-    [allReadings],
-  );
 
-  // Stepping bounds.
-  const canBack = period !== 'Y' && (!hasAnyReadings || startMs > oldestMs);
-  const canForward = period !== 'Y' && endMs < defaultEnd;
+  // Chevron stepping. Each tap moves endMs by one full window-width.
+  // Clamped to [backwardBound, forwardBound] so the user can't scrub
+  // past the oldest reading (back) or past today (forward).
+  const canBack = period !== 'Y' && hasAnyReadings && endMs > backwardBound;
+  const canForward = period !== 'Y' && hasAnyReadings && endMs < forwardBound;
   const stepEnd = (dir: -1 | 1) => {
     setEndMs((curr) => {
       const span = windowSpanMs(period);
-      let next = curr + dir * span;
-      if (next > defaultEnd) next = defaultEnd;
-      return next;
+      return clamp(curr + dir * span, backwardBound, forwardBound);
     });
   };
 
@@ -155,10 +207,27 @@ export function WeightTrendView({
     if (!dragRef.current) return;
     const { startX, startEnd, w } = dragRef.current;
     const dx = e.clientX - startX;
-    const dt = -(dx / w) * windowSpanMs(period);
-    let next = startEnd + dt;
-    if (next > defaultEnd) next = defaultEnd;
-    setEndMs(next);
+    const span = windowSpanMs(period);
+
+    if (period === 'D') {
+      // Continuous drag in hour-units. Clamp to [backwardBound, forwardBound].
+      const dt = -(dx / w) * span;
+      setEndMs(clamp(startEnd + dt, backwardBound, forwardBound));
+      return;
+    }
+
+    // W / M / 6M: swipe-paging. Each chart-width drag = one full
+    // window-step (preserves week / month boundaries). Drag past 50%
+    // threshold = step; smaller drags hold position. The user's rule:
+    // "weeks scrub in entire weeks."
+    const threshold = w * 0.5;
+    if (Math.abs(dx) < threshold) {
+      setEndMs(clamp(startEnd, backwardBound, forwardBound));
+      return;
+    }
+    const steps = -Math.trunc(dx / threshold);
+    const nextRaw = startEnd + steps * span;
+    setEndMs(clamp(nextRaw, backwardBound, forwardBound));
   };
 
   const onChartPointerEnd = () => {
@@ -201,36 +270,32 @@ export function WeightTrendView({
       </header>
 
       <div className="px-5 pb-32">
-        {/* Hero. Real reading at full size; empty placeholder is muted
-            and quieter so it doesn't dominate. */}
+        {/* Hero. Same size whether data is present or muted-empty —
+            keeps the layout still and stops the page from re-flowing
+            as you scrub between empty and populated windows. */}
         <div className="mt-3 flex items-end gap-2">
           <span
             className="font-display"
             style={{
-              fontSize: hero ? 78 : 36,
+              fontSize: 36,
               lineHeight: 0.95,
-              letterSpacing: hero ? '-3px' : '-1px',
+              letterSpacing: '-1px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
             {Math.floor(hero?.value ?? 0)}
-            <span
-              style={{
-                fontSize: hero ? 48 : 22,
-                letterSpacing: hero ? '-2px' : '-0.5px',
-              }}
-            >
+            <span style={{ fontSize: 22, letterSpacing: '-0.5px' }}>
               .{decimalPart(hero?.value ?? 0)}
             </span>
           </span>
           <span
             className="text-muted-foreground"
             style={{
-              fontSize: hero ? 14 : 12,
+              fontSize: 12,
               fontWeight: 500,
               letterSpacing: '0.3px',
-              paddingBottom: hero ? 12 : 6,
+              paddingBottom: 6,
             }}
           >
             lb
@@ -631,16 +696,8 @@ function subheadFor(
   period: WindowPeriod,
   startMs: number,
   endMs: number,
-  isAtDefault: boolean,
   tz: string,
 ): string {
-  if (isAtDefault) {
-    if (period === 'D') return 'Today';
-    if (period === 'W') return 'This week';
-    if (period === 'M') return 'This month';
-    if (period === '6M') return 'Last 6 months';
-    return 'Last 12 months';
-  }
   if (period === 'D') {
     return `${dayTimeLabel(startMs, tz)} – ${dayTimeLabel(endMs, tz)}`;
   }
