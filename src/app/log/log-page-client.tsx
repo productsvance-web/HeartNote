@@ -952,7 +952,7 @@ export function LogPageClient({ context }: Props) {
             max={220}
             step={1}
             integer
-            inputMin={35}
+            inputMin={30}
             fieldLabel="heart rate"
             unit="bpm"
             placeholder="— bpm"
