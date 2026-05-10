@@ -165,7 +165,16 @@ export function LogPageClient({ context }: Props) {
       src.swellingResolvesOvernight,
     );
     out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
-    out.cognitionChange = stateFor(s.cognitionChange !== null, src.cognitionChange);
+    // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
+    // even though the modal renders the SegmentedControl with value=null
+    // for severe (modal omits the severity-4 button by design). Hydrate the
+    // card to state='alert' so the corner pip + outline match the banner
+    // the engine fires above the page.
+    // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
+    out.cognitionChange =
+      s.cognitionChange === 'severe'
+        ? 'alert'
+        : stateFor(s.cognitionChange !== null, src.cognitionChange);
     // appetite/urineOutput are day-level fields; treat as tapped when set.
     if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
     if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
@@ -187,6 +196,19 @@ export function LogPageClient({ context }: Props) {
     out.nausea = stateFor(s.nausea !== null, src.nausea);
     return out;
   });
+
+  // Mid-session re-hydration for tier-1 cognition. router.refresh() updates
+  // context.symptoms.cognitionChange without remounting the client; the
+  // useState initializer above only runs at mount. When voice extraction
+  // surfaces severity 4 ('severe') after the page is already open, light
+  // the in-modal alert pip without waiting for a reload.
+  // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
+  useEffect(() => {
+    if (context.symptoms.cognitionChange !== 'severe') return;
+    setSymptomsTouch((s) =>
+      s.cognitionChange === 'alert' ? s : { ...s, cognitionChange: 'alert' },
+    );
+  }, [context.symptoms.cognitionChange]);
 
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
