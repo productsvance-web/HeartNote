@@ -7,8 +7,11 @@
 
 import {
   WEIGHT_GAIN_TIER_2_7D_LB,
+  WEIGHT_CALM_BAND_LB,
   SPO2_TIER_1_911,
   SPO2_TIER_1_WITH_DYSPNEA,
+  SPO2_WATCH_BAND_LOW,
+  SPO2_WATCH_BAND_HIGH,
   HR_TIER_2_HIGH,
   HR_TIER_2_VERY_HIGH,
   HR_TIER_2_LOW,
@@ -117,9 +120,12 @@ function resolveWeight(ctx: WeightContext): { tone: Tone; copy: string } {
     };
   }
 
-  if (Math.abs(gain) <= 2) {
+  if (Math.abs(gain) <= WEIGHT_CALM_BAND_LB) {
     // mockup-verbatim
-    return { tone: 'calm', copy: `Within 2 lb of baseline (${ctx.baselineLb.toFixed(1)} lb).` };
+    return {
+      tone: 'calm',
+      copy: `Within ${WEIGHT_CALM_BAND_LB} lb of baseline (${ctx.baselineLb.toFixed(1)} lb).`,
+    };
   }
 
   // cited: research §3 — sub-threshold gain still worth surfacing as drift
@@ -155,7 +161,11 @@ function resolveSpo2(ctx: Spo2Context): { tone: Tone; copy: string } {
   }
 
   // cited: research §3 — 91–94% is the watch band
-  if (ctx.valuePct >= 91 && ctx.valuePct <= 94 && ctx.hasNewDyspnea) {
+  if (
+    ctx.valuePct >= SPO2_WATCH_BAND_LOW &&
+    ctx.valuePct <= SPO2_WATCH_BAND_HIGH &&
+    ctx.hasNewDyspnea
+  ) {
     return {
       tone: 'watch',
       copy: `${ctx.valuePct}% with new shortness of breath — watch today.`,

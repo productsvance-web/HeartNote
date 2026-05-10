@@ -5,7 +5,7 @@
 // Loaded by src/app/log/page.tsx; consumed by src/app/log/log-page-client.tsx.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '../supabase/types.ts';
+import type { Database } from '../supabase/types';
 
 export type SymptomState = {
   // Today's most-recent value per symptom (from daily_log_symptom_events
