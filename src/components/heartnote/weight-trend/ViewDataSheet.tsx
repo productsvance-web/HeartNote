@@ -1,15 +1,16 @@
 // Read + delete UI for weight readings. Slide-up sheet with two modes:
 //
 // Read mode: chronological list (most-recent first), "Edit" toggles
-// into select mode, "Delete all" pill at the bottom opens the typed-
-// confirmation modal.
+// into select mode, "Delete all" pill at the bottom fires a window
+// .confirm() that echoes the patient name + count.
 //
 // Select mode: rows have circular checkboxes; "Select all" toggles all;
 // bottom action bar has Delete (N) + Cancel.
 //
-// Destructive-actions.md compliance:
-// - Single / multi delete confirms with count + identity (window.confirm).
-// - Delete-all uses typed-confirmation echoing the patient's name.
+// Destructive-actions.md classification: weight readings are class-B
+// (reversible-with-effort: caregiver can re-enter). Both single/multi
+// delete and "delete all" use confirm() with the target identity in
+// the prompt — no typed-confirmation modal.
 
 'use client';
 
@@ -41,7 +42,6 @@ export function ViewDataSheet({
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [confirmAll, setConfirmAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reversed = [...readings].reverse();
@@ -93,11 +93,10 @@ export function ViewDataSheet({
     });
   };
 
-  const onConfirmAll = (typed: string) => {
-    if (typed.trim().toLowerCase() !== patientFirstName.toLowerCase()) {
-      setError(`Type "${patientFirstName}" exactly to confirm.`);
-      return;
-    }
+  const onDeleteAll = () => {
+    if (readings.length === 0) return;
+    const msg = `Delete all ${readings.length} of ${patientFirstName}'s weight readings? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
       const result = await deleteAllWeightReadings();
@@ -105,7 +104,6 @@ export function ViewDataSheet({
         setError(result.error);
         return;
       }
-      setConfirmAll(false);
       exitEdit();
       router.refresh();
     });
@@ -316,8 +314,9 @@ export function ViewDataSheet({
         {hasReadings && !editing && (
           <button
             type="button"
-            onClick={() => setConfirmAll(true)}
-            className="mt-4 inline-flex items-center justify-center gap-1.5 self-center text-sm rounded-full px-4 py-2 active:opacity-70 transition"
+            onClick={onDeleteAll}
+            disabled={pending}
+            className="mt-4 inline-flex items-center justify-center gap-1.5 self-center text-sm rounded-full px-4 py-2 active:opacity-70 transition disabled:opacity-50"
             style={{
               color: 'var(--destructive, #C46A4A)',
               background: 'transparent',
@@ -325,124 +324,9 @@ export function ViewDataSheet({
             }}
           >
             <Trash2 size={14} />
-            Delete all weight data
+            {pending ? 'Deleting…' : 'Delete all weight data'}
           </button>
         )}
-      </div>
-
-      {confirmAll && (
-        <DeleteAllConfirm
-          patientFirstName={patientFirstName}
-          totalCount={readings.length}
-          pending={pending}
-          error={error}
-          onCancel={() => {
-            setConfirmAll(false);
-            setError(null);
-          }}
-          onConfirm={onConfirmAll}
-        />
-      )}
-    </div>
-  );
-}
-
-function DeleteAllConfirm({
-  patientFirstName,
-  totalCount,
-  pending,
-  error,
-  onCancel,
-  onConfirm,
-}: {
-  patientFirstName: string;
-  totalCount: number;
-  pending: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onConfirm: (typed: string) => void;
-}) {
-  const [typed, setTyped] = useState('');
-  const matches = typed.trim().toLowerCase() === patientFirstName.toLowerCase();
-
-  return (
-    <div
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="delete-all-title"
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{ background: 'rgba(28, 28, 28, 0.5)' }}
-    >
-      <div
-        className="w-full max-w-sm rounded-2xl p-5"
-        style={{
-          background: 'var(--card)',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
-        }}
-      >
-        <h3
-          id="delete-all-title"
-          className="font-display text-[18px] text-foreground"
-          style={{ fontWeight: 500 }}
-        >
-          Delete all of {patientFirstName}&rsquo;s weight data?
-        </h3>
-        <p className="mt-2 text-[13px] text-foreground">
-          This permanently removes <b>{totalCount}</b> weight reading
-          {totalCount === 1 ? '' : 's'}. It cannot be undone.
-        </p>
-        <p className="mt-3 text-[12px] text-muted-foreground">
-          Type <b>{patientFirstName}</b> to confirm.
-        </p>
-        <input
-          type="text"
-          autoFocus
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          aria-label="Type patient name to confirm"
-          className="mt-2 w-full rounded-xl px-3 py-2 text-base"
-          style={{
-            background: 'var(--background)',
-            border: '1px solid var(--border)',
-            color: 'var(--foreground)',
-            height: 40,
-          }}
-        />
-        {error && (
-          <p
-            className="mt-2 text-[12px]"
-            style={{ color: 'var(--status-alert-foreground)' }}
-          >
-            {error}
-          </p>
-        )}
-        <div className="mt-4 flex gap-2 justify-end">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={pending}
-            className="rounded-full px-4 py-2 text-sm font-medium border disabled:opacity-50"
-            style={{
-              background: 'var(--card)',
-              borderColor: 'var(--border)',
-              color: 'var(--foreground)',
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(typed)}
-            disabled={!matches || pending}
-            className="rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-40"
-            style={{
-              background: 'var(--destructive, #C46A4A)',
-              color: 'white',
-            }}
-          >
-            {pending ? 'Deleting…' : 'Delete all'}
-          </button>
-        </div>
       </div>
     </div>
   );
