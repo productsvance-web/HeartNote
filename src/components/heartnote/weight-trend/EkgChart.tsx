@@ -1,17 +1,26 @@
 // EKG-style trace chart for the /trends/weight page. Hard-angled
 // polyline (no Bezier smoothing), thin sage stroke, faint horizontal
-// gridlines, single dot on the latest reading. The chart is purely
-// presentational — it receives a fully-resolved [startMs, endMs] window
-// and plots whatever readings the parent passed in.
+// gridlines, dots on every reading inside the visible window.
+//
+// The polyline includes ONE reading immediately before startMs and ONE
+// reading immediately after endMs so the line correctly crosses the
+// window boundary at the interpolated y. This is the "continuity"
+// behavior Apple Health uses — a reading on May 9 visually connects to
+// one on May 10 in the D window for May 10 because the May 9 segment
+// gets clipped at midnight (right at the y the line passes through).
+//
+// The connecting segments outside the chart's data area are clipped by
+// a <clipPath> so the line never bleeds onto the y-axis labels or
+// outside the chart frame.
 
 import type { WeightReading } from '@/lib/trends/weight-window';
 
 type AxisLabel = { x: number; label: string };
 
 interface Props {
+  // ALL readings (sorted ascending by recorded_at). EkgChart picks
+  // visible ones for dots and adjacent ones for polyline continuity.
   data: WeightReading[];
-  // Visible window in milliseconds since epoch. Readings outside this
-  // range are clamped to the chart edges by their fraction.
   startMs: number;
   endMs: number;
   xAxisLabels: AxisLabel[];
@@ -40,21 +49,54 @@ export function EkgChart({
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
   const span = Math.max(1, endMs - startMs);
+  const clipId = `chart-clip-${startMs}`;
 
+  const xOf = (ms: number) => PAD_L + ((ms - startMs) / span) * innerW;
+  const yOf = (v: number) =>
+    PAD_T + (1 - (v - yMin) / (yMax - yMin)) * innerH;
+
+  // Visible readings (the ones that get a dot).
   const visible = data.filter((r) => {
     const t = Date.parse(r.recorded_at);
     return t >= startMs && t <= endMs;
   });
 
-  const xs = visible.map((r) => {
-    const t = Date.parse(r.recorded_at);
-    return PAD_L + ((t - startMs) / span) * innerW;
-  });
-  const ys = visible.map(
-    (r) => PAD_T + (1 - (r.value - yMin) / (yMax - yMin)) * innerH,
-  );
+  // For the polyline, include the reading immediately before startMs
+  // and the one immediately after endMs so the trace correctly enters
+  // and exits the chart frame through the window edges.
+  const polyIndices: number[] = [];
+  let firstIn = -1;
+  let lastIn = -1;
+  for (let i = 0; i < data.length; i++) {
+    const t = Date.parse(data[i].recorded_at);
+    if (t >= startMs && t <= endMs) {
+      if (firstIn === -1) firstIn = i;
+      lastIn = i;
+    }
+  }
+  if (firstIn !== -1) {
+    if (firstIn > 0) polyIndices.push(firstIn - 1);
+    for (let i = firstIn; i <= lastIn; i++) polyIndices.push(i);
+    if (lastIn < data.length - 1) polyIndices.push(lastIn + 1);
+  } else {
+    // No readings visible. Bridge across the empty window if there's a
+    // reading before AND after — same Apple behavior on truly-quiet days.
+    let before = -1;
+    let after = -1;
+    for (let i = 0; i < data.length; i++) {
+      const t = Date.parse(data[i].recorded_at);
+      if (t < startMs) before = i;
+      if (t > endMs && after === -1) after = i;
+    }
+    if (before !== -1 && after !== -1) {
+      polyIndices.push(before, after);
+    }
+  }
 
-  const path = polylinePath(xs, ys);
+  const path = polyIndices.length >= 2
+    ? polylinePath(polyIndices.map((i) => xOf(Date.parse(data[i].recorded_at))),
+                   polyIndices.map((i) => yOf(data[i].value)))
+    : '';
 
   return (
     <svg
@@ -65,8 +107,14 @@ export function EkgChart({
       aria-label="Weight trend chart"
       style={{ pointerEvents: 'none' }}
     >
+      <defs>
+        <clipPath id={clipId}>
+          <rect x={PAD_L} y={PAD_T} width={innerW} height={innerH} />
+        </clipPath>
+      </defs>
+
       {yTicks.map((tick) => {
-        const y = PAD_T + (1 - (tick - yMin) / (yMax - yMin)) * innerH;
+        const y = yOf(tick);
         return (
           <g key={tick}>
             <line
@@ -95,9 +143,6 @@ export function EkgChart({
         );
       })}
 
-      {/* Vertical gridlines at every label position — they slide with
-          the data as the user drags so each gridline stays anchored to
-          its real time (real midnight, real 6 AM). */}
       {xAxisLabels.map((lbl, i) => {
         const x = PAD_L + lbl.x * innerW;
         return (
@@ -115,24 +160,30 @@ export function EkgChart({
         );
       })}
 
-      {visible.length >= 2 && (
-        <path
-          d={path}
-          fill="none"
-          stroke="#5A6B5C"
-          strokeWidth="1.0"
-          strokeLinecap="butt"
-          strokeLinejoin="miter"
-        />
-      )}
-
-      {/* A dot on every reading so all inputs are visible — not just the
-          latest. Positions are ms-precise (xPositionFor uses fractional
-          time, not hour-snapped), so a reading at 7:42 PM lands at the
-          right pixel. */}
-      {xs.map((x, i) => (
-        <circle key={i} cx={x} cy={ys[i]} r="2.5" fill="#5A6B5C" />
-      ))}
+      {/* Polyline + dots both clipped to the chart frame so the
+          adjacent-reading segments don't paint over the y-axis labels
+          or outside the chart. */}
+      <g clipPath={`url(#${clipId})`}>
+        {path && (
+          <path
+            d={path}
+            fill="none"
+            stroke="#5A6B5C"
+            strokeWidth="1.0"
+            strokeLinecap="butt"
+            strokeLinejoin="miter"
+          />
+        )}
+        {visible.map((r) => (
+          <circle
+            key={r.id}
+            cx={xOf(Date.parse(r.recorded_at))}
+            cy={yOf(r.value)}
+            r="2.5"
+            fill="#5A6B5C"
+          />
+        ))}
+      </g>
     </svg>
   );
 }

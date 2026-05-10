@@ -365,7 +365,7 @@ export function WeightTrendView({
             }}
           >
             <EkgChart
-              data={slice}
+              data={allReadings}
               startMs={startMs}
               endMs={endMs}
               xAxisLabels={xLabels}
