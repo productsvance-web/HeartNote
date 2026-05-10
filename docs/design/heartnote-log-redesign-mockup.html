@@ -824,9 +824,134 @@
   .economy li { padding: 3px 0; display: flex; gap: 10px; }
   .economy li b { color: var(--ink); font-weight: 600; min-width: 110px; flex-shrink: 0; }
 
+  /* Design rationale section */
+  .rationale {
+    max-width: 1100px;
+    margin: 84px auto 0;
+    padding: 0 24px;
+  }
+  .rationale-head {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .rationale-head .eb {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+  }
+  .rationale-head h2 {
+    margin-top: 10px;
+    font-family: 'Fraunces', serif;
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: -0.6px;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+  .rationale-head h2 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--sage-deep);
+  }
+  .rationale-head p {
+    margin-top: 14px;
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .rationale-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 22px;
+  }
+  .rationale-card {
+    background: rgba(251, 247, 240, 0.55);
+    border: 1px solid color-mix(in oklab, var(--sage) 18%, transparent);
+    border-radius: 18px;
+    padding: 22px 24px;
+  }
+  .rationale-card .rc-eyebrow {
+    font-size: 10.5px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--sage-deep);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .rationale-card h3 {
+    font-family: 'Fraunces', serif;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.3px;
+    margin-bottom: 12px;
+    line-height: 1.25;
+  }
+  .rationale-card h3 em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--sage-deep);
+  }
+  .rationale-card p {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin-bottom: 10px;
+  }
+  .rationale-card p:last-child { margin-bottom: 0; }
+  .rationale-card b { color: var(--ink); font-weight: 600; }
+  .rationale-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .rationale-card li {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    padding: 4px 0 4px 14px;
+    position: relative;
+  }
+  .rationale-card li::before {
+    content: '·';
+    position: absolute;
+    left: 4px;
+    color: var(--sage);
+    font-weight: 700;
+  }
+  .rationale-card code {
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 12px;
+    background: rgba(60, 50, 40, 0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--ink);
+  }
+  .pip-inline {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    vertical-align: 1px;
+  }
+  .pip-inline.heard  { background: var(--sage-deep);  color: var(--cream-card); }
+  .pip-inline.tapped { background: var(--warn-line);  color: var(--ink); }
+  .pip-inline.alert  { background: var(--alert-line); color: white; }
+
   @media (max-width: 880px) {
     .gallery { gap: 24px; }
     .phone-wrap { transform: none; }
+    .rationale-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -1696,6 +1821,90 @@
     <div class="phone-label">Modal &middot; all active<small>Worst-case voice fill &middot; opens over the vitals view</small></div>
   </div>
 </div>
+
+
+<!-- ============================================================ -->
+<!-- DESIGN RATIONALE — why each piece is shaped this way        -->
+<!-- ============================================================ -->
+<div class="rationale">
+  <div class="rationale-head">
+    <div class="eb">Design rationale</div>
+    <h2>Why <em>this</em> shape?</h2>
+    <p>Six phone screens, three rows, two surfaces. Every choice traces back to one of three constraints &mdash; caregivers are tired and time-pressed, voice and tap have to feel like the same surface, and clinical signals must read at a glance.</p>
+  </div>
+
+  <div class="rationale-grid">
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">1 &middot; The two-surface model</div>
+      <h3>Vitals up front. Symptoms <em>behind</em> a sheet.</h3>
+      <p>Five vitals &mdash; weight, pillows, blood pressure, heart rate, SpO&#8322; &mdash; are the short list a cardiologist asks about every visit. They live on the main screen, always visible.</p>
+      <p>Fourteen symptoms (eight graded plus six red-flag yes / no checks) are a longer list. Showing all nineteen fields on one screen overwhelmed the early prototype, so symptoms moved into a sheet that opens from the bottom-right button. On quiet days the caregiver never has to open it; on bad days the voice log fills it for them.</p>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">2 &middot; The bottom-bar buttons</div>
+      <h3>Two hairline circles, Apple-Weather utility style.</h3>
+      <p>Small, ghosted into the background &mdash; they don't compete with the card content. Borrowed straight from the Apple Weather page-indicator pattern.</p>
+      <p><b>Mic (left)</b> records a 30-second voice log. The transcript card at the top of the page shows what was heard verbatim; the cards below auto-fill.</p>
+      <p><b>Symptom listener (right)</b> opens the symptom modal. Default state is a human-outline icon. When voice has already picked up at least one symptom, the icon swaps to a sage-deep filled ear &mdash; caregivers see at a glance that something landed in the modal even before they open it.</p>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">3 &middot; Voice + tap, one surface</div>
+      <h3>Voice fills. Tap overrides.</h3>
+      <p>Speaking a sentence is faster than tapping five fields. But voice mishears &ldquo;two-eighty-two&rdquo; and the caregiver needs an obvious correction path.</p>
+      <p>Each card carries a corner pip showing where the value came from: <span class="pip-inline heard">Heard</span> from voice, <span class="pip-inline tapped">Tapped</span> by the caregiver, <span class="pip-inline alert">Alert</span> for tier-1 red flags. Tapping a card during recording stops voice from overwriting it.</p>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">4 &middot; The card chassis</div>
+      <h3>Status dot &middot; label &middot; control &middot; helper.</h3>
+      <p>Every card &mdash; vital, symptom, red-flag &mdash; uses the same four-zone layout. Caregivers learn one pattern; it applies to all nineteen fields.</p>
+      <ul>
+        <li><b>Status dot.</b> Green (calm), amber (watch), coral (alert) &mdash; single-glance health.</li>
+        <li><b>Label.</b> Field name + a small context phrase (&ldquo;vs. baseline 178.0 lb&rdquo;).</li>
+        <li><b>Control.</b> Severity-scale segmented buttons, numeric stepper, or a yes / no pill &mdash; one tap each.</li>
+        <li><b>Helper.</b> One short line of plain English &mdash; what the value means or what would change it.</li>
+      </ul>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">5 &middot; Color tiers</div>
+      <h3>Sage. Amber. Coral.</h3>
+      <p>Three tiers map directly to the clinical alert system in <code>research/chf-source-of-truth.md</code>:</p>
+      <ul>
+        <li><b>Sage</b> (calm) &mdash; value is in the patient's usual band, or the field came in cleanly from voice.</li>
+        <li><b>Amber</b> (watch) &mdash; non-default value trending in a direction worth noting (e.g., +4 lb in 14 days, pillows up from one to two).</li>
+        <li><b>Coral</b> (alert) &mdash; tier-1 red flag like new chest pain, fainting, or pink-frothy sputum. The helper line says exactly what to do (&ldquo;Call the cardiologist now&rdquo;).</li>
+      </ul>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">6 &middot; The transcript card</div>
+      <h3>What we <em>heard</em>, verbatim.</h3>
+      <p>After a voice log, this card sits at the top of the vitals view in italic Fraunces. The CSS mask gradient fades the bottom and side edges so a longer transcription feels infinite, not clipped.</p>
+      <p>Two purposes: <b>verification</b> &mdash; caregivers can spot a misheard number before scrolling to the cards; <b>traceability</b> &mdash; the transcript is the system's evidence for everything that auto-filled below.</p>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">7 &middot; The symptom modal</div>
+      <h3>An iOS sheet, not a separate page.</h3>
+      <p>Tapping the listener button slides this sheet up over the dimmed vitals view. The strip of dim cream above the sheet is the underlying vitals page, still rendered but pushed back. Drag handle, X close, scrollable card list.</p>
+      <p>The mask gradient at the bottom of the scroll signals &ldquo;more cards below&rdquo; &mdash; the red-flag check section sits below the fold. Closing the sheet returns to the vitals view; nothing is lost.</p>
+    </div>
+
+    <div class="rationale-card">
+      <div class="rc-eyebrow">8 &middot; Why six phones, three rows</div>
+      <h3>Story, surface, sheet.</h3>
+      <p><b>Row 1 &mdash; the voice &rarr; tap story.</b> Idle (no voice yet) on the left, after a 30-second voice log plus a manual cuff reading on the right. Same chassis, two states.</p>
+      <p><b>Row 2 &mdash; empty vs. all-active.</b> The vitals chassis at extremes: nothing logged for the day on the left, worst-case (alert-tier weight gain, pillows up, low SpO&#8322;) on the right.</p>
+      <p><b>Row 3 &mdash; the symptom modal.</b> Empty defaults on the left, eight graded symptoms heard plus three tier-1 red flags raised on the right. Both render as a sheet over a dimmed vitals view.</p>
+    </div>
+
+  </div>
+</div>
+
 
 <div class="footer">
   <strong>HeartNote &middot; /log redesign (mockup)</strong><br>
