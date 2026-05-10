@@ -116,12 +116,22 @@ export function StepperControl({
       </CircleButton>
 
       {editing ? (
-        // Wrapping div keeps unit suffix visible during edit (B1 fix).
-        // The input takes the available width; the unit sits to its right
-        // with the same vertical-align nudge as the read-only chip below.
+        // Mirror the read-only chip exactly — flex-1 wrapper, baseline-flex
+        // centered, the input auto-sizes to its content via the `size`
+        // attribute so the digits land in the same horizontal slot they
+        // occupied as text. Unit sits inline to the right just like read
+        // mode. Dotted underline persists.
         <div
-          className="flex-1 flex items-baseline justify-center"
-          style={{ position: 'relative' }}
+          className="font-display relative flex-1 flex items-baseline justify-center tabular-nums"
+          style={{
+            fontSize: 30,
+            fontWeight: 400,
+            lineHeight: 1,
+            letterSpacing: '-1px',
+            color: 'var(--foreground)',
+            padding: '4px 4px 6px',
+            borderRadius: 8,
+          }}
         >
           <input
             ref={inputRef}
@@ -130,6 +140,9 @@ export function StepperControl({
             pattern={integer ? '[0-9]*' : '[0-9.]*'}
             value={draft}
             aria-label={`Edit ${fieldLabel}`}
+            // size=N renders an input N characters wide. We clamp to a
+            // sensible minimum so a one-digit draft doesn't become tiny.
+            size={Math.max(2, draft.length || 3)}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={(e) => {
               e.preventDefault();
@@ -146,18 +159,20 @@ export function StepperControl({
                 finishEdit();
               }
             }}
-            // Inherit Fraunces 30px so the chip doesn't shrink during edit.
-            // text-right + fixed unit gutter keeps the value's right edge
-            // aligned across edit/read so the digits don't visually jump.
-            className="font-display text-right bg-transparent border-0 outline-0 tabular-nums"
+            // Inherit Fraunces 30px from the parent. Center-aligned so the
+            // digits center within the auto-sized input — same visual
+            // position they occupied in read mode.
+            className="bg-transparent border-0 outline-0 text-center"
             style={{
-              fontSize: 30,
-              fontWeight: 400,
-              lineHeight: 1,
-              letterSpacing: '-1px',
-              color: 'var(--foreground)',
-              padding: '4px 4px 6px',
-              width: unit ? 'calc(100% - 36px)' : '100%',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              fontWeight: 'inherit',
+              lineHeight: 'inherit',
+              letterSpacing: 'inherit',
+              color: 'inherit',
+              fontVariantNumeric: 'inherit',
+              padding: 0,
+              width: 'auto',
             }}
           />
           {unit && (
@@ -176,6 +191,20 @@ export function StepperControl({
               {unit}
             </span>
           )}
+          {/* Dotted underline persists during edit so the chip doesn't
+              visually morph mid-tap. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute"
+            style={{
+              left: '30%',
+              right: '30%',
+              bottom: 1,
+              height: 1,
+              borderBottom: '1px dotted var(--ink-faint)',
+              opacity: 0.5,
+            }}
+          />
         </div>
       ) : (
         <button
