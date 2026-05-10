@@ -41,6 +41,12 @@ export type AssessmentTrigger = {
   evidence: Record<string, unknown>;
 };
 
+// Source of each symptom's most-recent event today. Drives the ear-button
+// glow (only voice-sourced symptoms light the ear; tap-only symptoms do
+// not). Field is null when nothing has been logged for that symptom.
+export type SymptomSource = 'voice' | 'tap' | null;
+export type SymptomSourcesState = Record<keyof SymptomState, SymptomSource>;
+
 export type LogPageContext = {
   patient: {
     id: string;
@@ -59,6 +65,7 @@ export type LogPageContext = {
     spo2: { yesterdayPct: number | null; todayPct: number | null };
   };
   symptoms: SymptomState;
+  symptomSources: SymptomSourcesState;
   assessment: {
     tier: 'tier_1_911' | 'tier_2_today' | 'tier_3_48hr' | 'tier_4_log';
     triggers: AssessmentTrigger[];
@@ -118,7 +125,7 @@ export async function loadLogPageContext(
       .order('recorded_at', { ascending: false }),
     supabase
       .from('daily_log_symptom_events')
-      .select('symptom,present,severity,body_region,nocturnal,sputum_color,resolves_overnight,postural,recorded_at')
+      .select('symptom,present,severity,body_region,nocturnal,sputum_color,resolves_overnight,postural,recorded_at,source_log_id')
       .eq('patient_id', patient.id)
       .eq('log_date', today)
       .order('recorded_at', { ascending: false }),
@@ -208,6 +215,27 @@ export async function loadLogPageContext(
   const pulseIrregular = mostRecentSymptom('pulse_irregular');
   const dizziness = mostRecentSymptom('dizziness');
   const nausea = mostRecentSymptom('nausea');
+
+  // Voice-row ids today — any daily_logs row with tap_session_id IS NULL
+  // is a voice (or process) row. Symptom events whose source_log_id
+  // matches one of these are 'voice'-sourced and light the ear glow.
+  const voiceRowIds = new Set(
+    todaysLogs
+      .filter(
+        (r) =>
+          (r as { tap_session_id?: string | null }).tap_session_id === null ||
+          (r as { tap_session_id?: string | null }).tap_session_id === undefined,
+      )
+      .map((r) => r.id as string),
+  );
+  const sourceFor = (
+    ev: { source_log_id?: string | null } | null | undefined,
+  ): SymptomSource => {
+    if (!ev) return null;
+    const sid = ev.source_log_id ?? null;
+    if (sid !== null && voiceRowIds.has(sid)) return 'voice';
+    return 'tap';
+  };
 
   // Cough → caregiver enum. We reduce to one of: none / daytime / nocturnal.
   const coughEnum: SymptomState['cough'] = (() => {
@@ -318,6 +346,35 @@ export async function loadLogPageContext(
       dizziness: dizziness ? dizziness.present : null,
       dizzinessPostural: dizziness?.postural ?? null,
       nausea: nausea ? nausea.present : null,
+    },
+    symptomSources: {
+      dyspneaSeverity: dyspnea?.present ? sourceFor(dyspnea) : null,
+      cough: cough ? sourceFor(cough) : null,
+      sputumColor: cough?.sputum_color ? sourceFor(cough) : null,
+      swellingSeverity: swelling?.present ? sourceFor(swelling) : null,
+      swellingRegion: swelling?.body_region ? sourceFor(swelling) : null,
+      swellingResolvesOvernight:
+        swelling?.resolves_overnight !== null &&
+        swelling?.resolves_overnight !== undefined
+          ? sourceFor(swelling)
+          : null,
+      fatigueSeverity: fatigue?.present ? sourceFor(fatigue) : null,
+      cognitionChange: cognitionEnum !== null ? sourceFor(cognition) : null,
+      appetiteChange: null, // day-level field; no per-event source
+      urineOutputChange: null, // day-level field; no per-event source
+      chestPain: chestPain ? sourceFor(chestPain) : null,
+      syncope: syncope ? sourceFor(syncope) : null,
+      cyanosis: cyanosis ? sourceFor(cyanosis) : null,
+      pnd: pnd ? sourceFor(pnd) : null,
+      earlySatiety: earlySatiety ? sourceFor(earlySatiety) : null,
+      extremitiesColdClammy: coldClammy ? sourceFor(coldClammy) : null,
+      pulseIrregular: pulseIrregular ? sourceFor(pulseIrregular) : null,
+      dizziness: dizziness ? sourceFor(dizziness) : null,
+      dizzinessPostural:
+        dizziness?.postural !== null && dizziness?.postural !== undefined
+          ? sourceFor(dizziness)
+          : null,
+      nausea: nausea ? sourceFor(nausea) : null,
     },
     assessment: assessment
       ? {

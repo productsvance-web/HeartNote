@@ -135,29 +135,51 @@ export function LogPageClient({ context }: Props) {
 
   const [symptoms, setSymptoms] = useState<SymptomState>(context.symptoms);
   const [symptomsTouch, setSymptomsTouch] = useState<SymptomTouchState>(() => {
-    // Per-field touch state. Anything non-null in the initial context is
-    // 'heard' (came from voice or a prior tap-session); muted otherwise.
+    // Per-field touch state on hydrate. A symptom is 'heard' only if its
+    // most-recent event today came from a voice row (source_log_id matches
+    // a daily_logs row with tap_session_id IS NULL). Tap-only events are
+    // 'tapped' even after reload — H3 fix to avoid lighting the ear glow
+    // on tap-only sessions.
     const out: SymptomTouchState = {};
     const s = context.symptoms;
-    if (s.dyspneaSeverity !== null) out.dyspneaSeverity = 'heard';
-    if (s.cough !== null) out.cough = 'heard';
-    if (s.sputumColor !== null) out.sputumColor = 'heard';
-    if (s.swellingSeverity !== null) out.swellingSeverity = 'heard';
-    if (s.swellingRegion !== null) out.swellingRegion = 'heard';
-    if (s.swellingResolvesOvernight !== null) out.swellingResolvesOvernight = 'heard';
-    if (s.fatigueSeverity !== null) out.fatigueSeverity = 'heard';
-    if (s.cognitionChange !== null) out.cognitionChange = 'heard';
-    if (s.appetiteChange !== null) out.appetiteChange = 'heard';
-    if (s.urineOutputChange !== null) out.urineOutputChange = 'heard';
-    if (s.chestPain !== null) out.chestPain = 'heard';
-    if (s.syncope !== null) out.syncope = 'heard';
-    if (s.cyanosis !== null) out.cyanosis = 'heard';
-    if (s.pnd !== null) out.pnd = 'heard';
-    if (s.earlySatiety !== null) out.earlySatiety = 'heard';
-    if (s.extremitiesColdClammy !== null) out.extremitiesColdClammy = 'heard';
-    if (s.pulseIrregular !== null) out.pulseIrregular = 'heard';
-    if (s.dizziness !== null) out.dizziness = 'heard';
-    if (s.nausea !== null) out.nausea = 'heard';
+    const src = context.symptomSources;
+    const stateFor = (
+      hasValue: boolean,
+      source: 'voice' | 'tap' | null,
+    ): VitalCardState | undefined => {
+      if (!hasValue) return undefined;
+      if (source === 'voice') return 'heard';
+      return 'tapped';
+    };
+    out.dyspneaSeverity = stateFor(s.dyspneaSeverity !== null, src.dyspneaSeverity);
+    out.cough = stateFor(s.cough !== null, src.cough);
+    out.sputumColor = stateFor(s.sputumColor !== null, src.sputumColor);
+    out.swellingSeverity = stateFor(
+      s.swellingSeverity !== null,
+      src.swellingSeverity,
+    );
+    out.swellingRegion = stateFor(s.swellingRegion !== null, src.swellingRegion);
+    out.swellingResolvesOvernight = stateFor(
+      s.swellingResolvesOvernight !== null,
+      src.swellingResolvesOvernight,
+    );
+    out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
+    out.cognitionChange = stateFor(s.cognitionChange !== null, src.cognitionChange);
+    // appetite/urineOutput are day-level fields; treat as tapped when set.
+    if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
+    if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
+    out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
+    out.syncope = stateFor(s.syncope !== null, src.syncope);
+    out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
+    out.pnd = stateFor(s.pnd !== null, src.pnd);
+    out.earlySatiety = stateFor(s.earlySatiety !== null, src.earlySatiety);
+    out.extremitiesColdClammy = stateFor(
+      s.extremitiesColdClammy !== null,
+      src.extremitiesColdClammy,
+    );
+    out.pulseIrregular = stateFor(s.pulseIrregular !== null, src.pulseIrregular);
+    out.dizziness = stateFor(s.dizziness !== null, src.dizziness);
+    out.nausea = stateFor(s.nausea !== null, src.nausea);
     return out;
   });
 
