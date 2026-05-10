@@ -31,8 +31,14 @@ export function useNumericInput(currentValue: number | null, options: Options = 
     }
   }, [editing]);
 
-  const beginEdit = () => {
-    setDraft(currentValue === null ? '' : String(currentValue));
+  const beginEdit = (initialDraft?: string) => {
+    // Caller can override the initial draft (e.g. pass formatValue(value) so
+    // a 182.0 chip opens with "182.0", not "182" from the bare number).
+    if (initialDraft !== undefined) {
+      setDraft(initialDraft);
+    } else {
+      setDraft(currentValue === null ? '' : String(currentValue));
+    }
     setEditing(true);
   };
 

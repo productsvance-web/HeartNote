@@ -161,18 +161,23 @@ export function StepperControl({
             }}
             // Inherit Fraunces 30px from the parent. Center-aligned so the
             // digits center within the auto-sized input — same visual
-            // position they occupied in read mode.
+            // position they occupied in read mode. Explicit height: 1em
+            // overrides the browser's UA-default min-height on <input>
+            // (typically taller than the text), which was making the card
+            // grow vertically when entering edit mode.
             className="bg-transparent border-0 outline-0 text-center"
             style={{
               fontFamily: 'inherit',
               fontSize: 'inherit',
               fontWeight: 'inherit',
-              lineHeight: 'inherit',
+              lineHeight: 1,
               letterSpacing: 'inherit',
               color: 'inherit',
               fontVariantNumeric: 'inherit',
               padding: 0,
               width: 'auto',
+              height: '1em',
+              boxSizing: 'content-box',
             }}
           />
           {unit && (
@@ -209,7 +214,14 @@ export function StepperControl({
       ) : (
         <button
           type="button"
-          onClick={beginEdit}
+          // Init draft with the formatted display so e.g. "182.0" doesn't
+          // collapse to "182" on click. select-all on focus makes any
+          // typing replace it, so this doesn't slow anyone down.
+          onClick={() =>
+            beginEdit(
+              value !== null && formatValue ? formatValue(value) : undefined,
+            )
+          }
           aria-label={`Edit ${fieldLabel}`}
           // Big serif value chip with dotted underline. flex:1 means it
           // expands to fill the space between the ± buttons.
