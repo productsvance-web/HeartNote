@@ -811,4 +811,29 @@ describe('Cross-cutting behavior', () => {
     assert.deepEqual(result.triggers, []);
     assert.equal(result.coldStart, true);
   });
+
+  it('Tap correction supersedes earlier voice extraction (chest_pain=true → false same day)', () => {
+    // Voice records chest_pain=true at 12:00; the caregiver corrects to
+    // chest_pain=false via a tap at 12:05. Both rows live in the DB
+    // (different source_log_id). The engine must read the most recent
+    // event per (symptom, log_date) and NOT fire T1.3.
+    const result = evaluateRules(
+      baseInputs({
+        symptomEvents: [
+          symptom({
+            symptom: 'chest_pain',
+            present: true,
+            recorded_at: `${TODAY}T12:00:00Z`,
+          }),
+          symptom({
+            symptom: 'chest_pain',
+            present: false,
+            recorded_at: `${TODAY}T12:05:00Z`,
+          }),
+        ],
+      })
+    );
+    assert.equal(result.tier, 'tier_4_log');
+    assert.ok(!ruleIds(result.triggers).includes('T1.3'));
+  });
 });

@@ -175,14 +175,20 @@ export function evaluateRules(inputs: EngineInputs): Assessment {
 
   const coldStart = distinctPriorLogDays < COLD_START_MIN_LOG_DAYS;
 
-  const todayEvents = symptomEvents.filter((e) => e.log_date === logDate);
+  // Per (symptom, log_date), keep only the most recent recorded_at row. A
+  // tap correction (e.g., chest_pain=false) supersedes an earlier voice
+  // extraction (chest_pain=true) for the same symptom on the same day.
+  // Without this, both events coexist and any-row-present logic fires the
+  // tier-1 banner forever after a single mistaken voice extraction.
+  const dedupedEvents = mostRecentPerSymptom(symptomEvents);
+  const todayEvents = dedupedEvents.filter((e) => e.log_date === logDate);
 
   // Tighten the 48h window from "now" rather than "end-of-(logDate-2 UTC)".
   // The DB query loads everything in the broader window for cheap; we
   // re-filter here so an early-morning dictation doesn't pull a 70h-old PND.
   const referenceNowMs = nowMs ?? Date.now();
   const fortyEightHoursAgoMs = referenceNowMs - PND_LOOKBACK_HOURS * 3600_000;
-  const last48hEvents = symptomEvents.filter(
+  const last48hEvents = dedupedEvents.filter(
     (e) => new Date(e.recorded_at).getTime() >= fortyEightHoursAgoMs
   );
 
@@ -755,6 +761,26 @@ async function loadInputs(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// For each (symptom, log_date) tuple, keep only the most recent row by
+// recorded_at. A later tap correction for the same symptom on the same day
+// supersedes an earlier voice extraction. The DB load already orders by
+// recorded_at desc; this helper re-asserts the invariant defensively so
+// fixture-driven tests work without depending on input order.
+function mostRecentPerSymptom(events: SymptomEvent[]): SymptomEvent[] {
+  const byKey = new Map<string, SymptomEvent>();
+  for (const e of events) {
+    const key = `${e.symptom}::${e.log_date}`;
+    const prev = byKey.get(key);
+    if (
+      prev === undefined ||
+      new Date(e.recorded_at).getTime() > new Date(prev.recorded_at).getTime()
+    ) {
+      byKey.set(key, e);
+    }
+  }
+  return [...byKey.values()];
+}
 
 function freshestReading(
   readings: Reading[],
