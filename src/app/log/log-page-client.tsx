@@ -986,7 +986,7 @@ export function LogPageClient({ context }: Props) {
             value={vitals.hrBpm}
             defaultValue={context.vitals.hr.yesterdayBpm}
             min={30}
-            max={220}
+            max={450}
             step={1}
             integer
             inputMin={30}

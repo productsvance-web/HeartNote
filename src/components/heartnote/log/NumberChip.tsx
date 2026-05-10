@@ -137,10 +137,17 @@ export function NumberChip({
         maxLength={maxLength}
         value={showPlaceholder ? placeholder : inputValue}
         aria-label={ariaLabel}
-        // size auto-grows the input to the visible content. min 2 so a
-        // single digit doesn't render as a tiny field; min 3 when empty
-        // so the placeholder ('—') and the cursor have room to land.
-        size={Math.max(2, (showPlaceholder ? placeholder : inputValue).length || 3)}
+        // size auto-grows the input to the visible content. The HTML
+        // `size` attribute is the average-glyph-width hint; for Fraunces
+        // tabular-nums at 30px, the actual rendered digit width exceeds
+        // the browser's average-char metric, so we add 1 char of
+        // headroom to stop 3-digit values (HR up to 450, SpO2 100,
+        // BP 220) from clipping at the trailing edge of the input.
+        // Min 3 so a single digit + headroom + cursor have room to land.
+        size={Math.max(
+          3,
+          (showPlaceholder ? placeholder : inputValue).length + 1,
+        )}
         onFocus={(e) => {
           // Initialize draft with the formatted value so a chip showing
           // "182.0" opens with "182.0", not "182" from the bare number.
