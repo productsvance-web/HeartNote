@@ -12,6 +12,8 @@ import Link from 'next/link';
 import { ChevronLeft, Plus } from 'lucide-react';
 import { EkgChart } from './EkgChart';
 import { AddWeightSheet, type AddWeightInput } from './AddWeightSheet';
+import { InfoMenu } from './InfoMenu';
+import { ViewDataSheet } from './ViewDataSheet';
 import {
   windowSliceFor,
   intraDayRangeFor,
@@ -41,6 +43,7 @@ export function WeightTrendView({
   const router = useRouter();
   const [period, setPeriod] = useState<WindowPeriod>('D');
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const slice = useMemo(
     () => windowSliceFor(period, today, allReadings),
@@ -314,13 +317,23 @@ export function WeightTrendView({
         )}
       </div>
 
-      {/* "+" floating utility button (matches the bottom-bar mic/ear pattern
-          from heartnote-log-redesign-mockup.html — see canonical-controls.md
-          register #6) */}
+      {/* Bottom-bar floating utility row. "i" (info menu) on the left,
+          "+" (add reading) on the right. Both register #6 — Apple-Weather
+          translucent cream + backdrop blur. */}
       <div
-        className="fixed left-0 right-0 flex justify-end pointer-events-none"
-        style={{ bottom: 22, paddingRight: 28, zIndex: 30 }}
+        className="fixed left-0 right-0 flex justify-between items-end pointer-events-none"
+        style={{
+          bottom: 22,
+          paddingLeft: 28,
+          paddingRight: 28,
+          zIndex: 30,
+        }}
       >
+        <InfoMenu
+          items={[
+            { label: 'View data', onSelect: () => setViewDataOpen(true) },
+          ]}
+        />
         <button
           type="button"
           aria-label="Add weight"
@@ -347,6 +360,15 @@ export function WeightTrendView({
           baselineLb={baselineLb}
           timezone={timezone}
           onSave={onSave}
+        />
+      )}
+
+      {viewDataOpen && (
+        <ViewDataSheet
+          readings={allReadings}
+          timezone={timezone}
+          today={today}
+          onClose={() => setViewDataOpen(false)}
         />
       )}
     </>
