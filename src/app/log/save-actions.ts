@@ -250,6 +250,21 @@ export async function upsertTodayTapSession(
   if (rpcError) return { ok: false, error: rpcError.message };
 
   // 4. Re-evaluate engine + upsert assessment + insert alerts row.
+  //
+  // H6 — atomicity tradeoff. Steps 1+2 (upsert daily_logs + apply_log_patch_v2)
+  // are atomic inside the RPC. Steps 4 (assessment upsert) and 4-bis (alerts
+  // insert) are NOT in the same transaction as 1+2. Failure modes:
+  //   - 1 succeeds, 2 fails → returned immediately; readings/events untouched.
+  //   - 1+2 succeed, 4 fails → daily_logs has the new readings/events, but
+  //     daily_assessments still reflects the prior tier. Next save retries.
+  //   - 4 succeeds, alerts insert fails → assessment is current, alerts row
+  //     missing (alerts is a notification-history sink; a missing row means a
+  //     missed log entry, not a missed banner — banner reads from
+  //     daily_assessments).
+  // Pre-launch + zero customers: accepted. If we ship to multi-device with
+  // shared accounts, wrap 4 in a Postgres function (`finalize_log_save`) that
+  // takes p_assessment + p_alert and runs assessment+alerts as one
+  // transaction.
   try {
     const assessment = await evaluateAlertTier(supabase, patient.id, today);
     const { error: assessErr } = await supabase.from('daily_assessments').upsert(
