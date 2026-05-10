@@ -339,6 +339,35 @@ export async function flushAndStartVoice(input: {
   return { ok: true, logId: log.id };
 }
 
+// Discard an empty pending voice row when the caregiver cancels before
+// saving (e.g. taps Record then bails without speaking). RLS scopes to
+// the caller's patient; the explicit guards below stop us from nuking a
+// row that already has content.
+const DiscardSchema = z.object({ logId: z.string().uuid() });
+
+export async function discardEmptyVoiceLog(input: {
+  logId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = DiscardSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'Invalid log id.' };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Sign in expired.' };
+
+  const { error } = await supabase
+    .from('daily_logs')
+    .delete()
+    .eq('id', parsed.data.logId)
+    .eq('processing_status', 'pending')
+    .is('transcribed_text', null)
+    .is('structured_observations', null);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function pushDyspnea(

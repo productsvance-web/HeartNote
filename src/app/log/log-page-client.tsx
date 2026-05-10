@@ -22,10 +22,10 @@ import type { LogPageContext, SymptomState } from '@/lib/log/page-context';
 import {
   upsertTodayTapSession,
   flushAndStartVoice,
+  discardEmptyVoiceLog,
   type SaveLogPatch,
   type SaveLogResult,
 } from './save-actions';
-import { discardEmptyVoiceLog } from './actions';
 import { resolveHelperText } from '@/lib/log/helper-text';
 import { extractNumericTiles } from '@/lib/voice-log/numeric-extractors';
 import {
