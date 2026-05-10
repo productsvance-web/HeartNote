@@ -1043,9 +1043,12 @@ export function LogPageClient({ context }: Props) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-// True when the symptom field's new value is a tier-1 alert condition
-// (per src/lib/alerts/evaluate.ts T1.x rules). Drives the corner-pip
-// "Alert" variant on the symptom card.
+// Mirrors the standalone tier-1 conditions in src/lib/alerts/evaluate.ts
+// (T1.1, T1.2, T1.3, T1.4, T1.5, T1.6). Compound tier-1 rules (T1.7 SpO2,
+// T1.8 pulse_irregular + HR>100 + chest_pain/dizziness) are NOT modeled
+// here because the modal can't see the SpO2/HR/multi-symptom context at
+// tap time — the engine still lights the banner above the page for those,
+// but the in-card 'alert' register stays off for the standalone case.
 function isSymptomTier1(
   key: keyof SymptomState,
   value: SymptomState[keyof SymptomState] | undefined,
@@ -1053,26 +1056,37 @@ function isSymptomTier1(
   if (value === null || value === undefined) return false;
   switch (key) {
     case 'dyspneaSeverity':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — severe dyspnea at rest.
       return value === 4;
     case 'chestPain':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — new chest pain.
+      return value === true;
     case 'syncope':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — syncope.
+      return value === true;
     case 'cyanosis':
-    case 'pulseIrregular':
-    case 'pnd':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — cyanotic lips/fingers.
       return value === true;
     case 'sputumColor':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — pink OR white frothy sputum.
       return value === 'pink_frothy' || value === 'white_frothy';
     case 'cognitionChange':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
       return value === 'severe';
     default:
+      // pnd → tier-2 (T2.5). pulseIrregular alone → no banner; the T1.8
+      // compound (irregular + HR>100 + chest_pain/dizziness) fires tier-1
+      // via the engine, not via the standalone tap state.
       return false;
   }
 }
 
-// True when the patch could move the alert tier — i.e., any change to a
-// tier-1 yes-flag (true ↔ false), enum transitions in/out of tier-1
-// values (sputum, cognition, dyspnea severity 4). Used to bypass the
-// 1.5s autosave debounce so the banner appears or clears promptly.
+// True when the patch could move the alert tier (banner) — broader than
+// `isSymptomTier1` because it includes tier-2 movers (PND) and compound
+// tier-1 contributors (pulseIrregular). The card-state 'alert' visual is
+// strictly tier-1; the autosave debounce skip is for any tier-changing
+// edit, including tier-2 banners. Keep these in sync with the rules in
+// src/lib/alerts/evaluate.ts.
 function isTierMovingPatch(patch: Partial<SymptomState>): boolean {
   if (patch.chestPain !== undefined) return true;
   if (patch.syncope !== undefined) return true;
