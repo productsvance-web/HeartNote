@@ -55,8 +55,6 @@ export function EkgChart({
   );
 
   const path = polylinePath(xs, ys);
-  const lastX = xs[xs.length - 1];
-  const lastY = ys[ys.length - 1];
 
   return (
     <svg
@@ -125,9 +123,13 @@ export function EkgChart({
         />
       )}
 
-      {visible.length > 0 && (
-        <circle cx={lastX} cy={lastY} r="2.5" fill="#5A6B5C" />
-      )}
+      {/* A dot on every reading so all inputs are visible — not just the
+          latest. Positions are ms-precise (xPositionFor uses fractional
+          time, not hour-snapped), so a reading at 7:42 PM lands at the
+          right pixel. */}
+      {xs.map((x, i) => (
+        <circle key={i} cx={x} cy={ys[i]} r="2.5" fill="#5A6B5C" />
+      ))}
     </svg>
   );
 }
