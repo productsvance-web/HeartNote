@@ -90,9 +90,15 @@ test.describe('/log redesign', () => {
     // After reload, the page hydrates from the server. Tap-session rows
     // render with state='heard' (came from server, not just-tapped this
     // visit). The values themselves should still be present.
+    //
+    // L4: target the weight value chip via its tap-to-type button. The
+    // single-stepper register uses aria-label="Edit weight"; the dual-
+    // stepper halves use aria-label="Systolic value" / "Diastolic value",
+    // which is why the prior `getByLabel('weight value')` matched zero
+    // elements on the weight card.
     const weightChip = page
       .locator('[data-field="weight"]')
-      .getByLabel('weight value', { exact: false });
+      .getByRole('button', { name: 'Edit weight' });
     await expect(weightChip).toBeVisible();
   });
 
