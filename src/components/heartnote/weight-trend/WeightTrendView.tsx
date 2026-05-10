@@ -449,13 +449,21 @@ function decimalPart(v: number): string {
   return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }
 
-// "Nice" 4-tick Y axis. Same algorithm Apple Health (and D3) uses:
-// pick a step from {1, 2, 5} × 10ⁿ that divides (max − min) into 3
-// intervals (= 4 ticks), then snap min DOWN to a multiple of step.
-// Empty state defaults to [0, 50, 100, 150]. Range is always at
-// least min + 3*step so the four labels are evenly spaced.
-const TARGET_INTERVALS = 3; // 3 intervals → 4 labels
+// Y-axis algorithm — same shape Apple Health uses:
+//
+// - Empty data            → 4 labels: [0, 50, 100, 150]
+// - Single value (or all  → 3 labels centered on the value:
+//   identical):             [v-10, v, v+10]. Dot sits on the middle
+//                           gridline. Never on the bottom edge.
+// - 2+ distinct values    → 4 labels at "nice" intervals (step from
+//                           {1, 2, 5} × 10ⁿ), padded so neither the
+//                           min nor max data point sits on the chart's
+//                           top or bottom edge.
+//
+// The rule "no data point on the base" comes from the user; matches
+// Apple Health's chart behavior precisely.
 const NICE_MULTIPLIERS = [1, 2, 5];
+const SINGLE_VALUE_HALF_RANGE_LB = 10;
 
 function niceStep(rawStep: number): number {
   if (rawStep <= 0) return 1;
@@ -472,22 +480,42 @@ function yScaleFor(slice: WeightReading[]): {
   max: number;
   ticks: number[];
 } {
-  const values = slice.map((r) => r.value);
-  if (values.length === 0) {
-    // Bare scaffold for the empty state.
+  if (slice.length === 0) {
     return { min: 0, max: 150, ticks: [0, 50, 100, 150] };
   }
+  const values = slice.map((r) => r.value);
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-  // For a single reading, give it a 30 lb span so the four ticks
-  // around the value carry meaning instead of clustering.
-  const rawSpan = hi - lo > 0 ? hi - lo : 30;
-  const step = niceStep(rawSpan / TARGET_INTERVALS);
-  const min = Math.floor(lo / step) * step;
-  const max = min + step * TARGET_INTERVALS;
-  const ticks: number[] = [];
-  for (let i = 0; i <= TARGET_INTERVALS; i++) ticks.push(min + i * step);
-  return { min, max, ticks };
+
+  // Single value (or multiple identical readings) → center on the
+  // middle gridline. 3 labels.
+  if (lo === hi) {
+    const step = SINGLE_VALUE_HALF_RANGE_LB;
+    const mid = Math.round(lo / step) * step;
+    return {
+      min: mid - step,
+      max: mid + step,
+      ticks: [mid - step, mid, mid + step],
+    };
+  }
+
+  // 2+ distinct values → 4 labels with padding so the data sits
+  // strictly inside [min, max], never on the edge.
+  const span = hi - lo;
+  const padding = Math.max(1, span * 0.1);
+  const paddedLo = lo - padding;
+  const paddedHi = hi + padding;
+  let step = niceStep((paddedHi - paddedLo) / 3);
+  let min = Math.floor(paddedLo / step) * step;
+  let max = min + step * 3;
+  // If snapping cut off the high end, bump the step to the next nice
+  // value and retry. Converges in <= 2 iterations.
+  while (max < paddedHi) {
+    step = niceStep(step + 1);
+    min = Math.floor(paddedLo / step) * step;
+    max = min + step * 3;
+  }
+  return { min, max, ticks: [min, min + step, min + 2 * step, max] };
 }
 
 function xLabelsFor(
