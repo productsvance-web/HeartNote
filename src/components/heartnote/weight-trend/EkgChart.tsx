@@ -95,7 +95,10 @@ export function EkgChart({
         );
       })}
 
-      {xAxisLabels.slice(1, -1).map((lbl, i) => {
+      {/* Vertical gridlines at every label position — they slide with
+          the data as the user drags so each gridline stays anchored to
+          its real time (real midnight, real 6 AM). */}
+      {xAxisLabels.map((lbl, i) => {
         const x = PAD_L + lbl.x * innerW;
         return (
           <line

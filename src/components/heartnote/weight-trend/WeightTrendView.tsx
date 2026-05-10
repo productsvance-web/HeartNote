@@ -374,27 +374,38 @@ export function WeightTrendView({
               yTicks={yScale.ticks}
             />
           </div>
-          {/* X axis labels sit flush under the chart so the eye can
-              connect each label to its vertical gridline. Tight margin,
-              right-padding matches the chart's PAD_R reservation for
-              y-axis labels (32px on a 280-unit canvas → ~11.4% of width). */}
+          {/* X axis labels are absolutely positioned at the same x-coordinate
+              as their vertical gridline in the SVG. As the user drags, both
+              gridlines and labels slide together — the dots stay anchored to
+              their real timestamps in the visible window. */}
           <div
-            className="flex justify-between"
-            style={{ marginTop: -2, paddingLeft: 2, paddingRight: '11.4%' }}
+            className="relative"
+            style={{ width: '100%', height: 14, marginTop: -2 }}
           >
-            {xLabels.map((l, i) => (
-              <span
-                key={i}
-                className="text-muted-foreground"
-                style={{
-                  fontSize: 9,
-                  letterSpacing: '0.2px',
-                  fontWeight: 500,
-                }}
-              >
-                {l.label}
-              </span>
-            ))}
+            {xLabels.map((l, i) => {
+              // Map fractional x in inner data area to a percentage of the
+              // SVG container's full width. SVG = 280-wide, PAD_L = 6,
+              // PAD_R = 32, innerW = 242 → label sits at PAD_L + l.x*innerW
+              // in viewBox units, normalized to %.
+              const positionPct = ((6 + l.x * 242) / 280) * 100;
+              return (
+                <span
+                  key={i}
+                  className="absolute text-muted-foreground"
+                  style={{
+                    left: `${positionPct}%`,
+                    transform: 'translateX(-50%)',
+                    top: 0,
+                    fontSize: 9,
+                    letterSpacing: '0.2px',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {l.label}
+                </span>
+              );
+            })}
           </div>
         </div>
 
@@ -576,6 +587,10 @@ function yScaleFor(slice: WeightReading[]): {
 
 // ─── X labels ────────────────────────────────────────────────────────────────
 
+// Generate labels anchored to REAL CALENDAR INSTANTS (real midnight,
+// real 6 AM, real Sunday). As the window pans, the labels' x positions
+// shift continuously — so the gridlines visually "slide" with the data
+// instead of staying at fixed fractions while the dots fly past.
 function xLabelsFor(
   period: WindowPeriod,
   endMs: number,
@@ -584,30 +599,128 @@ function xLabelsFor(
   const span = windowSpanMs(period);
   const startMs = endMs - span;
   if (period === 'D') {
-    // 5 labels at 0%, 25%, 50%, 75%, 100%, formatted as hour-of-day.
-    return Array.from({ length: 5 }, (_, i) => ({
-      x: i / 4,
-      label: hourLabel(startMs + (i / 4) * span, tz),
-    }));
+    return anchorsAtWallClockHours(startMs, endMs, tz, [0, 6, 12, 18], hourLabel);
   }
   if (period === 'W') {
-    // 7 labels — one per day in the window — showing weekday short names.
-    return Array.from({ length: 7 }, (_, i) => ({
-      x: i / 6,
-      label: weekdayLabel(startMs + (i / 6) * span, tz),
-    }));
+    return anchorsAtMidnights(startMs, endMs, tz, weekdayLabel);
   }
   if (period === 'M') {
-    return Array.from({ length: 5 }, (_, i) => ({
-      x: i / 4,
-      label: shortDateLabel(startMs + (i / 4) * span, tz),
-    }));
+    return anchorsOnDayOfWeek(startMs, endMs, tz, 0, shortDateLabel);
   }
-  // 6M and Y use month labels at evenly-spaced positions. 6 labels.
-  return Array.from({ length: 6 }, (_, i) => ({
-    x: i / 5,
-    label: monthLabel(startMs + (i / 5) * span, tz),
-  }));
+  // 6M and Y: anchor to first of each month.
+  return anchorsAtMonthStarts(startMs, endMs, tz, monthLabel);
+}
+
+function anchorsAtWallClockHours(
+  startMs: number,
+  endMs: number,
+  tz: string,
+  hours: number[],
+  fmt: (ms: number, tz: string) => string,
+): { x: number; label: string }[] {
+  const startDayIso = isoDateOf(startMs, tz);
+  const span = endMs - startMs;
+  const out: { x: number; label: string }[] = [];
+  // Window is at most 24h, so candidates from the start day and the
+  // next day cover everything. Iterate one day before too in case of
+  // tz-shift edge cases.
+  for (let dayOffset = -1; dayOffset <= 2; dayOffset++) {
+    const dayIso = isoOffset(startDayIso, dayOffset);
+    for (const h of hours) {
+      const wallClock = `${dayIso}T${String(h).padStart(2, '0')}:00`;
+      const iso = isoFromWallClock(wallClock, tz);
+      if (!iso) continue;
+      const ms = Date.parse(iso);
+      if (ms >= startMs && ms <= endMs) {
+        out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
+      }
+    }
+  }
+  return out;
+}
+
+function anchorsAtMidnights(
+  startMs: number,
+  endMs: number,
+  tz: string,
+  fmt: (ms: number, tz: string) => string,
+): { x: number; label: string }[] {
+  const startDayIso = isoDateOf(startMs, tz);
+  const span = endMs - startMs;
+  const out: { x: number; label: string }[] = [];
+  // W is 7 days, but the iso-day boundaries inside the window can be 7
+  // or 8 (depending on whether the window starts at midnight). Iterate
+  // a generous range and filter.
+  for (let dayOffset = 0; dayOffset <= 9; dayOffset++) {
+    const dayIso = isoOffset(startDayIso, dayOffset);
+    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (ms >= startMs && ms <= endMs) {
+      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
+    }
+  }
+  return out;
+}
+
+function anchorsOnDayOfWeek(
+  startMs: number,
+  endMs: number,
+  tz: string,
+  targetDow: number, // 0 = Sun, 6 = Sat
+  fmt: (ms: number, tz: string) => string,
+): { x: number; label: string }[] {
+  const startDayIso = isoDateOf(startMs, tz);
+  const span = endMs - startMs;
+  const out: { x: number; label: string }[] = [];
+  for (let dayOffset = 0; dayOffset <= 32; dayOffset++) {
+    const dayIso = isoOffset(startDayIso, dayOffset);
+    const dow = dayOfWeekInTz(dayIso, tz);
+    if (dow !== targetDow) continue;
+    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (ms >= startMs && ms <= endMs) {
+      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
+    }
+  }
+  return out;
+}
+
+function anchorsAtMonthStarts(
+  startMs: number,
+  endMs: number,
+  tz: string,
+  fmt: (ms: number, tz: string) => string,
+): { x: number; label: string }[] {
+  const span = endMs - startMs;
+  const out: { x: number; label: string }[] = [];
+  // Iterate up to 14 months back/forward to cover Y's 12-month window
+  // plus margin.
+  const startDayIso = isoDateOf(startMs, tz);
+  const [y, m] = startDayIso.split('-').map(Number);
+  for (let i = 0; i <= 14; i++) {
+    const targetMonth0 = m - 1 + i; // zero-indexed month from Jan
+    const targetY = y + Math.floor(targetMonth0 / 12);
+    const targetM = (targetMonth0 % 12) + 1;
+    const dayIso = `${targetY}-${String(targetM).padStart(2, '0')}-01`;
+    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
+    if (!iso) continue;
+    const ms = Date.parse(iso);
+    if (ms >= startMs && ms <= endMs) {
+      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
+    }
+  }
+  return out;
+}
+
+function dayOfWeekInTz(dayIso: string, tz: string): number {
+  const d = new Date(`${dayIso}T12:00:00Z`);
+  const name = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+  }).format(d);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
 }
 
 function hourLabel(ms: number, tz: string): string {
