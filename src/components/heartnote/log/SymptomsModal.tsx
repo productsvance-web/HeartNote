@@ -325,18 +325,23 @@ export function SymptomsModal({
               tone={(symptoms.swellingSeverity ?? 0) >= 2 ? 'watch' : 'calm'}
               helper="Pick the level that matches today."
               options={[
+                // Four-level scale per mockup line 1510-1515. The schema in
+                // extract.ts allows severity 4 ("anasarca"), but the engine
+                // (evaluate.ts T2.6) does not fire differently at 4 vs 3 —
+                // it tiers on present + relative growth. The body_region
+                // picker below carries any location-level escalation
+                // (Abdomen = warn). Caregiver-facing: no jargon.
                 { value: 0, label: 'None' },
                 { value: 1, label: 'Mild' },
                 { value: 2, label: 'Moderate', variantOverride: 'warn' },
                 { value: 3, label: 'Severe', variantOverride: 'warn' },
-                // cited: research/chf-source-of-truth.md §5 — decompensation
-                // progression "ankles → calves → abdomen." Plain English for
-                // anasarca: "all over the body, including the belly." No
-                // tier-1 swelling rule fires in evaluate.ts; T2.6 is the
-                // strongest swelling-only rule (tier-2). Variant 'warn'.
-                { value: 4, label: 'Belly+body', variantOverride: 'warn' },
               ]}
-              value={symptoms.swellingSeverity}
+              // Voice extraction can still write severity=4 to the DB
+              // (extract.ts schema unchanged). Display-clamp to 3 so the
+              // "Severe" button highlights instead of nothing.
+              value={
+                symptoms.swellingSeverity === 4 ? 3 : symptoms.swellingSeverity
+              }
               onChange={(v) => onChange({ swellingSeverity: v as number })}
               fieldKey="swelling_severity"
               followUp={
