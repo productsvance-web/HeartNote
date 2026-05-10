@@ -156,7 +156,11 @@ export function WeightTrendView({
 
   const hero = slice.length > 0 ? slice[slice.length - 1] : null;
 
-  const yScale = useMemo(() => yScaleFor(slice), [slice]);
+  // Y-axis is derived from the WHOLE dataset, not the visible window.
+  // That keeps the axis stable as the user drags D-day-to-D-day instead
+  // of zooming in on each day's tiny intra-day range. The 3-label
+  // exception only fires when the entire table has a single reading.
+  const yScale = useMemo(() => yScaleFor(allReadings), [allReadings]);
   const xLabels = useMemo(
     () => xLabelsFor(period, endMs, timezone),
     [period, endMs, timezone],
@@ -548,19 +552,34 @@ function niceStep(rawStep: number): number {
   return 10 * base;
 }
 
-function yScaleFor(slice: WeightReading[]): {
+function yScaleFor(readings: WeightReading[]): {
   min: number;
   max: number;
   ticks: number[];
 } {
-  if (slice.length === 0) {
+  // Empty dataset: bare scaffold.
+  if (readings.length === 0) {
     return { min: 0, max: 150, ticks: [0, 50, 100, 150] };
   }
-  const values = slice.map((r) => r.value);
+  // Exactly one reading in the whole dataset: 3-label centered axis
+  // (matches Apple Health's behavior with a single weigh-in).
+  if (readings.length === 1) {
+    const v = readings[0].value;
+    const step = SINGLE_VALUE_HALF_RANGE_LB;
+    const mid = Math.round(v / step) * step;
+    return {
+      min: mid - step,
+      max: mid + step,
+      ticks: [mid - step, mid, mid + step],
+    };
+  }
+  // 2+ readings: 4 labels with nice-step spacing, padded so neither
+  // the min nor max value lands on the chart edge.
+  const values = readings.map((r) => r.value);
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-
   if (lo === hi) {
+    // 2+ identical readings (rare) → still center-3-label.
     const step = SINGLE_VALUE_HALF_RANGE_LB;
     const mid = Math.round(lo / step) * step;
     return {
@@ -569,7 +588,6 @@ function yScaleFor(slice: WeightReading[]): {
       ticks: [mid - step, mid, mid + step],
     };
   }
-
   const span = hi - lo;
   const padding = Math.max(1, span * 0.1);
   const paddedLo = lo - padding;
