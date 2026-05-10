@@ -93,7 +93,13 @@ const SaveLogPatchSchema = z.object({
     cognition: z.enum(['clear', 'mild_fog', 'confusion']).nullable().optional(),
     appetite: z.enum(['decreased', 'unchanged', 'increased']).nullable().optional(),
     urineOutput: z.enum(['decreased', 'unchanged', 'increased']).nullable().optional(),
-    chestPain: z.boolean().nullable().optional(),
+    chestPain: z
+      .object({
+        present: z.boolean(),
+        character: z.string().min(1).max(240).nullable(),
+      })
+      .nullable()
+      .optional(),
     syncope: z.boolean().nullable().optional(),
     cyanosis: z.boolean().nullable().optional(),
     pnd: z.boolean().nullable().optional(),
@@ -248,7 +254,7 @@ export async function upsertTodayTapSession(
   pushSwelling(symptomEvents, data.symptoms.swelling ?? null);
   pushFatigue(symptomEvents, data.symptoms.fatigue ?? null);
   pushCognition(symptomEvents, data.symptoms.cognition ?? null);
-  pushBoolean(symptomEvents, 'chest_pain', data.symptoms.chestPain ?? null);
+  pushChestPain(symptomEvents, data.symptoms.chestPain ?? null);
   pushBoolean(symptomEvents, 'syncope', data.symptoms.syncope ?? null);
   pushBoolean(symptomEvents, 'cyanosis', data.symptoms.cyanosis ?? null);
   pushBoolean(symptomEvents, 'pnd', data.symptoms.pnd ?? null);
@@ -519,6 +525,18 @@ function pushDizziness(
   const event: Record<string, unknown> = { symptom: 'dizziness', present: d.present };
   if (d.present && d.postural !== null) {
     event.postural = d.postural;
+  }
+  out.push(event);
+}
+
+function pushChestPain(
+  out: Array<Record<string, unknown>>,
+  cp: { present: boolean; character: string | null } | null,
+) {
+  if (cp === null) return;
+  const event: Record<string, unknown> = { symptom: 'chest_pain', present: cp.present };
+  if (cp.present && cp.character) {
+    event.chest_pain_character = cp.character;
   }
   out.push(event);
 }

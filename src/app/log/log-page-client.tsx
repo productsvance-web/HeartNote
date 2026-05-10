@@ -169,6 +169,10 @@ export function LogPageClient({ context }: Props) {
     if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
     if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
     out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
+    out.chestPainCharacter = stateFor(
+      s.chestPainCharacter !== null,
+      src.chestPainCharacter,
+    );
     out.syncope = stateFor(s.syncope !== null, src.syncope);
     out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
     out.pnd = stateFor(s.pnd !== null, src.pnd);
@@ -1102,7 +1106,10 @@ function buildSymptomsPatch(s: SymptomState): SaveLogPatch['symptoms'] {
         : s.cognitionChange,
     appetite: s.appetiteChange,
     urineOutput: s.urineOutputChange,
-    chestPain: s.chestPain,
+    chestPain:
+      s.chestPain === null
+        ? null
+        : { present: s.chestPain, character: s.chestPainCharacter },
     syncope: s.syncope,
     cyanosis: s.cyanosis,
     pnd: s.pnd,

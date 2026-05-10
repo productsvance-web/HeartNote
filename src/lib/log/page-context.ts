@@ -24,6 +24,10 @@ export type SymptomState = {
   appetiteChange: 'decreased' | 'unchanged' | 'increased' | null;
   urineOutputChange: 'decreased' | 'unchanged' | 'increased' | null;
   chestPain: boolean | null;
+  // Free-text "Where? (e.g., left arm, pressure)" follow-up when chestPain=true.
+  // Maps to symptom_events.chest_pain_character (already populated by voice
+  // extraction; the modal makes it tap-editable).
+  chestPainCharacter: string | null;
   syncope: boolean | null;
   cyanosis: boolean | null;
   pnd: boolean | null;
@@ -337,6 +341,9 @@ export async function loadLogPageContext(
       appetiteChange: (todayAppetite as SymptomState['appetiteChange']) ?? null,
       urineOutputChange: (todayUrine as SymptomState['urineOutputChange']) ?? null,
       chestPain: chestPain ? chestPain.present : null,
+      chestPainCharacter:
+        (chestPain as { chest_pain_character?: string | null } | null)
+          ?.chest_pain_character ?? null,
       syncope: syncope ? syncope.present : null,
       cyanosis: cyanosis ? cyanosis.present : null,
       pnd: pnd ? pnd.present : null,
@@ -363,6 +370,11 @@ export async function loadLogPageContext(
       appetiteChange: null, // day-level field; no per-event source
       urineOutputChange: null, // day-level field; no per-event source
       chestPain: chestPain ? sourceFor(chestPain) : null,
+      chestPainCharacter:
+        (chestPain as { chest_pain_character?: string | null } | null)
+          ?.chest_pain_character
+          ? sourceFor(chestPain)
+          : null,
       syncope: syncope ? sourceFor(syncope) : null,
       cyanosis: cyanosis ? sourceFor(cyanosis) : null,
       pnd: pnd ? sourceFor(pnd) : null,

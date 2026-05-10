@@ -460,7 +460,10 @@ export function SymptomsModal({
               state={touchState.chestPain ?? 'muted'}
               tone={symptoms.chestPain ? 'urgent' : 'calm'}
               value={symptoms.chestPain}
-              onChange={(v) => onChange({ chestPain: v })}
+              onChange={(v) =>
+                // Clearing the Yes also clears any prior character free-text.
+                onChange({ chestPain: v, chestPainCharacter: v ? symptoms.chestPainCharacter : null })
+              }
               yesVariant="alert"
               // cited: research/chf-source-of-truth.md §2 Tier 1 — chest
               // pain = tier 1 (911 territory).
@@ -470,6 +473,14 @@ export function SymptomsModal({
                   : undefined
               }
               fieldKey="chest_pain"
+              followUp={
+                symptoms.chestPain ? (
+                  <ChestPainCharacterInput
+                    value={symptoms.chestPainCharacter}
+                    onChange={(v) => onChange({ chestPainCharacter: v })}
+                  />
+                ) : null
+              }
             />
 
             <SymptomYesNoCard
@@ -662,6 +673,52 @@ function SectionDivider({ title }: { title: string }) {
         Tap to record
       </span>
     </div>
+  );
+}
+
+// Free-text chest-pain character follow-up. Renders below the chest-pain
+// Yes/No card when chestPain=true. Optional — empty draft → null in state.
+// Maps to symptom_events.chest_pain_character (240 char DB cap; we mirror
+// at 240 here to avoid surfacing a server validation error after blur).
+function ChestPainCharacterInput({
+  value,
+  onChange,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  return (
+    <label className="flex flex-col" style={{ gap: 6 }}>
+      <span
+        style={{
+          fontSize: 10.5,
+          color: 'var(--ink-faint)',
+          letterSpacing: '0.2px',
+          fontFamily: 'var(--font-sans)',
+        }}
+      >
+        Where? (e.g., &ldquo;left arm, pressure&rdquo;)
+      </span>
+      <input
+        type="text"
+        value={value ?? ''}
+        maxLength={240}
+        onChange={(e) => {
+          const next = e.target.value.trim() === '' ? null : e.target.value;
+          onChange(next);
+        }}
+        placeholder="Optional — where, what kind"
+        style={{
+          background: 'var(--cream)',
+          border: '1px solid var(--sage-mist)',
+          borderRadius: 12,
+          padding: '8px 12px',
+          fontFamily: 'var(--font-sans)',
+          fontSize: 13,
+          color: 'var(--foreground)',
+        }}
+      />
+    </label>
   );
 }
 
