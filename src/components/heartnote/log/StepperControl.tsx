@@ -32,6 +32,8 @@ interface Props {
   // Stop someone typing clinically-incompatible values like "55%" SpO2.
   inputMin?: number;
   inputMax?: number;
+  // Hard cap on input length — see NumberChip.maxLength.
+  maxLength?: number;
 }
 
 export function StepperControl({
@@ -49,6 +51,7 @@ export function StepperControl({
   integer = false,
   inputMin,
   inputMax,
+  maxLength,
 }: Props) {
   const canClear =
     onClear !== undefined && value !== null && value !== defaultValue;
@@ -88,6 +91,7 @@ export function StepperControl({
         inputMax={inputMax ?? max}
         onChange={onChange}
         ariaLabel={`Edit ${fieldLabel}`}
+        maxLength={maxLength}
       />
 
       <CircleButton

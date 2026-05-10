@@ -298,7 +298,24 @@ export function LogPageClient({ context }: Props) {
   }, [flushSave]);
 
   // ─── Vital handlers ──────────────────────────────────────────────────────
+  // Fat-finger guard: when dry weight is set and the typed value is more
+  // than 10 lb below it, ask before committing. Dry weight is the patient's
+  // baseline-when-not-retaining-fluid (set by the cardiologist); a sudden
+  // drop of 10+ lb is far more likely a typo than a real reading. If dry
+  // weight isn't set, no check fires.
+  // cited: research/chf-source-of-truth.md §3 — "dry weight" caveat.
+  const DRY_WEIGHT_TYPO_THRESHOLD_LB = 10;
   const onWeightChange = (v: number | null) => {
+    if (
+      v !== null &&
+      context.patient.dryWeightLb !== null &&
+      v < context.patient.dryWeightLb - DRY_WEIGHT_TYPO_THRESHOLD_LB
+    ) {
+      const confirmed = window.confirm(
+        `Did you mean to enter ${v.toFixed(1)} lbs? ${context.patient.displayName}'s dry weight is ${context.patient.dryWeightLb} lbs.`,
+      );
+      if (!confirmed) return;
+    }
     setVitals((s) => ({ ...s, weightLb: v }));
     setVitalsTouch((s) => ({
       ...s,
@@ -889,7 +906,11 @@ export function LogPageClient({ context }: Props) {
           <StepperControl
             value={vitals.weightLb}
             defaultValue={context.vitals.weight.yesterdayLb}
-            min={50}
+            // Min lowered from 50 → 8 so the chip stops silently
+            // clamping a typo'd "44.4" up to 50. The dry-weight
+            // confirm in `onWeightChange` is the real fat-finger guard
+            // when the patient profile has a dry weight set.
+            min={8}
             max={700}
             step={0.2}
             fieldLabel="weight"
@@ -990,7 +1011,15 @@ export function LogPageClient({ context }: Props) {
             min={50}
             max={100}
             step={0.1}
+            // Decimals allowed (some pulse-oximeters report half-percent).
+            // The chip rounds typed input half-up to 1 decimal: 90.55 → 90.6,
+            // 90.12 → 90.1, 44.45 → 44.5.
             inputMin={70}
+            // 5-char cap accommodates "100.0" / "99.5" — stops the field
+            // from accepting "1000" before commit-time clamp.
+            maxLength={5}
+            // Whole-number readings render without a trailing ".0".
+            formatValue={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))}
             fieldLabel="oxygen"
             unit="%"
             placeholder="— %"

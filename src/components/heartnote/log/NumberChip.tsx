@@ -40,6 +40,17 @@ interface Props {
   // to the standard 30px Fraunces chip.
   fontSize?: number;
   showDottedUnderline?: boolean;
+  // Hard cap on input length. SpO2 caps at 5 ("100.0") so the field
+  // can't accept "1000" before commit-time clamp. Omit to leave the
+  // browser default unbounded.
+  maxLength?: number;
+}
+
+// Half-up rounding to N decimal places that's robust to IEEE-754
+// representation error (e.g. 1.45 * 10 = 14.499999999999998).
+// 90.55 → 90.6, 90.12 → 90.1, 44.45 → 44.5.
+function roundHalfUp(value: number, places: number): number {
+  return Number(`${Math.round(Number(`${value}e${places}`))}e-${places}`);
 }
 
 export function NumberChip({
@@ -55,6 +66,7 @@ export function NumberChip({
   flexFill = true,
   fontSize = 30,
   showDottedUnderline = true,
+  maxLength,
 }: Props) {
   const formatted = (v: number): string => (formatValue ? formatValue(v) : String(v));
 
@@ -93,7 +105,10 @@ export function NumberChip({
       return;
     }
     const clamped = Math.min(inputMax, Math.max(inputMin, parsed));
-    const rounded = integer ? Math.round(clamped) : +clamped.toFixed(2);
+    // Half-up to 1 decimal for non-integer fields. The earlier
+    // `+clamped.toFixed(2)` kept 2 decimals internally even though every
+    // formatValue caller renders 1 decimal — store/display now agree.
+    const rounded = integer ? Math.round(clamped) : roundHalfUp(clamped, 1);
     onChange(rounded);
     setDraft(null); // back to value-derived display
   };
@@ -119,6 +134,7 @@ export function NumberChip({
         type="text"
         inputMode={integer ? 'numeric' : 'decimal'}
         pattern={integer ? '[0-9]*' : '[0-9.]*'}
+        maxLength={maxLength}
         value={showPlaceholder ? placeholder : inputValue}
         aria-label={ariaLabel}
         // size auto-grows the input to the visible content. min 2 so a
@@ -136,7 +152,8 @@ export function NumberChip({
         onPaste={(e) => {
           e.preventDefault();
           const text = e.clipboardData.getData('text');
-          setDraft(sanitize(text));
+          const sliced = maxLength ? text.slice(0, maxLength) : text;
+          setDraft(sanitize(sliced));
         }}
         onBlur={commit}
         onKeyDown={(e) => {

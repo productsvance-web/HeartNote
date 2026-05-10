@@ -68,6 +68,8 @@ const SaveLogPatchSchema = z.object({
       .optional(),
     spo2Pct: z
       .number()
+      // Decimals allowed (some pulse-oximeters report half-percent).
+      // The chip rounds typed input half-up to 1 decimal before save.
       .min(READING_RANGE.spo2[0])
       .max(READING_RANGE.spo2[1])
       .nullable()
