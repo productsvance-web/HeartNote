@@ -139,8 +139,10 @@ export async function loadLogPageContext(
       .lt('log_date', today)
       .order('recorded_at', { ascending: true })
       .limit(1),
-    // 7-day baseline pillows. Until Task 8.0b moves pillow_count into
-    // daily_log_readings, we read it from daily_logs (per-row).
+    // 7-day baseline pillows from daily_logs (per-row). Per the plan's
+    // R8 fallback (large blast radius across dashboard/trends/visits),
+    // pillow_count stays on daily_logs in this PR; the engine reads
+    // most-recent-non-null across the day's rows.
     supabase
       .from('daily_logs')
       .select('pillow_count')
