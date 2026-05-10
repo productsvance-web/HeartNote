@@ -12,7 +12,8 @@
 // canonical rule set; if a rule is worth firing, it will fire on the
 // home screen.
 
-import { Heart } from 'lucide-react';
+import Link from 'next/link';
+import { Heart, ChevronRight } from 'lucide-react';
 import { StatusPip } from './StatusPip';
 import { MiniTrendSpark } from './MiniTrendSpark';
 import { CoughHeatmap, type CoughCell } from './CoughHeatmap';
@@ -128,11 +129,16 @@ function WeightCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
         : 'var(--sage)';
 
   return (
-    <section className="mx-4 mt-5 rounded-3xl bg-card border border-border shadow-card p-5">
+    <Link
+      href="/trends/weight"
+      className="mx-4 mt-5 block rounded-3xl bg-card border border-border shadow-card p-5 active:scale-[0.997] transition"
+      aria-label="Open weight trend page"
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
             Dry weight
+            <ChevronRight size={11} className="text-muted-foreground" />
           </p>
           {last ? (
             <p
@@ -167,7 +173,7 @@ function WeightCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
       {series.weight14d.length === 0 && (
         <p className="text-xs text-muted-foreground mt-2">No weight readings in the last 14 days.</p>
       )}
-    </section>
+    </Link>
   );
 }
 
