@@ -312,7 +312,7 @@ export function LogPageClient({ context }: Props) {
       v < context.patient.dryWeightLb - DRY_WEIGHT_TYPO_THRESHOLD_LB
     ) {
       const confirmed = window.confirm(
-        `Did you mean to enter ${v.toFixed(1)} lbs? ${context.patient.displayName}'s dry weight is ${context.patient.dryWeightLb} lbs.`,
+        `Did you mean to enter ${v.toFixed(1)} lbs?`,
       );
       if (!confirmed) return;
     }
