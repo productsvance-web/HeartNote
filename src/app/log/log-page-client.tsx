@@ -330,7 +330,7 @@ export function LogPageClient({ context }: Props) {
       const next: SymptomTouchState = { ...s };
       for (const key of Object.keys(patch) as Array<keyof SymptomState>) {
         const value = patch[key];
-        if (value === null) {
+        if (value === null || value === undefined) {
           next[key] = 'muted';
         } else if (isSymptomTier1(key, value)) {
           // H2: a tap landing on a tier-1 value lights the alert outline +
@@ -1039,8 +1039,9 @@ export function LogPageClient({ context }: Props) {
 // "Alert" variant on the symptom card.
 function isSymptomTier1(
   key: keyof SymptomState,
-  value: SymptomState[keyof SymptomState],
+  value: SymptomState[keyof SymptomState] | undefined,
 ): boolean {
+  if (value === null || value === undefined) return false;
   switch (key) {
     case 'dyspneaSeverity':
       return value === 4;
