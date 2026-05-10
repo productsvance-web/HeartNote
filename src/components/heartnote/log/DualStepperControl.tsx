@@ -6,14 +6,23 @@
 // Trailing register #1 X is OPTIONAL on the dual-stepper — caregivers
 // typically tap both numbers together.
 //
+// BP halves are integer-only (B2 fix); tap-to-type input strips '.'.
+//
 // Visual register matches docs/design/heartnote-log-redesign-mockup.html
 // (.stepper-dual / .stepper-half / .step-btn / .step-value / .half-label).
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, X } from 'lucide-react';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
+import { useNumericInput } from './use-numeric-input';
+import { useHoldRepeat } from './use-hold-repeat';
+
+// Tighter clinical floors for the tap-to-type input. The stepper buttons
+// still respect the wider DB-validity ranges in READING_RANGE; these
+// floors stop someone typing values incompatible with consciousness.
+const SYS_INPUT_MIN = 70;
+const DIA_INPUT_MIN = 30;
 
 interface Props {
   systolic: number | null;
@@ -63,8 +72,8 @@ export function DualStepperControl({
         label="Systolic"
         shortLabel="sys"
         value={systolic}
-        min={sysMin}
-        max={sysMax}
+        inputMin={SYS_INPUT_MIN}
+        inputMax={sysMax}
         onDec={sysDecrement}
         onInc={sysIncrement}
         onCommit={(v) => onChange(v, diastolic)}
@@ -75,8 +84,8 @@ export function DualStepperControl({
         label="Diastolic"
         shortLabel="dia"
         value={diastolic}
-        min={diaMin}
-        max={diaMax}
+        inputMin={DIA_INPUT_MIN}
+        inputMax={diaMax}
         onDec={diaDecrement}
         onInc={diaIncrement}
         onCommit={(v) => onChange(systolic, v)}
@@ -102,8 +111,8 @@ function Half({
   label,
   shortLabel,
   value,
-  min,
-  max,
+  inputMin,
+  inputMax,
   onDec,
   onInc,
   onCommit,
@@ -113,46 +122,37 @@ function Half({
   label: string;
   shortLabel: string;
   value: number | null;
-  min: number;
-  max: number;
+  // min/max for the ± buttons live on the parent (it does the clamping
+  // before calling onDec/onInc); this child only needs the input floor/ceil.
+  inputMin: number;
+  inputMax: number;
   onDec: () => void;
   onInc: () => void;
   onCommit: (v: number) => void;
   decDisabled: boolean;
   incDisabled: boolean;
 }) {
-  // Tap-to-type on each half. Same sanitize/clamp/commit shape as
-  // StepperControl. Empty draft on commit keeps the existing value.
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>('');
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Tap-to-type per half. Integer-only (BP is always whole numbers).
+  const { editing, draft, setDraft, inputRef, beginEdit, finishEdit, sanitize } =
+    useNumericInput(value, { integer: true });
 
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [editing]);
-
-  const beginEdit = () => {
-    setDraft(value === null ? '' : String(value));
-    setEditing(true);
-  };
+  const decHold = useHoldRepeat(onDec);
+  const incHold = useHoldRepeat(onInc);
 
   const commitDraft = () => {
-    const cleaned = sanitizeNumeric(draft);
+    const cleaned = sanitize(draft);
     if (cleaned === '') {
-      setEditing(false);
+      finishEdit();
       return;
     }
     const parsed = Number(cleaned);
     if (!Number.isFinite(parsed)) {
-      setEditing(false);
+      finishEdit();
       return;
     }
-    const clamped = Math.min(max, Math.max(min, Math.round(parsed)));
+    const clamped = Math.min(inputMax, Math.max(inputMin, Math.round(parsed)));
     onCommit(clamped);
-    setEditing(false);
+    finishEdit();
   };
 
   return (
@@ -168,8 +168,8 @@ function Half({
     >
       <CompactCircle
         ariaLabel={`Decrement ${label}`}
-        onClick={onDec}
         disabled={decDisabled}
+        holdHandlers={decHold}
       >
         <Minus size={11} strokeWidth={2.5} />
       </CompactCircle>
@@ -178,14 +178,14 @@ function Half({
           ref={inputRef}
           type="text"
           inputMode="numeric"
-          pattern="[0-9.]*"
+          pattern="[0-9]*"
           value={draft}
           aria-label={`Edit ${label}`}
           onChange={(e) => setDraft(e.target.value)}
           onPaste={(e) => {
             e.preventDefault();
             const text = e.clipboardData.getData('text');
-            setDraft(sanitizeNumeric(text));
+            setDraft(sanitize(text));
           }}
           onBlur={commitDraft}
           onKeyDown={(e) => {
@@ -194,7 +194,7 @@ function Half({
               commitDraft();
             } else if (e.key === 'Escape') {
               e.preventDefault();
-              setEditing(false);
+              finishEdit();
             }
           }}
           className="font-display flex-1 min-w-0 text-center bg-transparent border-0 outline-0 tabular-nums"
@@ -227,8 +227,8 @@ function Half({
       )}
       <CompactCircle
         ariaLabel={`Increment ${label}`}
-        onClick={onInc}
         disabled={incDisabled}
+        holdHandlers={incHold}
       >
         <Plus size={11} strokeWidth={2.5} />
       </CompactCircle>
@@ -249,35 +249,25 @@ function Half({
   );
 }
 
-function sanitizeNumeric(input: string): string {
-  const stripped = input.replace(/[^0-9.]/g, '');
-  const firstDot = stripped.indexOf('.');
-  if (firstDot === -1) return stripped;
-  return (
-    stripped.slice(0, firstDot + 1) +
-    stripped.slice(firstDot + 1).replace(/\./g, '')
-  );
-}
-
 function CompactCircle({
   children,
   ariaLabel,
-  onClick,
   disabled,
+  holdHandlers,
 }: {
   children: React.ReactNode;
   ariaLabel: string;
-  onClick: () => void;
   disabled?: boolean;
+  holdHandlers: ReturnType<typeof useHoldRepeat>;
 }) {
   // 32×32 hit-target wraps a 26×26 visual circle to satisfy WCAG floor.
   return (
     <button
       type="button"
       aria-label={ariaLabel}
-      onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0"
+      {...(disabled ? {} : holdHandlers)}
+      className="inline-flex items-center justify-center transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0 touch-none"
       style={{ width: 32, height: 32 }}
     >
       <span

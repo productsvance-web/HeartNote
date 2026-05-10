@@ -8,8 +8,9 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus, X } from 'lucide-react';
+import { useNumericInput } from './use-numeric-input';
+import { useHoldRepeat } from './use-hold-repeat';
 
 interface Props {
   value: number | null;
@@ -23,6 +24,15 @@ interface Props {
   placeholder?: string;
   onChange: (v: number) => void;
   onClear?: () => void;
+  // When true, the tap-to-type input only accepts digits (no decimal). Used
+  // for pillows / HR / SpO2 — caregivers don't pick "98.5 bpm".
+  integer?: boolean;
+  // Optional tighter floors for the tap-to-type input. The stepper's ±
+  // buttons still respect `min`/`max` (those mirror DB validity); these
+  // exist to stop someone typing clinically-incompatible values like
+  // "55%" SpO2. Defaults to min/max.
+  inputMin?: number;
+  inputMax?: number;
 }
 
 export function StepperControl({
@@ -37,10 +47,15 @@ export function StepperControl({
   placeholder = '—',
   onChange,
   onClear,
+  integer = false,
+  inputMin,
+  inputMax,
 }: Props) {
-  // Display: when formatValue is provided, use it (e.g. "182.4"). Otherwise
-  // fall back to a stringified value. The unit (if any) renders separately
-  // as a smaller Inter span via the .unit child below.
+  // Display: when formatValue is provided, use it (e.g. "182.4 lb"). The
+  // formatted value already includes the unit when relevant; we render the
+  // unit suffix separately ONLY when the caller passed `unit` and didn't
+  // bake it into formatValue. To stop the unit from disappearing during
+  // tap-to-type (B1), we render the unit alongside the input as well.
   const numericDisplay =
     value === null
       ? placeholder
@@ -60,92 +75,108 @@ export function StepperControl({
     onChange(Math.min(max, +(base + step).toFixed(2)));
   };
 
+  const decHold = useHoldRepeat(decrement);
+  const incHold = useHoldRepeat(increment);
+
   const decDisabled = value !== null && value <= min;
   const incDisabled = value !== null && value >= max;
 
-  // Tap-to-type on the value chip. Tapping swaps it for a numeric input;
-  // blur or Enter parses + clamps + commits. The input inherits Fraunces
-  // 30px so the value doesn't visually shrink during edit.
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string>('');
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    }
-  }, [editing]);
-
-  const beginEdit = () => {
-    setDraft(value === null ? '' : String(value));
-    setEditing(true);
-  };
+  const { editing, draft, setDraft, inputRef, beginEdit, finishEdit, sanitize } =
+    useNumericInput(value, { integer });
 
   const commitDraft = () => {
-    const cleaned = sanitizeNumeric(draft);
+    const cleaned = sanitize(draft);
     if (cleaned === '') {
       // Empty → leave value unchanged. Caregiver who wants to clear has
       // the trailing X.
-      setEditing(false);
+      finishEdit();
       return;
     }
     const parsed = Number(cleaned);
     if (!Number.isFinite(parsed)) {
-      setEditing(false);
+      finishEdit();
       return;
     }
-    const clamped = Math.min(max, Math.max(min, parsed));
-    const rounded = +clamped.toFixed(2);
+    const lo = inputMin ?? min;
+    const hi = inputMax ?? max;
+    const clamped = Math.min(hi, Math.max(lo, parsed));
+    const rounded = integer ? Math.round(clamped) : +clamped.toFixed(2);
     onChange(rounded);
-    setEditing(false);
+    finishEdit();
   };
 
   return (
     <div className="flex items-center justify-between gap-3">
       <CircleButton
         ariaLabel={`Decrement ${fieldLabel}`}
-        onClick={decrement}
         disabled={decDisabled}
+        holdHandlers={decHold}
       >
         <Minus size={14} strokeWidth={2.5} />
       </CircleButton>
 
       {editing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          inputMode="decimal"
-          pattern="[0-9.]*"
-          value={draft}
-          aria-label={`Edit ${fieldLabel}`}
-          onChange={(e) => setDraft(e.target.value)}
-          onPaste={(e) => {
-            e.preventDefault();
-            const text = e.clipboardData.getData('text');
-            setDraft(sanitizeNumeric(text));
-          }}
-          onBlur={commitDraft}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+        // Wrapping div keeps unit suffix visible during edit (B1 fix).
+        // The input takes the available width; the unit sits to its right
+        // with the same vertical-align nudge as the read-only chip below.
+        <div
+          className="flex-1 flex items-baseline justify-center"
+          style={{ position: 'relative' }}
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            inputMode={integer ? 'numeric' : 'decimal'}
+            pattern={integer ? '[0-9]*' : '[0-9.]*'}
+            value={draft}
+            aria-label={`Edit ${fieldLabel}`}
+            onChange={(e) => setDraft(e.target.value)}
+            onPaste={(e) => {
               e.preventDefault();
-              commitDraft();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              setEditing(false);
-            }
-          }}
-          // Inherit Fraunces 30px so the chip doesn't shrink during edit.
-          className="font-display flex-1 text-center bg-transparent border-0 outline-0 tabular-nums"
-          style={{
-            fontSize: 30,
-            fontWeight: 400,
-            lineHeight: 1,
-            letterSpacing: '-1px',
-            color: 'var(--foreground)',
-            padding: '4px 4px 6px',
-          }}
-        />
+              const text = e.clipboardData.getData('text');
+              setDraft(sanitize(text));
+            }}
+            onBlur={commitDraft}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitDraft();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                finishEdit();
+              }
+            }}
+            // Inherit Fraunces 30px so the chip doesn't shrink during edit.
+            // text-right + fixed unit gutter keeps the value's right edge
+            // aligned across edit/read so the digits don't visually jump.
+            className="font-display text-right bg-transparent border-0 outline-0 tabular-nums"
+            style={{
+              fontSize: 30,
+              fontWeight: 400,
+              lineHeight: 1,
+              letterSpacing: '-1px',
+              color: 'var(--foreground)',
+              padding: '4px 4px 6px',
+              width: unit ? 'calc(100% - 36px)' : '100%',
+            }}
+          />
+          {unit && (
+            <span
+              style={{
+                fontFamily: 'var(--font-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--muted-foreground)',
+                marginLeft: 5,
+                letterSpacing: '0.1px',
+                verticalAlign: '2px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {unit}
+            </span>
+          )}
+        </div>
       ) : (
         <button
           type="button"
@@ -199,8 +230,8 @@ export function StepperControl({
 
       <CircleButton
         ariaLabel={`Increment ${fieldLabel}`}
-        onClick={increment}
         disabled={incDisabled}
+        holdHandlers={incHold}
       >
         <Plus size={14} strokeWidth={2.5} />
       </CircleButton>
@@ -220,37 +251,24 @@ export function StepperControl({
   );
 }
 
-// Strip everything except digits and a single decimal point. "184 lb" → "184".
-// "2.5 kg paste-blob" → "2.5". Multiple decimals collapse to one (keeps the
-// first), so "1.2.3" → "1.23".
-function sanitizeNumeric(input: string): string {
-  const stripped = input.replace(/[^0-9.]/g, '');
-  const firstDot = stripped.indexOf('.');
-  if (firstDot === -1) return stripped;
-  return (
-    stripped.slice(0, firstDot + 1) +
-    stripped.slice(firstDot + 1).replace(/\./g, '')
-  );
-}
-
 function CircleButton({
   children,
   ariaLabel,
-  onClick,
   disabled,
+  holdHandlers,
 }: {
   children: React.ReactNode;
   ariaLabel: string;
-  onClick: () => void;
   disabled?: boolean;
+  holdHandlers: ReturnType<typeof useHoldRepeat>;
 }) {
   return (
     <button
       type="button"
       aria-label={ariaLabel}
-      onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0"
+      {...(disabled ? {} : holdHandlers)}
+      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0 touch-none"
       style={{
         width: 36,
         height: 36,
