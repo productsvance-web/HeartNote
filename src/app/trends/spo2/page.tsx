@@ -1,20 +1,18 @@
-// Server component for /trends/weight. Auth + onboarding + patient
-// gates (mirrors src/app/trends/page.tsx). Reads up to 13 months of
-// weight readings in one indexed query, then renders the client view.
+// Server component for /trends/spo2. Auth + onboarding + patient
+// gates (mirrors src/app/trends/weight/page.tsx). Reads up to 13 months
+// of SpO2 readings in one indexed query, then renders the client view.
 
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoOffset } from '@/lib/dates/iso-offset';
 import { PhoneShell } from '@/components/heartnote/PhoneShell';
-import { WeightTrendView } from '@/components/heartnote/weight-trend/WeightTrendView';
+import { Spo2TrendView } from '@/components/heartnote/spo2-trend/Spo2TrendView';
 import type { VitalReading } from '@/lib/trends/vital-reading';
 
-// Rolling 12 months. 366 covers leap years; the Y window helper trims
-// further to the patient-tz calendar.
 const FETCH_DAYS = 366;
 
-export default async function WeightTrendPage() {
+export default async function Spo2TrendPage() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -30,7 +28,7 @@ export default async function WeightTrendPage() {
 
   const { data: patient } = await supabase
     .from('patients')
-    .select('id, display_name, dry_weight_lb')
+    .select('id, display_name')
     .eq('caregiver_id', user.id)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -44,7 +42,7 @@ export default async function WeightTrendPage() {
     .from('daily_log_readings')
     .select('id, value, recorded_at, log_date')
     .eq('patient_id', patient.id)
-    .eq('field', 'weight_lb')
+    .eq('field', 'spo2')
     .gte('log_date', lower)
     .lte('log_date', today)
     .order('recorded_at', { ascending: true });
@@ -58,16 +56,12 @@ export default async function WeightTrendPage() {
 
   const firstName = firstWord(patient.display_name) ?? 'Mom';
 
-  const baselineLb =
-    patient.dry_weight_lb !== null ? Number(patient.dry_weight_lb) : null;
-
   return (
     <PhoneShell hideNav>
-      <WeightTrendView
+      <Spo2TrendView
         patientFirstName={firstName}
         timezone={profile.timezone}
         today={today}
-        baselineLb={baselineLb}
         allReadings={allReadings}
       />
     </PhoneShell>

@@ -1,13 +1,14 @@
-// Read + delete UI for weight readings. Slide-up sheet with two modes:
+// Read + delete UI for any single-value vital's readings. Slide-up sheet
+// with two modes:
 //
 // Read mode: chronological list (most-recent first), "Edit" toggles
 // into select mode, "Delete all" pill at the bottom fires a window
-// .confirm() that echoes the patient name + count.
+// .confirm() that echoes the patient's first name + count.
 //
 // Select mode: rows have circular checkboxes; "Select all" toggles all;
 // bottom action bar has Delete (N) + Cancel.
 //
-// Destructive-actions.md classification: weight readings are class-B
+// Destructive-actions.md classification: vital readings are class-B
 // (reversible-with-effort: caregiver can re-enter). Both single/multi
 // delete and "delete all" use confirm() with the target identity in
 // the prompt — no typed-confirmation modal.
@@ -17,26 +18,34 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
-import type { WeightReading } from '@/lib/trends/weight-window';
-import {
-  deleteWeightReadings,
-  deleteAllWeightReadings,
-} from '@/app/trends/weight/actions';
+import type { VitalReading } from '@/lib/trends/vital-reading';
+import type { VitalReadingConfig } from './vital-reading-config';
+
+type DeleteResult = { ok: true; deleted: number } | { ok: false; error: string };
 
 interface Props {
-  readings: WeightReading[]; // sorted ascending by recorded_at
+  config: VitalReadingConfig;
+  readings: VitalReading[]; // sorted ascending by recorded_at
   patientFirstName: string;
   timezone: string;
   today: string;
   onClose: () => void;
+  // Delete actions are passed in (not imported) so each /trends/<vital>
+  // page wires its own server actions without ViewDataSheet importing
+  // them by name.
+  deleteByIds: (input: { ids: string[] }) => Promise<DeleteResult>;
+  deleteAll: () => Promise<DeleteResult>;
 }
 
 export function ViewDataSheet({
+  config,
   readings,
   patientFirstName,
   timezone,
   today,
   onClose,
+  deleteByIds,
+  deleteAll,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -77,13 +86,13 @@ export function ViewDataSheet({
     );
     const msg =
       selectedCount === 1
-        ? `Delete the weight reading from ${range}?`
-        : `Delete ${selectedCount} weight readings (${range})?`;
+        ? `Delete the ${config.deleteNoun.singular} from ${range}?`
+        : `Delete ${selectedCount} ${config.deleteNoun.plural} (${range})?`;
     if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
       const ids = Array.from(selected);
-      const result = await deleteWeightReadings({ ids });
+      const result = await deleteByIds({ ids });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -95,11 +104,11 @@ export function ViewDataSheet({
 
   const onDeleteAll = () => {
     if (readings.length === 0) return;
-    const msg = `Delete all ${readings.length} of ${patientFirstName}'s weight readings? This cannot be undone.`;
+    const msg = `Delete all ${readings.length} of ${patientFirstName}'s ${config.deleteNoun.plural}? This cannot be undone.`;
     if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
-      const result = await deleteAllWeightReadings();
+      const result = await deleteAll();
       if (!result.ok) {
         setError(result.error);
         return;
@@ -114,7 +123,7 @@ export function ViewDataSheet({
       className="fixed inset-0 z-40 flex items-end justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label="View weight data"
+      aria-label={`View ${config.fieldLabel.toLowerCase()} data`}
     >
       <button
         type="button"
@@ -148,7 +157,7 @@ export function ViewDataSheet({
             className="font-display text-[20px] text-foreground"
             style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
           >
-            All weights
+            {config.listTitle}
           </h2>
           {hasReadings ? (
             editing ? (
@@ -249,12 +258,12 @@ export function ViewDataSheet({
                       letterSpacing: '-0.2px',
                     }}
                   >
-                    {r.value.toFixed(1)}
+                    {config.formatValue(r.value)}
                     <span
                       className="text-muted-foreground"
                       style={{ fontSize: 12, fontWeight: 500, marginLeft: 4 }}
                     >
-                      lb
+                      {config.unit}
                     </span>
                   </span>
                   <span className="text-[12px] text-muted-foreground tabular-nums">
@@ -324,7 +333,7 @@ export function ViewDataSheet({
             }}
           >
             <Trash2 size={14} />
-            {pending ? 'Deleting…' : 'Delete all weight data'}
+            {pending ? 'Deleting…' : `Delete all ${config.fieldLabel.toLowerCase()} data`}
           </button>
         )}
       </div>
@@ -332,7 +341,7 @@ export function ViewDataSheet({
   );
 }
 
-function whenLabel(r: WeightReading, today: string, tz: string): string {
+function whenLabel(r: VitalReading, today: string, tz: string): string {
   const time = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
@@ -350,7 +359,7 @@ function whenLabel(r: WeightReading, today: string, tz: string): string {
   return `${date}, ${time}`;
 }
 
-function rangeLabel(rs: WeightReading[], tz: string): string {
+function rangeLabel(rs: VitalReading[], tz: string): string {
   if (rs.length === 0) return '';
   if (rs.length === 1) {
     const r = rs[0];
@@ -377,3 +386,4 @@ function rangeLabel(rs: WeightReading[], tz: string): string {
   }).format(new Date(oldest.recorded_at));
   return `${oldestStr} – ${newestStr}`;
 }
+

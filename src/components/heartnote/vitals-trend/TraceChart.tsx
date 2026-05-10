@@ -1,26 +1,26 @@
-// EKG-style trace chart for the /trends/weight page. Hard-angled
-// polyline (no Bezier smoothing), thin sage stroke, faint horizontal
-// gridlines, dots on every reading inside the visible window.
+// Trace chart for /trends/<vital> pages. Hard-angled polyline (no
+// Bezier), thin sage stroke, faint horizontal gridlines, dots on every
+// reading inside the visible window.
 //
 // The polyline includes ONE reading immediately before startMs and ONE
 // reading immediately after endMs so the line correctly crosses the
-// window boundary at the interpolated y. This is the "continuity"
-// behavior Apple Health uses — a reading on May 9 visually connects to
-// one on May 10 in the D window for May 10 because the May 9 segment
-// gets clipped at midnight (right at the y the line passes through).
+// window boundary at the interpolated y. Apple Health's "continuity"
+// behavior: a reading on May 9 visually connects to one on May 10 in
+// the D window for May 10 because the segment crosses midnight at the
+// y the line passes through.
 //
-// The connecting segments outside the chart's data area are clipped by
-// a <clipPath> so the line never bleeds onto the y-axis labels or
-// outside the chart frame.
+// Optional alertFloor prop draws a dashed horizontal line at a clinical
+// threshold (e.g. SpO2's 88% 911 floor). The line lives inside the same
+// clipPath as the polyline so it never bleeds past chart edges.
 
-import type { WeightReading } from '@/lib/trends/weight-window';
+import type { VitalReading } from '@/lib/trends/vital-reading';
 
 type AxisLabel = { x: number; label: string };
 
 interface Props {
-  // ALL readings (sorted ascending by recorded_at). EkgChart picks
+  // ALL readings (sorted ascending by recorded_at). TraceChart picks
   // visible ones for dots and adjacent ones for polyline continuity.
-  data: WeightReading[];
+  data: VitalReading[];
   startMs: number;
   endMs: number;
   xAxisLabels: AxisLabel[];
@@ -28,9 +28,14 @@ interface Props {
   yMax: number;
   yTicks: number[];
   height?: number;
-  // When false, render dots only (no connecting line). W mode uses
-  // false because intra-week weigh-ins aren't a continuous trend.
+  // When false, render dots only (no connecting line). W mode for both
+  // weight and spo2 uses false — intra-week readings aren't a continuous
+  // trend.
   showLine?: boolean;
+  // Optional clinical floor line (SpO2 88% 911 floor). Drawn dashed,
+  // inside the clipPath, beneath the polyline.
+  alertFloor?: { y: number; color: string };
+  ariaLabel?: string;
 }
 
 const W = 280;
@@ -39,7 +44,7 @@ const PAD_R = 32;
 const PAD_T = 12;
 const PAD_B = 16;
 
-export function EkgChart({
+export function TraceChart({
   data,
   startMs,
   endMs,
@@ -49,6 +54,8 @@ export function EkgChart({
   yTicks,
   height = 132,
   showLine = true,
+  alertFloor,
+  ariaLabel = 'Vital trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
@@ -108,7 +115,7 @@ export function EkgChart({
       width="100%"
       height="100%"
       preserveAspectRatio="xMidYMid meet"
-      aria-label="Weight trend chart"
+      aria-label={ariaLabel}
       style={{ pointerEvents: 'none' }}
     >
       <defs>
@@ -164,10 +171,22 @@ export function EkgChart({
         );
       })}
 
-      {/* Polyline + dots both clipped to the chart frame so the
-          adjacent-reading segments don't paint over the y-axis labels
-          or outside the chart. */}
+      {/* Polyline + dots + optional alertFloor all clipped to the chart
+          frame so adjacent-reading segments and the floor line don't
+          paint over the y-axis labels or outside the chart. */}
       <g clipPath={`url(#${clipId})`}>
+        {alertFloor && yOf(alertFloor.y) >= PAD_T && yOf(alertFloor.y) <= height - PAD_B && (
+          <line
+            x1={PAD_L}
+            x2={W - PAD_R}
+            y1={yOf(alertFloor.y)}
+            y2={yOf(alertFloor.y)}
+            stroke={alertFloor.color}
+            strokeWidth="1"
+            strokeDasharray="4 3"
+            opacity="0.85"
+          />
+        )}
         {showLine && path && (
           <path
             d={path}
