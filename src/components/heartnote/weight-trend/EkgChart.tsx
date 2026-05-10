@@ -54,8 +54,8 @@ export function EkgChart({
     <svg
       viewBox={`0 0 ${W} ${height}`}
       width="100%"
-      height={height}
-      preserveAspectRatio="none"
+      height="100%"
+      preserveAspectRatio="xMidYMid meet"
       aria-label="Weight trend chart"
     >
       {yTicks.map((tick) => {

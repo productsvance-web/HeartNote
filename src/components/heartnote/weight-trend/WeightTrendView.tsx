@@ -66,7 +66,12 @@ export function WeightTrendView({
   const xLabels = useMemo(() => xLabelsFor(period, today), [period, today]);
 
   const todayReadings = slice.filter((r) => r.log_date === today);
-  const subjectLine = subjectFor(patientFirstName, todayReadings, timezone);
+  const hasAnyReadings = allReadings.length > 0;
+  // Subject line only when there's something to say about today.
+  const subjectLine =
+    todayReadings.length > 0
+      ? subjectFor(patientFirstName, todayReadings, timezone)
+      : null;
 
   const onSave = async (input: AddWeightInput) => {
     const result = await addWeightReading(input);
@@ -100,47 +105,40 @@ export function WeightTrendView({
       </header>
 
       <div className="px-5 pb-32">
-        <p
-          className="text-[12px] text-muted-foreground mt-2"
-          style={{ letterSpacing: '0.3px' }}
-        >
-          {subjectLine}
-        </p>
+        {subjectLine && (
+          <p
+            className="text-[12px] text-muted-foreground mt-2"
+            style={{ letterSpacing: '0.3px' }}
+          >
+            {subjectLine}
+          </p>
+        )}
 
-        {/* Hero */}
-        <div className="mt-3 flex items-end gap-2.5">
-          {hero ? (
-            <>
-              <span
-                className="font-display text-foreground"
-                style={{
-                  fontSize: 78,
-                  lineHeight: 0.95,
-                  letterSpacing: '-3px',
-                  fontWeight: 300,
-                }}
-              >
-                {Math.floor(hero.value)}
-                <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
-                  .{decimalPart(hero.value)}
-                </span>
-              </span>
-              <span
-                className="text-muted-foreground pb-3"
-                style={{ fontSize: 14, fontWeight: 500, letterSpacing: '0.3px' }}
-              >
-                lb
-              </span>
-            </>
-          ) : (
+        {/* Hero — only render when the selected window has data. */}
+        {hero && (
+          <div className="mt-3 flex items-end gap-2.5">
             <span
-              className="font-display text-muted-foreground"
-              style={{ fontSize: 78, lineHeight: 0.95, fontWeight: 300 }}
+              className="font-display text-foreground"
+              style={{
+                fontSize: 78,
+                lineHeight: 0.95,
+                letterSpacing: '-3px',
+                fontWeight: 300,
+              }}
             >
-              —
+              {Math.floor(hero.value)}
+              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+                .{decimalPart(hero.value)}
+              </span>
             </span>
-          )}
-        </div>
+            <span
+              className="text-muted-foreground pb-3"
+              style={{ fontSize: 14, fontWeight: 500, letterSpacing: '0.3px' }}
+            >
+              lb
+            </span>
+          </div>
+        )}
         {intraDay !== null && intraDay > 0 && (
           <div className="mt-2.5">
             <span
@@ -214,7 +212,11 @@ export function WeightTrendView({
               </button>
             ))}
           </div>
-          {slice.length > 0 ? (
+          {/* Aspect-ratio container so the SVG scales uniformly without
+              stretching on wide viewports. The chart frame (gridlines +
+              axis labels) renders even when the slice is empty — no
+              synthetic "tap + below" copy. */}
+          <div style={{ width: '100%', aspectRatio: '280 / 132' }}>
             <EkgChart
               data={slice}
               period={period}
@@ -224,35 +226,22 @@ export function WeightTrendView({
               yMax={yScale.max}
               yTicks={yTicks}
             />
-          ) : (
-            <div
-              className="rounded-2xl text-center text-[12.5px] text-muted-foreground"
-              style={{
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-                padding: '38px 14px',
-              }}
-            >
-              No readings in this window — tap + below to add one.
-            </div>
-          )}
-          {slice.length > 0 && (
-            <div className="flex justify-between mt-1.5 px-1">
-              {xLabels.map((l, i) => (
-                <span
-                  key={i}
-                  className="text-muted-foreground"
-                  style={{
-                    fontSize: 8.5,
-                    letterSpacing: '0.2px',
-                    fontWeight: 500,
-                  }}
-                >
-                  {l.label}
-                </span>
-              ))}
-            </div>
-          )}
+          </div>
+          <div className="flex justify-between mt-1.5 px-1">
+            {xLabels.map((l, i) => (
+              <span
+                key={i}
+                className="text-muted-foreground"
+                style={{
+                  fontSize: 8.5,
+                  letterSpacing: '0.2px',
+                  fontWeight: 500,
+                }}
+              >
+                {l.label}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* Stats trio */}
@@ -304,8 +293,9 @@ export function WeightTrendView({
           </div>
         )}
 
-        {/* Source footer */}
-        {allReadings.length > 0 && (
+        {/* Source footer — only when readings exist, and only mentions
+            the selected window (no "0 in today" footer noise). */}
+        {hasAnyReadings && slice.length > 0 && (
           <p
             className="mt-3 text-[11px] italic text-muted-foreground"
             style={{ lineHeight: 1.5 }}
@@ -498,7 +488,7 @@ function subjectFor(
   todays: WeightReading[],
   tz: string,
 ): string {
-  if (todays.length === 0) return `${name} · no readings yet today`;
+  // Only called when todays.length > 0; render a positive read.
   const latest = todays[todays.length - 1];
   const t = timeLabelFor(latest, tz);
   return `${name} · ${todays.length} weigh-in${todays.length === 1 ? '' : 's'} today · latest ${t}`;
