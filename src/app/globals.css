@@ -44,9 +44,18 @@
   --color-status-alert-soft: var(--status-alert-soft);
 
   --color-cream: var(--cream);
+  --color-cream-card: var(--cream-card);
   --color-sage: var(--sage);
   --color-sage-deep: var(--sage-deep);
   --color-sage-pale: var(--sage-pale);
+  --color-sage-mist: var(--sage-mist);
+  --color-ink-faint: var(--ink-faint);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-line: var(--warn-line);
+  --color-alert-bg: var(--alert-bg);
+  --color-alert-ink: var(--alert-ink);
+  --color-alert-line: var(--alert-line);
   --color-bluegray: var(--bluegray);
 
   --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
@@ -104,9 +113,18 @@
   --status-alert-soft: oklch(0.95 0.04 30);
 
   --cream: oklch(0.97 0.018 85);
+  --cream-card: oklch(0.97 0.020 85);    /* mockup #FBF7F0 — slightly off cream */
   --sage: oklch(0.62 0.06 155);
   --sage-deep: oklch(0.42 0.025 145);
   --sage-pale: oklch(0.83 0.02 145);
+  --sage-mist: oklch(0.91 0.012 145);    /* mockup #E1E7DC — very pale sage border */
+  --ink-faint: oklch(0.68 0.018 60);     /* mockup #A89A8B — context-line color */
+  --warn-bg: oklch(0.92 0.06 90);        /* mockup #F2E3C5 — warn segmented bg */
+  --warn-ink: oklch(0.45 0.07 75);       /* mockup #8A6A35 — warn segmented text */
+  --warn-line: oklch(0.72 0.10 80);      /* mockup #C49C5A — warn outline */
+  --alert-bg: oklch(0.86 0.07 30);       /* mockup #ECD2C7 — alert segmented bg */
+  --alert-ink: oklch(0.42 0.10 30);      /* mockup #8C4A36 — alert segmented text */
+  --alert-line: oklch(0.65 0.13 30);     /* mockup #C46A4A — alert outline */
   --bluegray: oklch(0.55 0.03 220);
 
   --chart-1: oklch(0.62 0.06 155);

@@ -87,9 +87,17 @@ The app has shipped multiple incompatible icon registers for similar actions (a 
 - aria-labels: `Decrement {field name}` / `Increment {field name}` (e.g., `Decrement weight`, `Increment pillow count`).
 - **Clearing a touched value uses register #1**, not a third white circle. The X is size 14, `text-muted-foreground`, 32×32 hit area, rendered inline-trailing the plus button. Only visible when the value is non-default.
 
-**Reference implementation:** `src/components/heartnote/manual-entry/StepperControl.tsx` (used on `/log/manual` for weight + pillow count).
+**Reference implementation:** `src/components/heartnote/log/StepperControl.tsx` (used on `/log` for weight, pillow count, HR, SpO2).
 
 **When to use:** numeric increment/decrement of a single value (weight, pillow count, dose-edit on med rows in PR 2). Distinct from the four other registers.
+
+**Compact dual-stepper variant:** for fields that pair two numbers in one
+control (currently: blood pressure on `/log`), the per-half buttons are
+26×26 visual glyphs inside a 32×32 hit-area wrapper. The mockup's compact
+register reads as a matched pair on a single card; the design wins by
+default per CLAUDE.md rule #12. Reference: `src/components/heartnote/log/DualStepperControl.tsx`.
+The trailing-X clear is OPTIONAL on the dual-stepper because clearing one
+half without the other rarely makes sense.
 
 **Forbidden alternatives for this kind:**
 - A free-text numeric input. Caregivers can fat-finger; ±0.2 lb taps are the discoverable way to land on 182.4.

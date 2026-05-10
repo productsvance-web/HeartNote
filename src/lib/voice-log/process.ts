@@ -139,8 +139,16 @@ export async function processVoiceLog(
         // succeeds even if the LLM violates them; warn so we notice drift.
         const data = parsed.data;
         if (data.symptom === 'fatigue' && data.severity !== undefined) {
+          // The DB now PERMITS severity on fatigue (the CHECK was dropped
+          // in 20260510000000_fatigue_severity.sql) so the /log redesign
+          // modal can render a 4-level segmented control. Voice extraction
+          // intentionally stays binary (R19) — Claude doesn't grade fatigue
+          // because the prompt anchor for the 0-4 scale is too soft for
+          // dictated input. Strip whatever the LLM returned and keep
+          // present-only semantics. The new severity column gets filled
+          // from the modal's tap path instead.
           delete data.severity;
-          validationWarnings.push('stripped severity from fatigue event (fatigue is binary)');
+          validationWarnings.push('stripped severity from fatigue event (fatigue is binary in voice path)');
         }
         if (data.symptom !== 'swelling' && data.resolves_overnight !== undefined) {
           delete data.resolves_overnight;

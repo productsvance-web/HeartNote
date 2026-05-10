@@ -94,7 +94,7 @@ export function DailyPromptHero() {
     </Link>
     <div className="mt-3 text-center">
       <Link
-        href="/log/manual"
+        href="/log"
         className="text-[13px] font-semibold underline underline-offset-2"
         style={{ color: 'var(--sage-deep)' }}
       >

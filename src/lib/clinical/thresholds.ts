@@ -58,6 +58,23 @@ export const SPO2_TIER_1_WITH_DYSPNEA = 90;
 // 5 days ago shouldn't fire today's tier-1.
 export const SPO2_FRESHNESS_HOURS = 24;
 
+// SpO2 watch band: 91–94% with new dyspnea is a "watch today" signal in
+// the helper text. Below 91% (with new dyspnea) is tier 1; ≥95% is calm.
+// cited: research/chf-source-of-truth.md §3 "SpO2 91–94% sustained → call
+// cardiologist (sub-tier-1 watch band)".
+export const SPO2_WATCH_BAND_LOW = 91;
+export const SPO2_WATCH_BAND_HIGH = 94;
+
+// ─── Helper-text only (calm-band thresholds) ────────────────────────────────
+
+// Weight: caregiver helper text shows "within 2 lb of baseline" as the
+// calm-tone copy. Below the WEIGHT_GAIN_TIER_2_7D_LB-1 watch threshold
+// but above this floor we say "drift from baseline" — small enough to
+// surface but not alarming.
+// cited: research/chf-source-of-truth.md §3 "minor day-to-day fluctuations
+// (±2 lb) are normal in CHF patients".
+export const WEIGHT_CALM_BAND_LB = 2;
+
 // ─── Engine-internal (not in the research file) ──────────────────────────────
 
 // Cold-start: a patient's rolling baseline only stabilizes after enough days

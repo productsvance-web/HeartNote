@@ -1,12 +1,18 @@
-// Numeric stepper — minus / value-chip / plus. White-circle sub-buttons,
-// 36×36 hit. Optional trailing register-#1 X (size 14, muted) when value
-// is non-default. Used for weight + pillow count on /log/manual.
+// Numeric stepper — minus / NumberChip / plus, with optional trailing
+// register-#1 X to clear when the value differs from the seed.
 //
-// Canonical register #5 per .claude/rules/canonical-controls.md.
+// The chip itself is one component (NumberChip) with a single render
+// path; this file just composes the surrounding ± buttons + clear X.
+//
+// Visual register matches docs/design/heartnote-log-redesign-mockup.html
+// (.stepper / .step-btn). Canonical register #5 per
+// .claude/rules/canonical-controls.md.
 
 'use client';
 
 import { Minus, Plus, X } from 'lucide-react';
+import { NumberChip } from './NumberChip';
+import { useHoldRepeat } from './use-hold-repeat';
 
 interface Props {
   value: number | null;
@@ -20,6 +26,12 @@ interface Props {
   placeholder?: string;
   onChange: (v: number) => void;
   onClear?: () => void;
+  // Whole-number variant — used for pillows / HR / SpO2.
+  integer?: boolean;
+  // Optional tighter input floors (vs. min/max which mirror DB validity).
+  // Stop someone typing clinically-incompatible values like "55%" SpO2.
+  inputMin?: number;
+  inputMax?: number;
 }
 
 export function StepperControl({
@@ -34,16 +46,10 @@ export function StepperControl({
   placeholder = '—',
   onChange,
   onClear,
+  integer = false,
+  inputMin,
+  inputMax,
 }: Props) {
-  const display =
-    value === null
-      ? placeholder
-      : formatValue
-        ? formatValue(value)
-        : unit
-          ? `${value} ${unit}`
-          : String(value);
-
   const canClear =
     onClear !== undefined && value !== null && value !== defaultValue;
 
@@ -56,39 +62,40 @@ export function StepperControl({
     onChange(Math.min(max, +(base + step).toFixed(2)));
   };
 
+  const decHold = useHoldRepeat(decrement);
+  const incHold = useHoldRepeat(increment);
+
   const decDisabled = value !== null && value <= min;
   const incDisabled = value !== null && value >= max;
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center justify-between gap-3">
       <CircleButton
         ariaLabel={`Decrement ${fieldLabel}`}
-        onClick={decrement}
         disabled={decDisabled}
+        holdHandlers={decHold}
       >
-        <Minus size={16} strokeWidth={2.5} />
+        <Minus size={14} strokeWidth={2.5} />
       </CircleButton>
 
-      <span
-        className="inline-flex items-center justify-center rounded-full text-base tabular-nums px-4"
-        style={{
-          minWidth: 96,
-          height: 36,
-          background: 'var(--card)',
-          border: '1px solid var(--border)',
-          color: value === null ? 'var(--muted-foreground)' : 'var(--foreground)',
-          fontWeight: value === null ? 400 : 500,
-        }}
-      >
-        {display}
-      </span>
+      <NumberChip
+        value={value}
+        formatValue={formatValue}
+        unit={unit}
+        placeholder={placeholder}
+        integer={integer}
+        inputMin={inputMin ?? min}
+        inputMax={inputMax ?? max}
+        onChange={onChange}
+        ariaLabel={`Edit ${fieldLabel}`}
+      />
 
       <CircleButton
         ariaLabel={`Increment ${fieldLabel}`}
-        onClick={increment}
         disabled={incDisabled}
+        holdHandlers={incHold}
       >
-        <Plus size={16} strokeWidth={2.5} />
+        <Plus size={14} strokeWidth={2.5} />
       </CircleButton>
 
       {canClear && (
@@ -96,7 +103,7 @@ export function StepperControl({
           type="button"
           aria-label={`Clear ${fieldLabel}`}
           onClick={onClear}
-          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition"
+          className="inline-flex items-center justify-center text-muted-foreground active:text-foreground transition flex-shrink-0"
           style={{ width: 32, height: 32 }}
         >
           <X size={14} strokeWidth={2} />
@@ -109,28 +116,27 @@ export function StepperControl({
 function CircleButton({
   children,
   ariaLabel,
-  onClick,
   disabled,
+  holdHandlers,
 }: {
   children: React.ReactNode;
   ariaLabel: string;
-  onClick: () => void;
   disabled?: boolean;
+  holdHandlers: ReturnType<typeof useHoldRepeat>;
 }) {
   return (
     <button
       type="button"
       aria-label={ariaLabel}
-      onClick={onClick}
       disabled={disabled}
-      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30"
+      {...(disabled ? {} : holdHandlers)}
+      className="inline-flex items-center justify-center rounded-full transition active:scale-[0.94] disabled:opacity-30 flex-shrink-0 touch-none"
       style={{
         width: 36,
         height: 36,
-        background: 'var(--card)',
-        border: '1px solid var(--border)',
+        background: 'var(--cream)',
+        border: '1px solid var(--sage-mist)',
         color: 'var(--foreground)',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
       }}
     >
       {children}
