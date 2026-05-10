@@ -58,11 +58,7 @@ export function WeightTrendView({
 
   const intraDay = intraDayRangeFor(slice, today, timezone);
 
-  const yScale = useMemo(() => yScaleFor(slice, hero), [slice, hero]);
-  const yTicks = useMemo(
-    () => tickStepsFor(yScale.min, yScale.max),
-    [yScale],
-  );
+  const yScale = useMemo(() => yScaleFor(slice), [slice]);
   const xLabels = useMemo(() => xLabelsFor(period, today), [period, today]);
 
   const todayReadings = slice.filter((r) => r.log_date === today);
@@ -114,30 +110,39 @@ export function WeightTrendView({
           </p>
         )}
 
-        {/* Hero — only render when the selected window has data. */}
-        {hero && (
-          <div className="mt-3 flex items-end gap-2.5">
-            <span
-              className="font-display text-foreground"
-              style={{
-                fontSize: 78,
-                lineHeight: 0.95,
-                letterSpacing: '-3px',
-                fontWeight: 300,
-              }}
-            >
-              {Math.floor(hero.value)}
-              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
-                .{decimalPart(hero.value)}
-              </span>
+        {/* Hero. When the selected window is empty, render a muted
+            "0.0 lb / Weight" placeholder so the area keeps its shape
+            instead of collapsing. */}
+        <div className="mt-3 flex items-end gap-2.5">
+          <span
+            className="font-display"
+            style={{
+              fontSize: 78,
+              lineHeight: 0.95,
+              letterSpacing: '-3px',
+              fontWeight: 300,
+              color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
+            }}
+          >
+            {Math.floor(hero?.value ?? 0)}
+            <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+              .{decimalPart(hero?.value ?? 0)}
             </span>
-            <span
-              className="text-muted-foreground pb-3"
-              style={{ fontSize: 14, fontWeight: 500, letterSpacing: '0.3px' }}
-            >
-              lb
-            </span>
-          </div>
+          </span>
+          <span
+            className="text-muted-foreground pb-3"
+            style={{ fontSize: 14, fontWeight: 500, letterSpacing: '0.3px' }}
+          >
+            lb
+          </span>
+        </div>
+        {!hero && (
+          <p
+            className="text-[12px] text-muted-foreground mt-1"
+            style={{ letterSpacing: '0.3px' }}
+          >
+            Weight
+          </p>
         )}
         {intraDay !== null && intraDay > 0 && (
           <div className="mt-2.5">
@@ -224,7 +229,7 @@ export function WeightTrendView({
               xAxisLabels={xLabels}
               yMin={yScale.min}
               yMax={yScale.max}
-              yTicks={yTicks}
+              yTicks={yScale.ticks}
             />
           </div>
           <div className="flex justify-between mt-1.5 px-1">
@@ -352,35 +357,45 @@ function decimalPart(v: number): string {
   return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }
 
-// Y-axis always snaps to increments of 10 (lb). Examples:
-//   value 209  → min 200, max 220 (range 20)
-//   value 215  → min 210, max 230 (range 20)
-//   178..209  → min 170, max 210 (range 40)
-//   single 178 → min 170, max 190 (range 20)
-// Minimum span is 20 lb so the trace doesn't pancake on a single reading.
-const Y_AXIS_SNAP_LB = 10;
-const Y_AXIS_MIN_SPAN_LB = 20;
+// "Nice" 4-tick Y axis. Same algorithm Apple Health (and D3) uses:
+// pick a step from {1, 2, 5} × 10ⁿ that divides (max − min) into 3
+// intervals (= 4 ticks), then snap min DOWN to a multiple of step.
+// Empty state defaults to [0, 50, 100, 150]. Range is always at
+// least min + 3*step so the four labels are evenly spaced.
+const TARGET_INTERVALS = 3; // 3 intervals → 4 labels
+const NICE_MULTIPLIERS = [1, 2, 5];
 
-function yScaleFor(
-  slice: WeightReading[],
-  hero: WeightReading | null,
-): { min: number; max: number } {
-  const values = slice.map((r) => r.value);
-  if (hero && !slice.includes(hero)) values.push(hero.value);
-  if (values.length === 0) return { min: 150, max: 200 };
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
-  const min = Math.floor(lo / Y_AXIS_SNAP_LB) * Y_AXIS_SNAP_LB;
-  const ceilMax = Math.ceil(hi / Y_AXIS_SNAP_LB) * Y_AXIS_SNAP_LB;
-  const max = Math.max(ceilMax, min + Y_AXIS_MIN_SPAN_LB);
-  return { min, max };
+function niceStep(rawStep: number): number {
+  if (rawStep <= 0) return 1;
+  const exponent = Math.floor(Math.log10(rawStep));
+  const base = Math.pow(10, exponent);
+  for (const m of NICE_MULTIPLIERS) {
+    if (m * base >= rawStep) return m * base;
+  }
+  return 10 * base;
 }
 
-// Ticks every 10 lb across the snapped y-domain.
-function tickStepsFor(min: number, max: number): number[] {
+function yScaleFor(slice: WeightReading[]): {
+  min: number;
+  max: number;
+  ticks: number[];
+} {
+  const values = slice.map((r) => r.value);
+  if (values.length === 0) {
+    // Bare scaffold for the empty state.
+    return { min: 0, max: 150, ticks: [0, 50, 100, 150] };
+  }
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  // For a single reading, give it a 30 lb span so the four ticks
+  // around the value carry meaning instead of clustering.
+  const rawSpan = hi - lo > 0 ? hi - lo : 30;
+  const step = niceStep(rawSpan / TARGET_INTERVALS);
+  const min = Math.floor(lo / step) * step;
+  const max = min + step * TARGET_INTERVALS;
   const ticks: number[] = [];
-  for (let v = min; v <= max; v += Y_AXIS_SNAP_LB) ticks.push(v);
-  return ticks;
+  for (let i = 0; i <= TARGET_INTERVALS; i++) ticks.push(min + i * step);
+  return { min, max, ticks };
 }
 
 function xLabelsFor(
