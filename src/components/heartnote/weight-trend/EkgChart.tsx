@@ -1,27 +1,19 @@
 // EKG-style trace chart for the /trends/weight page. Hard-angled
 // polyline (no Bezier smoothing), thin sage stroke, faint horizontal
-// gridlines, single dot + halo on the latest reading only — the
-// per-point dots from the mockup are intentionally dropped to keep the
-// trace reading like a heart-monitor line.
+// gridlines, single dot on the latest reading. The chart is purely
+// presentational — it receives a fully-resolved [startMs, endMs] window
+// and plots whatever readings the parent passed in.
 
-import {
-  lowerLogDateFor,
-  type WeightReading,
-  type WindowPeriod,
-} from '@/lib/trends/weight-window';
+import type { WeightReading } from '@/lib/trends/weight-window';
 
 type AxisLabel = { x: number; label: string };
 
 interface Props {
   data: WeightReading[];
-  period: WindowPeriod;
-  // Today (YYYY-MM-DD in patient tz). Used as the right edge of the
-  // visible window for date-based x positioning.
-  today: string;
-  // Patient timezone — required so D-period x-positioning uses the
-  // patient's wall-clock hour, not the caregiver's browser-local hour.
-  // Caregiver and patient can be in different tz (caregiver traveling).
-  timezone: string;
+  // Visible window in milliseconds since epoch. Readings outside this
+  // range are clamped to the chart edges by their fraction.
+  startMs: number;
+  endMs: number;
   xAxisLabels: AxisLabel[];
   yMin: number;
   yMax: number;
@@ -31,15 +23,14 @@ interface Props {
 
 const W = 280;
 const PAD_L = 6;
-const PAD_R = 32; // wider on the right to give the y-axis labels breathing room
+const PAD_R = 32;
 const PAD_T = 12;
 const PAD_B = 16;
 
 export function EkgChart({
   data,
-  period,
-  today,
-  timezone,
+  startMs,
+  endMs,
   xAxisLabels,
   yMin,
   yMax,
@@ -48,11 +39,18 @@ export function EkgChart({
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
+  const span = Math.max(1, endMs - startMs);
 
-  const xs = data.map((r) =>
-    xPositionFor(r, period, innerW, timezone, today),
-  );
-  const ys = data.map(
+  const visible = data.filter((r) => {
+    const t = Date.parse(r.recorded_at);
+    return t >= startMs && t <= endMs;
+  });
+
+  const xs = visible.map((r) => {
+    const t = Date.parse(r.recorded_at);
+    return PAD_L + ((t - startMs) / span) * innerW;
+  });
+  const ys = visible.map(
     (r) => PAD_T + (1 - (r.value - yMin) / (yMax - yMin)) * innerH,
   );
 
@@ -67,6 +65,7 @@ export function EkgChart({
       height="100%"
       preserveAspectRatio="xMidYMid meet"
       aria-label="Weight trend chart"
+      style={{ pointerEvents: 'none' }}
     >
       {yTicks.map((tick) => {
         const y = PAD_T + (1 - (tick - yMin) / (yMax - yMin)) * innerH;
@@ -115,7 +114,7 @@ export function EkgChart({
         );
       })}
 
-      {data.length >= 2 && (
+      {visible.length >= 2 && (
         <path
           d={path}
           fill="none"
@@ -126,7 +125,7 @@ export function EkgChart({
         />
       )}
 
-      {data.length > 0 && (
+      {visible.length > 0 && (
         <circle cx={lastX} cy={lastY} r="2.5" fill="#5A6B5C" />
       )}
     </svg>
@@ -140,43 +139,4 @@ function polylinePath(xs: number[], ys: number[]): string {
     d += ` L ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`;
   }
   return d;
-}
-
-function xPositionFor(
-  r: WeightReading,
-  period: WindowPeriod,
-  innerW: number,
-  timezone: string,
-  today: string,
-): number {
-  if (period === 'D') {
-    // Hour-of-day on a 12 AM → 12 AM axis, in patient tz.
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(new Date(r.recorded_at));
-    let h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
-    if (h === 24) h = 0;
-    const mi = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-    const hours = h + mi / 60;
-    return PAD_L + (hours / 24) * innerW;
-  }
-  // W / M / 6M / Y: position by calendar date within [windowStart, today].
-  // Index-based even-spacing was the bug — with 2 readings on Sat + Sun,
-  // index 0 landed at Mon's column and the line stretched across the
-  // whole week instead of just the right two days.
-  const windowStart = lowerLogDateFor(period, today);
-  const startMs = isoToUtcMs(windowStart);
-  const endMs = isoToUtcMs(today);
-  const readingMs = isoToUtcMs(r.log_date);
-  const span = endMs - startMs;
-  const fraction =
-    span <= 0 ? 1 : Math.max(0, Math.min(1, (readingMs - startMs) / span));
-  return PAD_L + fraction * innerW;
-}
-
-function isoToUtcMs(iso: string): number {
-  return Date.parse(`${iso}T00:00:00Z`);
 }

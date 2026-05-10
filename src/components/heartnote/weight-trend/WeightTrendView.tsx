@@ -1,12 +1,14 @@
 'use client';
 
-// Client view for /trends/weight. Owns the D/W/M/6M/Y filter state.
-// Renders the back chevron + title, subject line, hero numeric, chart
-// section, lead stat, stats trio, source footer, and the floating "+"
-// utility button that opens AddWeightSheet. All windowing math lives in
-// src/lib/trends/weight-window.ts so the view stays presentational.
+// Client view for /trends/weight. Window state is a single endMs (ms
+// since epoch) — the right edge of the visible window. Period
+// determines the window's WIDTH; endMs determines its position.
+//
+// Drag on the chart pans the window through time (Apple Health style).
+// Chevrons step by full window-width. Y has no scrub (we only track
+// 12 months). Period change resets endMs to "now" / end-of-today.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
@@ -14,13 +16,11 @@ import { EkgChart } from './EkgChart';
 import { AddWeightSheet, type AddWeightInput } from './AddWeightSheet';
 import { InfoMenu } from './InfoMenu';
 import { ViewDataSheet } from './ViewDataSheet';
-import {
-  lowerLogDateFor,
-  windowSliceFor,
-  intraDayRangeFor,
-  type WeightReading,
-  type WindowPeriod,
+import type {
+  WeightReading,
+  WindowPeriod,
 } from '@/lib/trends/weight-window';
+import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
 import { addWeightReading } from '@/app/trends/weight/actions';
 
@@ -34,6 +34,32 @@ interface Props {
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
 
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+function windowSpanMs(period: WindowPeriod): number {
+  switch (period) {
+    case 'D':
+      return DAY_MS;
+    case 'W':
+      return 7 * DAY_MS;
+    case 'M':
+      return 30 * DAY_MS;
+    case '6M':
+      return 182 * DAY_MS;
+    case 'Y':
+      return 365 * DAY_MS;
+  }
+}
+
+// Default window's right edge: tomorrow midnight in patient tz, so the
+// D-mode window naturally contains today midnight → today's end.
+function defaultEndMs(today: string, tz: string): number {
+  const tomorrow = isoOffset(today, 1);
+  const iso = isoFromWallClock(`${tomorrow}T00:00`, tz);
+  return iso ? Date.parse(iso) : Date.now();
+}
+
 export function WeightTrendView({
   patientFirstName,
   timezone,
@@ -42,55 +68,106 @@ export function WeightTrendView({
   allReadings,
 }: Props) {
   const router = useRouter();
+  const defaultEnd = useMemo(
+    () => defaultEndMs(today, timezone),
+    [today, timezone],
+  );
   const [period, setPeriodRaw] = useState<WindowPeriod>('D');
-  // endDate = the right edge of the visible window. Defaults to today;
-  // chevrons step it backward / forward by one window-width. Period
-  // change resets it to today.
-  const [endDate, setEndDate] = useState(today);
+  const [endMs, setEndMs] = useState(defaultEnd);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndDate(today);
+    setEndMs(defaultEnd);
   };
 
-  const slice = useMemo(
-    () => windowSliceFor(period, endDate, allReadings),
-    [period, endDate, allReadings],
-  );
+  const startMs = endMs - windowSpanMs(period);
+  const isAtDefault = Math.abs(endMs - defaultEnd) < 60_000;
+
+  const slice = useMemo(() => {
+    return allReadings.filter((r) => {
+      const t = Date.parse(r.recorded_at);
+      return t >= startMs && t <= endMs;
+    });
+  }, [allReadings, startMs, endMs]);
 
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
   const hero = slice.length > 0 ? slice[slice.length - 1] : null;
 
-  const intraDay = intraDayRangeFor(slice, today, timezone);
-
   const yScale = useMemo(() => yScaleFor(slice), [slice]);
   const xLabels = useMemo(
-    () => xLabelsFor(period, endDate),
-    [period, endDate],
+    () => xLabelsFor(period, endMs, timezone),
+    [period, endMs, timezone],
   );
 
-  const todayReadings = slice.filter((r) => r.log_date === today);
-  const hasAnyReadings = allReadings.length > 0;
-  const isAtToday = endDate === today;
-  const subjectLine =
-    todayReadings.length > 0 && isAtToday
-      ? subjectFor(patientFirstName, todayReadings, timezone)
-      : null;
+  const subhead = useMemo(
+    () => subheadFor(period, startMs, endMs, isAtDefault, timezone),
+    [period, startMs, endMs, isAtDefault, timezone],
+  );
 
-  // Scrub bounds. Y is fixed (we only track 12 months). For other
-  // periods, ◀ enables when there's any reading older than the visible
-  // window's start; ▶ enables when the user has scrubbed back from today.
-  const windowStart = lowerLogDateFor(period, endDate);
-  const hasOlderData = allReadings.some((r) => r.log_date < windowStart);
-  const canScrubBack = period !== 'Y' && hasOlderData;
-  const canScrubForward = period !== 'Y' && endDate < today;
-  const showScrubRow = period !== 'Y' && hasAnyReadings;
-  const stepEnd = (dir: -1 | 1) =>
-    setEndDate((curr) => stepEndDate(period, curr, dir, today));
+  const hasAnyReadings = allReadings.length > 0;
+  const oldestMs = useMemo(
+    () =>
+      allReadings.length > 0
+        ? Date.parse(allReadings[0].recorded_at)
+        : Number.POSITIVE_INFINITY,
+    [allReadings],
+  );
+
+  // Stepping bounds.
+  const canBack = period !== 'Y' && (!hasAnyReadings || startMs > oldestMs);
+  const canForward = period !== 'Y' && endMs < defaultEnd;
+  const stepEnd = (dir: -1 | 1) => {
+    setEndMs((curr) => {
+      const span = windowSpanMs(period);
+      let next = curr + dir * span;
+      if (next > defaultEnd) next = defaultEnd;
+      return next;
+    });
+  };
+
+  // Drag-to-scrub (Apple Health style). pointerdown on the chart starts
+  // a drag; pointermove translates endMs by (-dx / chartWidth) × span.
+  // pointerup ends. touch-action: pan-y on the container so vertical
+  // page scrolling still works.
+  const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
+    null,
+  );
+  const chartWrapRef = useRef<HTMLDivElement | null>(null);
+
+  const onChartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (period === 'Y') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const w = chartWrapRef.current?.offsetWidth ?? 0;
+    if (w <= 0) return;
+    dragRef.current = { startX: e.clientX, startEnd: endMs, w };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // ignore — Safari can throw on pointer capture in rare cases
+    }
+  };
+
+  const onChartPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    const { startX, startEnd, w } = dragRef.current;
+    const dx = e.clientX - startX;
+    const dt = -(dx / w) * windowSpanMs(period);
+    let next = startEnd + dt;
+    if (next > defaultEnd) next = defaultEnd;
+    setEndMs(next);
+  };
+
+  const onChartPointerEnd = () => {
+    dragRef.current = null;
+  };
+
+  useEffect(() => () => {
+    dragRef.current = null;
+  }, []);
 
   const onSave = async (input: AddWeightInput) => {
     const result = await addWeightReading(input);
@@ -124,18 +201,8 @@ export function WeightTrendView({
       </header>
 
       <div className="px-5 pb-32">
-        {subjectLine && (
-          <p
-            className="text-[12px] text-muted-foreground mt-2"
-            style={{ letterSpacing: '0.3px' }}
-          >
-            {subjectLine}
-          </p>
-        )}
-
-        {/* Hero. Real value renders large; the empty-state placeholder
-            ("0.0 lb") renders at a quieter size so it doesn't dominate
-            a page that has nothing to say yet. */}
+        {/* Hero. Real reading at full size; empty placeholder is muted
+            and quieter so it doesn't dominate. */}
         <div className="mt-3 flex items-end gap-2">
           <span
             className="font-display"
@@ -169,33 +236,16 @@ export function WeightTrendView({
             lb
           </span>
         </div>
-        {intraDay !== null && intraDay > 0 && (
-          <div className="mt-2.5">
-            <span
-              className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase rounded-full px-2.5 py-1"
-              style={{
-                background: 'var(--status-watch-soft, #F2E3C5)',
-                color: 'var(--status-watch-foreground, #8A6A35)',
-                letterSpacing: '0.3px',
-              }}
-            >
-              <span
-                aria-hidden
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: '50%',
-                  background: 'var(--status-watch, #C49C5A)',
-                  display: 'inline-block',
-                }}
-              />
-              ▲ {intraDay.toFixed(1)} lb across today
-            </span>
-          </div>
-        )}
+        {/* Subhead reflects the visible window's exact time range. */}
+        <p
+          className="text-[12px] text-muted-foreground mt-1"
+          style={{ letterSpacing: '0.3px' }}
+        >
+          {subhead}
+        </p>
 
         {/* Chart section */}
-        <div className="mt-6">
+        <div className="mt-5">
           <div className="flex items-baseline justify-between px-0.5">
             <span
               className="font-display text-foreground"
@@ -242,17 +292,16 @@ export function WeightTrendView({
               </button>
             ))}
           </div>
-          {/* Scrub row — chevrons step the visible window backward /
-              forward by one window-width. ◀ enables when older data
-              exists; ▶ enables when the user has scrubbed back from
-              today. Hidden on Y (we only track 12 months). */}
-          {showScrubRow && (
+
+          {/* Chevron stepper row. Drag is the primary affordance; chevrons
+              are the discoverable / accessible alternative. */}
+          {period !== 'Y' && (
             <div className="flex items-center justify-between mt-1 mb-2 px-1">
               <button
                 type="button"
                 aria-label="Older window"
                 onClick={() => stepEnd(-1)}
-                disabled={!canScrubBack}
+                disabled={!canBack}
                 className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
                 style={{
                   width: 28,
@@ -265,16 +314,16 @@ export function WeightTrendView({
                 <ChevronLeft size={16} strokeWidth={2} />
               </button>
               <span
-                className="text-[12px] text-muted-foreground tabular-nums"
+                className="text-[11px] text-muted-foreground tabular-nums"
                 style={{ letterSpacing: '0.2px' }}
               >
-                {rangeLabel(period, endDate, today, timezone)}
+                {hintFor(period)}
               </span>
               <button
                 type="button"
                 aria-label="Newer window"
                 onClick={() => stepEnd(1)}
-                disabled={!canScrubForward}
+                disabled={!canForward}
                 className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
                 style={{
                   width: 28,
@@ -289,15 +338,28 @@ export function WeightTrendView({
             </div>
           )}
 
-          {/* Aspect-ratio container so the SVG scales uniformly without
-              stretching on wide viewports. The chart frame (gridlines +
-              axis labels) renders even when the slice is empty. */}
-          <div style={{ width: '100%', aspectRatio: '280 / 132' }}>
+          {/* Chart container — the drag handler lives here. The SVG inside
+              uses an aspect-ratio box so it scales uniformly and never
+              stretches on wide viewports. */}
+          <div
+            ref={chartWrapRef}
+            onPointerDown={onChartPointerDown}
+            onPointerMove={onChartPointerMove}
+            onPointerUp={onChartPointerEnd}
+            onPointerCancel={onChartPointerEnd}
+            style={{
+              width: '100%',
+              aspectRatio: '280 / 132',
+              touchAction: period === 'Y' ? 'auto' : 'pan-y',
+              cursor: period === 'Y' ? 'default' : 'ew-resize',
+              userSelect: 'none',
+              WebkitUserSelect: 'none',
+            }}
+          >
             <EkgChart
               data={slice}
-              period={period}
-              today={endDate}
-              timezone={timezone}
+              startMs={startMs}
+              endMs={endMs}
               xAxisLabels={xLabels}
               yMin={yScale.min}
               yMax={yScale.max}
@@ -324,7 +386,7 @@ export function WeightTrendView({
         {/* Stats trio */}
         {slice.length > 0 && (
           <div
-            className="mt-2 grid grid-cols-3 rounded-2xl"
+            className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
               background: 'var(--card)',
               border: '1px solid var(--border)',
@@ -370,25 +432,21 @@ export function WeightTrendView({
           </div>
         )}
 
-        {/* Source footer — only when readings exist, and only mentions
-            the selected window (no "0 in today" footer noise). */}
         {hasAnyReadings && slice.length > 0 && (
           <p
             className="mt-3 text-[11px] italic text-muted-foreground"
             style={{ lineHeight: 1.5 }}
           >
             <b style={{ fontStyle: 'normal', fontWeight: 600 }}>
-              {slice.length} reading{slice.length === 1 ? '' : 's'} in{' '}
-              {labelFor(period)}
+              {slice.length} reading{slice.length === 1 ? '' : 's'} in this
+              window
             </b>{' '}
             · {allReadings.length} total in the last year
           </p>
         )}
       </div>
 
-      {/* Bottom-bar floating utility row. "i" (info menu) on the left,
-          "+" (add reading) on the right. Both register #6 — Apple-Weather
-          translucent cream + backdrop blur. */}
+      {/* Bottom-bar floating utility row. */}
       <div
         className="fixed left-0 right-0 flex justify-between items-end pointer-events-none"
         style={{
@@ -449,19 +507,8 @@ function decimalPart(v: number): string {
   return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }
 
-// Y-axis algorithm — same shape Apple Health uses:
-//
-// - Empty data            → 4 labels: [0, 50, 100, 150]
-// - Single value (or all  → 3 labels centered on the value:
-//   identical):             [v-10, v, v+10]. Dot sits on the middle
-//                           gridline. Never on the bottom edge.
-// - 2+ distinct values    → 4 labels at "nice" intervals (step from
-//                           {1, 2, 5} × 10ⁿ), padded so neither the
-//                           min nor max data point sits on the chart's
-//                           top or bottom edge.
-//
-// The rule "no data point on the base" comes from the user; matches
-// Apple Health's chart behavior precisely.
+// ─── Y axis ──────────────────────────────────────────────────────────────────
+
 const NICE_MULTIPLIERS = [1, 2, 5];
 const SINGLE_VALUE_HALF_RANGE_LB = 10;
 
@@ -487,8 +534,6 @@ function yScaleFor(slice: WeightReading[]): {
   const lo = Math.min(...values);
   const hi = Math.max(...values);
 
-  // Single value (or multiple identical readings) → center on the
-  // middle gridline. 3 labels.
   if (lo === hi) {
     const step = SINGLE_VALUE_HALF_RANGE_LB;
     const mid = Math.round(lo / step) * step;
@@ -499,8 +544,6 @@ function yScaleFor(slice: WeightReading[]): {
     };
   }
 
-  // 2+ distinct values → 4 labels with padding so the data sits
-  // strictly inside [min, max], never on the edge.
   const span = hi - lo;
   const padding = Math.max(1, span * 0.1);
   const paddedLo = lo - padding;
@@ -508,8 +551,6 @@ function yScaleFor(slice: WeightReading[]): {
   let step = niceStep((paddedHi - paddedLo) / 3);
   let min = Math.floor(paddedLo / step) * step;
   let max = min + step * 3;
-  // If snapping cut off the high end, bump the step to the next nice
-  // value and retry. Converges in <= 2 iterations.
   while (max < paddedHi) {
     step = niceStep(step + 1);
     min = Math.floor(paddedLo / step) * step;
@@ -518,74 +559,141 @@ function yScaleFor(slice: WeightReading[]): {
   return { min, max, ticks: [min, min + step, min + 2 * step, max] };
 }
 
+// ─── X labels ────────────────────────────────────────────────────────────────
+
 function xLabelsFor(
   period: WindowPeriod,
-  today: string,
+  endMs: number,
+  tz: string,
 ): { x: number; label: string }[] {
-  switch (period) {
-    case 'D':
-      return [
-        { x: 0, label: '12 AM' },
-        { x: 0.25, label: '6 AM' },
-        { x: 0.5, label: '12 PM' },
-        { x: 0.75, label: '6 PM' },
-        { x: 1, label: '12 AM' },
-      ];
-    case 'W': {
-      const labels: { x: number; label: string }[] = [];
-      for (let i = 6; i >= 0; i--) {
-        const d = isoOffset(today, -i);
-        labels.push({ x: (6 - i) / 6, label: weekdayLabel(d) });
-      }
-      return labels;
-    }
-    case 'M':
-      return Array.from({ length: 5 }, (_, i) => ({
-        x: i / 4,
-        label: shortDateLabel(isoOffset(today, -30 + (i * 30) / 4)),
-      }));
-    case '6M':
-      return Array.from({ length: 6 }, (_, i) => ({
-        x: i / 5,
-        label: monthLabel(isoOffset(today, -30 * (5 - i))),
-      }));
-    case 'Y':
-      // 6 labels for Y (not 12) to keep the phone-width axis legible.
-      return Array.from({ length: 6 }, (_, i) => ({
-        x: i / 5,
-        label: monthLabel(isoOffset(today, -60 * (5 - i))),
-      }));
+  const span = windowSpanMs(period);
+  const startMs = endMs - span;
+  if (period === 'D') {
+    // 5 labels at 0%, 25%, 50%, 75%, 100%, formatted as hour-of-day.
+    return Array.from({ length: 5 }, (_, i) => ({
+      x: i / 4,
+      label: hourLabel(startMs + (i / 4) * span, tz),
+    }));
   }
+  if (period === 'W') {
+    // 7 labels — one per day in the window — showing weekday short names.
+    return Array.from({ length: 7 }, (_, i) => ({
+      x: i / 6,
+      label: weekdayLabel(startMs + (i / 6) * span, tz),
+    }));
+  }
+  if (period === 'M') {
+    return Array.from({ length: 5 }, (_, i) => ({
+      x: i / 4,
+      label: shortDateLabel(startMs + (i / 4) * span, tz),
+    }));
+  }
+  // 6M and Y use month labels at evenly-spaced positions. 6 labels.
+  return Array.from({ length: 6 }, (_, i) => ({
+    x: i / 5,
+    label: monthLabel(startMs + (i / 5) * span, tz),
+  }));
 }
 
-function weekdayLabel(iso: string): string {
-  const d = new Date(`${iso}T12:00:00Z`);
-  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(d);
-}
-
-function shortDateLabel(iso: string): string {
-  const d = new Date(`${iso}T12:00:00Z`);
+function hourLabel(ms: number, tz: string): string {
   return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    hour12: true,
+  }).format(new Date(ms));
+}
+
+function weekdayLabel(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday: 'short',
+  }).format(new Date(ms));
+}
+
+function shortDateLabel(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
     month: 'short',
     day: 'numeric',
-  }).format(d);
+  }).format(new Date(ms));
 }
 
-function monthLabel(iso: string): string {
-  const d = new Date(`${iso}T12:00:00Z`);
-  return new Intl.DateTimeFormat('en-US', { month: 'short' }).format(d);
+function monthLabel(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    month: 'short',
+  }).format(new Date(ms));
 }
+
+// ─── Subhead ─────────────────────────────────────────────────────────────────
+
+function subheadFor(
+  period: WindowPeriod,
+  startMs: number,
+  endMs: number,
+  isAtDefault: boolean,
+  tz: string,
+): string {
+  if (isAtDefault) {
+    if (period === 'D') return 'Today';
+    if (period === 'W') return 'This week';
+    if (period === 'M') return 'This month';
+    if (period === '6M') return 'Last 6 months';
+    return 'Last 12 months';
+  }
+  if (period === 'D') {
+    return `${dayTimeLabel(startMs, tz)} – ${dayTimeLabel(endMs, tz)}`;
+  }
+  return `${shortDateLabel(startMs, tz)} – ${shortDateLabel(endMs, tz)}`;
+}
+
+// "Yesterday, 9 AM" / "Today, 11 PM" / "May 5, 9 AM"
+function dayTimeLabel(ms: number, tz: string): string {
+  const dayKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+  const todayKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const yesterdayKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(Date.now() - DAY_MS));
+  const time = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    hour12: true,
+  }).format(new Date(ms));
+  if (dayKey === todayKey) return `Today, ${time}`;
+  if (dayKey === yesterdayKey) return `Yesterday, ${time}`;
+  return `${shortDateLabel(ms, tz)}, ${time}`;
+}
+
+// ─── Chevron-row hint ────────────────────────────────────────────────────────
+
+function hintFor(period: WindowPeriod): string {
+  if (period === 'D') return 'drag or use ◀ ▶';
+  return 'drag or use ◀ ▶';
+}
+
+// ─── Stats trio ──────────────────────────────────────────────────────────────
 
 function timeLabelFor(r: WeightReading, tz: string): string {
-  const d = new Date(r.recorded_at);
   return new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  }).format(d);
+  }).format(new Date(r.recorded_at));
 }
-
 
 function tripleStats(
   slice: WeightReading[],
@@ -616,86 +724,4 @@ function tripleStats(
       sub: slice.length === 1 ? 'one reading' : 'across this window',
     },
   ];
-}
-
-// Step the chart's visible-window end date by one window-width. Returns
-// a YYYY-MM-DD string in the same calendar the input was in. Forward
-// steps cap at `today` so the user can't scrub into the future.
-function stepEndDate(
-  period: WindowPeriod,
-  endDate: string,
-  dir: -1 | 1,
-  today: string,
-): string {
-  if (period === 'Y') return today;
-  const d = new Date(`${endDate}T00:00:00Z`);
-  switch (period) {
-    case 'D':
-      d.setUTCDate(d.getUTCDate() + dir);
-      break;
-    case 'W':
-      d.setUTCDate(d.getUTCDate() + dir * 7);
-      break;
-    case 'M':
-      d.setUTCDate(d.getUTCDate() + dir * 30);
-      break;
-    case '6M':
-      // 6 calendar months — matches lowerLogDateFor's month math so the
-      // new window's start lines up with the previous window's end.
-      d.setUTCMonth(d.getUTCMonth() + dir * 6);
-      break;
-  }
-  const next = d.toISOString().slice(0, 10);
-  if (dir === 1 && next > today) return today;
-  return next;
-}
-
-function rangeLabel(
-  period: WindowPeriod,
-  endDate: string,
-  today: string,
-  tz: string,
-): string {
-  if (period === 'D') {
-    if (endDate === today) return 'Today';
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    }).format(new Date(`${endDate}T12:00:00Z`));
-  }
-  const start = lowerLogDateFor(period, endDate);
-  const fmt = (iso: string) =>
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      month: 'short',
-      day: 'numeric',
-      year:
-        iso.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric',
-    }).format(new Date(`${iso}T12:00:00Z`));
-  return `${fmt(start)} – ${fmt(endDate)}`;
-}
-
-function subjectFor(
-  name: string,
-  todays: WeightReading[],
-  tz: string,
-): string {
-  // Only called when todays.length > 0; render a positive read.
-  const latest = todays[todays.length - 1];
-  const t = timeLabelFor(latest, tz);
-  return `${name} · ${todays.length} weigh-in${todays.length === 1 ? '' : 's'} today · latest ${t}`;
-}
-
-function labelFor(p: WindowPeriod): string {
-  return p === 'D'
-    ? 'today'
-    : p === 'W'
-      ? 'the past week'
-      : p === 'M'
-        ? 'the past month'
-        : p === '6M'
-          ? 'the past 6 months'
-          : 'the past year';
 }
