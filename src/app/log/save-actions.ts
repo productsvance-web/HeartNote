@@ -175,25 +175,53 @@ export async function upsertTodayTapSession(
   //    this idempotent — second debounced save → UPDATE the same row.
   //    tap_session_id isn't in generated types yet (Task 8 migration); the
   //    column is real in the DB.
-  const upsertRow = {
+  //
+  //    M5: processing_status is set ONLY on insert. On update we omit it
+  //    so a row that for any reason landed in a non-'complete' state isn't
+  //    silently flipped by an autosave (defensive — the conflict key
+  //    only matches tap rows so this is unlikely to bite, but it costs
+  //    nothing to be careful).
+  const baseRow = {
     patient_id: patient.id,
     log_date: today,
-    processing_status: 'complete' as const,
     tap_session_id: data.tapSessionId,
     pillow_count: data.vitals.pillowCount ?? null,
     appetite_change: data.symptoms.appetite ?? null,
     urine_output_change: data.symptoms.urineOutput ?? null,
   };
-  const { data: upsertedLog, error: upsertErr } = await supabase
+  const { data: existingRow } = await supabase
     .from('daily_logs')
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .upsert(upsertRow as any, { onConflict: 'patient_id,log_date,tap_session_id' })
     .select('id')
-    .single();
-  if (upsertErr || !upsertedLog) {
-    return { ok: false, error: upsertErr?.message ?? 'Could not save.' };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .match({ patient_id: patient.id, log_date: today, tap_session_id: data.tapSessionId } as any)
+    .maybeSingle();
+
+  let logId: string;
+  if (existingRow) {
+    const { data: updated, error: updateErr } = await supabase
+      .from('daily_logs')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update(baseRow as any)
+      .eq('id', existingRow.id)
+      .select('id')
+      .single();
+    if (updateErr || !updated) {
+      return { ok: false, error: updateErr?.message ?? 'Could not save.' };
+    }
+    logId = updated.id;
+  } else {
+    const insertRow = { ...baseRow, processing_status: 'complete' as const };
+    const { data: inserted, error: insertErr } = await supabase
+      .from('daily_logs')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .insert(insertRow as any)
+      .select('id')
+      .single();
+    if (insertErr || !inserted) {
+      return { ok: false, error: insertErr?.message ?? 'Could not save.' };
+    }
+    logId = inserted.id;
   }
-  const logId = upsertedLog.id;
 
   // 2. Build readings + symptom events from the patch. Only TAPPED fields
   //    show up here; untouched fields are omitted.

@@ -419,7 +419,10 @@ export function LogPageClient({ context }: Props) {
       };
     });
 
-    if (voiceLogId) {
+    // M6: only attempt discard when the row could plausibly still be
+    // empty + pending. The action server-side double-guards, but skipping
+    // the round-trip on already-complete rows saves a request per record-tap.
+    if (voiceLogId && context.todayLogStatus === 'pending') {
       await discardEmptyVoiceLog({ logId: voiceLogId });
     }
 
