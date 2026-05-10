@@ -728,16 +728,20 @@ export function LogPageClient({ context }: Props) {
   }, [symptomsTouch]);
 
   // ─── Captured-count for modal footer ─────────────────────────────────────
+  // Counts the 14 distinct symptoms in the extract.ts schema enum:
+  // dyspnea, cough, chest_pain, swelling, fatigue, pnd, syncope,
+  // cognition_change, extremities_cold_clammy, cyanosis, early_satiety,
+  // pulse_irregular, dizziness, nausea. Sputum is a follow-up of cough,
+  // not a separate symptom. Appetite and urine are day-level fields, not
+  // entries in the symptom_events enum, so they don't count toward the
+  // "14 symptoms" denominator the modal footer shows.
   const symptomsCapturedCount = useMemo(() => {
     let n = 0;
     if (symptoms.dyspneaSeverity !== null) n++;
     if (symptoms.cough !== null) n++;
-    if (symptoms.sputumColor !== null) n++;
     if (symptoms.swellingSeverity !== null) n++;
     if (symptoms.fatigueSeverity !== null) n++;
     if (symptoms.cognitionChange !== null) n++;
-    if (symptoms.appetiteChange !== null) n++;
-    if (symptoms.urineOutputChange !== null) n++;
     if (symptoms.chestPain !== null) n++;
     if (symptoms.syncope !== null) n++;
     if (symptoms.cyanosis !== null) n++;
@@ -747,7 +751,7 @@ export function LogPageClient({ context }: Props) {
     if (symptoms.pulseIrregular !== null) n++;
     if (symptoms.dizziness !== null) n++;
     if (symptoms.nausea !== null) n++;
-    return Math.min(n, 14);
+    return n;
   }, [symptoms]);
 
   // ─── Vital helper-text resolution ────────────────────────────────────────
