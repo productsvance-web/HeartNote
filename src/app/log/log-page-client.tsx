@@ -878,7 +878,7 @@ export function LogPageClient({ context }: Props) {
             step={0.2}
             fieldLabel="weight"
             unit="lb"
-            formatValue={(v) => `${v.toFixed(1)} lb`}
+            formatValue={(v) => v.toFixed(1)}
             placeholder="—"
             onChange={onWeightChange}
             onClear={() => onWeightChange(null)}
@@ -902,9 +902,9 @@ export function LogPageClient({ context }: Props) {
             min={0}
             max={10}
             step={1}
+            integer
             fieldLabel="pillow count"
-            unit="pillow"
-            formatValue={(v) => `${v} pillow${v === 1 ? '' : 's'}`}
+            unit="tonight"
             placeholder="—"
             onChange={onPillowsChange}
             onClear={() => onPillowsChange(null)}
@@ -951,6 +951,8 @@ export function LogPageClient({ context }: Props) {
             min={30}
             max={220}
             step={1}
+            integer
+            inputMin={35}
             fieldLabel="heart rate"
             unit="bpm"
             placeholder="— bpm"
@@ -972,9 +974,10 @@ export function LogPageClient({ context }: Props) {
             min={50}
             max={100}
             step={1}
+            integer
+            inputMin={70}
             fieldLabel="oxygen"
             unit="%"
-            formatValue={(v) => `${v}%`}
             placeholder="— %"
             onChange={onSpo2Change}
             onClear={() => onSpo2Change(null)}
