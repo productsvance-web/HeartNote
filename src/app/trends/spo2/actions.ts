@@ -172,8 +172,13 @@ export async function addSpo2Reading(
       assessment.tier !== 'tier_4_log' &&
       assessment.triggers.length > 0
     ) {
+      // Reasoning is enrichment, NOT blocking. If Claude is down, the
+      // alert row must still appear (with ai_reasoning=null) so the
+      // dashboard shows the engine headline and the home screen turns
+      // red. Bug if these two were stacked in the same try/catch.
+      let reasoning: string | null = null;
       try {
-        const reasoning = await generateAlertReasoning({
+        reasoning = await generateAlertReasoning({
           assessment,
           patientFirstName: firstWord(patient.display_name),
           dryWeightLb:
@@ -183,18 +188,17 @@ export async function addSpo2Reading(
           normalPillowCount: patient.normal_pillow_count,
           nyhaClass: patient.nyha_class ?? null,
         });
-        await supabase.from('alerts').insert({
-          patient_id: patient.id,
-          daily_log_id: newLogId,
-          tier: assessment.tier,
-          trigger_reason: assessment.triggers[0]?.label ?? 'pattern',
-          trigger_data: JSON.parse(JSON.stringify(assessment.triggers)),
-          ai_reasoning: reasoning,
-        });
       } catch {
-        // Reasoning is enrichment, not blocking. The engine headline is
-        // on the dashboard via daily_assessments.triggers regardless.
+        // Swallow — the alert row is the safety-critical write.
       }
+      await supabase.from('alerts').insert({
+        patient_id: patient.id,
+        daily_log_id: newLogId,
+        tier: assessment.tier,
+        trigger_reason: assessment.triggers[0]?.label ?? 'pattern',
+        trigger_data: JSON.parse(JSON.stringify(assessment.triggers)),
+        ai_reasoning: reasoning,
+      });
     }
   } catch (err) {
     return {

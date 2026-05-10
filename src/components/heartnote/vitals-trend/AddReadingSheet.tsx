@@ -269,6 +269,7 @@ export function AddReadingSheet({
           <div className="flex items-center justify-between gap-3">
             <CircleHoldButton
               ariaLabel={`Decrement ${config.fieldLabel.toLowerCase()}`}
+              disabled={value !== null && value <= MIN}
               onPointerDown={() => startTap(-STEP)}
               onPointerUp={stopHold}
               onPointerLeave={stopHold}
@@ -314,6 +315,7 @@ export function AddReadingSheet({
 
             <CircleHoldButton
               ariaLabel={`Increment ${config.fieldLabel.toLowerCase()}`}
+              disabled={value !== null && value >= MAX}
               onPointerDown={() => startTap(STEP)}
               onPointerUp={stopHold}
               onPointerLeave={stopHold}
@@ -417,6 +419,7 @@ export function AddReadingSheet({
 
 function CircleHoldButton({
   ariaLabel,
+  disabled = false,
   onPointerDown,
   onPointerUp,
   onPointerLeave,
@@ -424,6 +427,7 @@ function CircleHoldButton({
   children,
 }: {
   ariaLabel: string;
+  disabled?: boolean;
   onPointerDown: () => void;
   onPointerUp: () => void;
   onPointerLeave: () => void;
@@ -434,14 +438,19 @@ function CircleHoldButton({
     <button
       type="button"
       aria-label={ariaLabel}
-      onPointerDown={(e) => {
-        e.preventDefault();
-        onPointerDown();
-      }}
-      onPointerUp={onPointerUp}
-      onPointerLeave={onPointerLeave}
-      onPointerCancel={onPointerCancel}
-      className="inline-flex items-center justify-center rounded-full active:scale-[0.94] transition select-none"
+      disabled={disabled}
+      onPointerDown={
+        disabled
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              onPointerDown();
+            }
+      }
+      onPointerUp={disabled ? undefined : onPointerUp}
+      onPointerLeave={disabled ? undefined : onPointerLeave}
+      onPointerCancel={disabled ? undefined : onPointerCancel}
+      className="inline-flex items-center justify-center rounded-full active:scale-[0.94] transition select-none disabled:opacity-30 disabled:active:scale-100"
       style={{
         width: 44,
         height: 44,

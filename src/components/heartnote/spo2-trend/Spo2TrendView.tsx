@@ -225,10 +225,6 @@ export function Spo2TrendView({
 
   const [period, setPeriodRaw] = useState<WindowPeriod>('D');
 
-  const defaultEnd = useMemo(
-    () => defaultEndForPeriod(period, latestMs, today, timezone),
-    [period, latestMs, today, timezone],
-  );
   const forwardBound = useMemo(
     () => forwardBoundForPeriod(period, today, timezone),
     [period, today, timezone],
@@ -248,11 +244,6 @@ export function Spo2TrendView({
     setPeriodRaw(p);
     setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
   };
-
-  // Acknowledge the unused defaultEnd memo (the lazy-state init uses
-  // the function directly; defaultEnd is kept for re-anchor logic, but
-  // unused here — eliding satisfies the linter).
-  void defaultEnd;
 
   const startMs = endMs - windowSpanMs(period);
 
