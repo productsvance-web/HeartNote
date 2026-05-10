@@ -113,40 +113,42 @@ export function WeightTrendView({
           </p>
         )}
 
-        {/* Hero. When the selected window is empty, render a muted
-            "0.0 lb / Weight" placeholder so the area keeps its shape
-            instead of collapsing. */}
-        <div className="mt-3 flex items-end gap-2.5">
+        {/* Hero. Real value renders large; the empty-state placeholder
+            ("0.0 lb") renders at a quieter size so it doesn't dominate
+            a page that has nothing to say yet. */}
+        <div className="mt-3 flex items-end gap-2">
           <span
             className="font-display"
             style={{
-              fontSize: 78,
+              fontSize: hero ? 78 : 36,
               lineHeight: 0.95,
-              letterSpacing: '-3px',
+              letterSpacing: hero ? '-3px' : '-1px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
             {Math.floor(hero?.value ?? 0)}
-            <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+            <span
+              style={{
+                fontSize: hero ? 48 : 22,
+                letterSpacing: hero ? '-2px' : '-0.5px',
+              }}
+            >
               .{decimalPart(hero?.value ?? 0)}
             </span>
           </span>
           <span
-            className="text-muted-foreground pb-3"
-            style={{ fontSize: 14, fontWeight: 500, letterSpacing: '0.3px' }}
+            className="text-muted-foreground"
+            style={{
+              fontSize: hero ? 14 : 12,
+              fontWeight: 500,
+              letterSpacing: '0.3px',
+              paddingBottom: hero ? 12 : 6,
+            }}
           >
             lb
           </span>
         </div>
-        {!hero && (
-          <p
-            className="text-[12px] text-muted-foreground mt-1"
-            style={{ letterSpacing: '0.3px' }}
-          >
-            Weight
-          </p>
-        )}
         {intraDay !== null && intraDay > 0 && (
           <div className="mt-2.5">
             <span
