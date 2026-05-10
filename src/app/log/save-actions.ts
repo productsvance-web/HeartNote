@@ -153,6 +153,23 @@ export async function upsertTodayTapSession(
 
   const today = getTodayInTimezone(profile.timezone);
 
+  // Fail-closed against in-flight voice processing. The voice path moves
+  // a row from pending → analyzing immediately on processVoiceLog start,
+  // so checking only `pending` would race the analyzing window. (Lifted
+  // from the deleted /log/manual/actions.ts.)
+  const { data: pending } = await supabase
+    .from('daily_logs')
+    .select('id')
+    .eq('patient_id', patient.id)
+    .eq('log_date', today)
+    .in('processing_status', ['pending', 'analyzing']);
+  if (pending && pending.length > 0) {
+    return {
+      ok: false,
+      error: 'Voice log still processing — try again in a moment.',
+    };
+  }
+
   // 1. Upsert the daily_logs row by (patient_id, log_date, tap_session_id).
   //    The unique partial index daily_logs_tap_session_uk (Task 8.0a) makes
   //    this idempotent — second debounced save → UPDATE the same row.

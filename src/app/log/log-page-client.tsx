@@ -220,6 +220,16 @@ export function LogPageClient({ context }: Props) {
     try {
       const result = await promise;
       if (!result.ok) {
+        // H5: voice-still-processing is a transient block, not a failure
+        // mode worth retrying via the 3-strike persistent banner. Surface
+        // it as the immediate save-error toast so the caregiver sees why
+        // their tap didn't land. The dirty flag stays so the next final
+        // change re-tries.
+        if (result.error === 'Voice log still processing — try again in a moment.') {
+          setPersistentSaveError(result.error);
+          dirtyRef.current = true;
+          return result;
+        }
         failedAttemptsRef.current += 1;
         if (failedAttemptsRef.current >= 3) {
           setPersistentSaveError("Couldn't save your changes — try again.");
