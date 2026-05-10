@@ -280,8 +280,15 @@ export function LogPageClient({ context }: Props) {
   };
   const onSpo2Change = (v: number | null) => {
     setVitals((s) => ({ ...s, spo2Pct: v }));
-    setVitalsTouch((s) => ({ ...s, spo2: v === null ? 'muted' : 'tapped' }));
-    scheduleSave();
+    setVitalsTouch((s) => ({
+      ...s,
+      // H2: SpO2 ≤ 88 is tier-1 (T1.7a). Any non-null below threshold lights
+      // the alert outline directly.
+      spo2:
+        v === null ? 'muted' : v <= 88 ? 'alert' : 'tapped',
+    }));
+    // Crossing the 88% line moves tier — bypass the debounce.
+    scheduleSave(v !== null && v <= 88);
   };
 
   // ─── Symptoms handler ────────────────────────────────────────────────────
@@ -291,17 +298,24 @@ export function LogPageClient({ context }: Props) {
       const next: SymptomTouchState = { ...s };
       for (const key of Object.keys(patch) as Array<keyof SymptomState>) {
         const value = patch[key];
-        next[key] = value === null ? 'muted' : 'tapped';
+        if (value === null) {
+          next[key] = 'muted';
+        } else if (isSymptomTier1(key, value)) {
+          // H2: a tap landing on a tier-1 value lights the alert outline +
+          // corner pip directly, not the warn-tone "Tapped" pip.
+          next[key] = 'alert';
+        } else {
+          next[key] = 'tapped';
+        }
       }
       return next;
     });
-    // Tier-1 yes-flag taps trigger an immediate save (skip the debounce)
-    // so the alert banner updates within ~200ms (R-AC: tier-1 path).
-    const isTier1Tap =
-      patch.chestPain === true ||
-      patch.syncope === true ||
-      patch.cyanosis === true;
-    scheduleSave(isTier1Tap);
+    // Bypass the 1.5s debounce on any change that could move the alert
+    // tier — tier-1 yes-flag flipped to true OR tier-1 yes-flag cleared
+    // to false (un-trigger). Plain enum changes (dyspnea→non-4, sputum→
+    // clear/white) also bypass so the banner clears within the tier-1
+    // budget (R-AC: tier-1 path).
+    scheduleSave(isTierMovingPatch(patch));
   };
 
   // ─── Modal close: synchronous flush of any pending edits ─────────────────
@@ -984,6 +998,47 @@ export function LogPageClient({ context }: Props) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// True when the symptom field's new value is a tier-1 alert condition
+// (per src/lib/alerts/evaluate.ts T1.x rules). Drives the corner-pip
+// "Alert" variant on the symptom card.
+function isSymptomTier1(
+  key: keyof SymptomState,
+  value: SymptomState[keyof SymptomState],
+): boolean {
+  switch (key) {
+    case 'dyspneaSeverity':
+      return value === 4;
+    case 'chestPain':
+    case 'syncope':
+    case 'cyanosis':
+    case 'pulseIrregular':
+    case 'pnd':
+      return value === true;
+    case 'sputumColor':
+      return value === 'pink_frothy' || value === 'white_frothy';
+    case 'cognitionChange':
+      return value === 'severe';
+    default:
+      return false;
+  }
+}
+
+// True when the patch could move the alert tier — i.e., any change to a
+// tier-1 yes-flag (true ↔ false), enum transitions in/out of tier-1
+// values (sputum, cognition, dyspnea severity 4). Used to bypass the
+// 1.5s autosave debounce so the banner appears or clears promptly.
+function isTierMovingPatch(patch: Partial<SymptomState>): boolean {
+  if (patch.chestPain !== undefined) return true;
+  if (patch.syncope !== undefined) return true;
+  if (patch.cyanosis !== undefined) return true;
+  if (patch.pulseIrregular !== undefined) return true;
+  if (patch.pnd !== undefined) return true;
+  if (patch.dyspneaSeverity !== undefined) return true;
+  if (patch.sputumColor !== undefined) return true;
+  if (patch.cognitionChange !== undefined) return true;
+  return false;
+}
 
 function buildSymptomsPatch(s: SymptomState): SaveLogPatch['symptoms'] {
   // The save action expects the per-field shape; this maps the in-component
