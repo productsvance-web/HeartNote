@@ -121,14 +121,14 @@ test.describe('/log redesign', () => {
     await expect(page.locator('section').filter({ hasText: /Highest priority/i })).toBeVisible();
   });
 
-  test('tap during recording locks the field', async ({ page }) => {
+  test('tap during recording locks the field', async () => {
     test.skip(
       true,
       'Requires Deepgram mock + voice-log/process mock; pending fixture work.',
     );
   });
 
-  test('autosave failure → retry banner', async ({ page }) => {
+  test('autosave failure → retry banner', async () => {
     test.skip(
       true,
       'Requires server-side fault injection; pending fixture work.',
