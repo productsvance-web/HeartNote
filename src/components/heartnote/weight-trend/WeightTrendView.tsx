@@ -230,6 +230,7 @@ export function WeightTrendView({
             <EkgChart
               data={slice}
               period={period}
+              today={today}
               timezone={timezone}
               xAxisLabels={xLabels}
               yMin={yScale.min}

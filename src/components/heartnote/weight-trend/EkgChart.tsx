@@ -4,13 +4,20 @@
 // per-point dots from the mockup are intentionally dropped to keep the
 // trace reading like a heart-monitor line.
 
-import type { WeightReading, WindowPeriod } from '@/lib/trends/weight-window';
+import {
+  lowerLogDateFor,
+  type WeightReading,
+  type WindowPeriod,
+} from '@/lib/trends/weight-window';
 
 type AxisLabel = { x: number; label: string };
 
 interface Props {
   data: WeightReading[];
   period: WindowPeriod;
+  // Today (YYYY-MM-DD in patient tz). Used as the right edge of the
+  // visible window for date-based x positioning.
+  today: string;
   // Patient timezone — required so D-period x-positioning uses the
   // patient's wall-clock hour, not the caregiver's browser-local hour.
   // Caregiver and patient can be in different tz (caregiver traveling).
@@ -31,6 +38,7 @@ const PAD_B = 16;
 export function EkgChart({
   data,
   period,
+  today,
   timezone,
   xAxisLabels,
   yMin,
@@ -41,7 +49,9 @@ export function EkgChart({
   const innerW = W - PAD_L - PAD_R;
   const innerH = height - PAD_T - PAD_B;
 
-  const xs = data.map((r) => xPositionFor(r, data, period, innerW, timezone));
+  const xs = data.map((r) =>
+    xPositionFor(r, period, innerW, timezone, today),
+  );
   const ys = data.map(
     (r) => PAD_T + (1 - (r.value - yMin) / (yMax - yMin)) * innerH,
   );
@@ -134,12 +144,13 @@ function polylinePath(xs: number[], ys: number[]): string {
 
 function xPositionFor(
   r: WeightReading,
-  all: WeightReading[],
   period: WindowPeriod,
   innerW: number,
   timezone: string,
+  today: string,
 ): number {
   if (period === 'D') {
+    // Hour-of-day on a 12 AM → 12 AM axis, in patient tz.
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
       hour: '2-digit',
@@ -152,6 +163,20 @@ function xPositionFor(
     const hours = h + mi / 60;
     return PAD_L + (hours / 24) * innerW;
   }
-  const i = all.indexOf(r);
-  return PAD_L + (i / Math.max(1, all.length - 1)) * innerW;
+  // W / M / 6M / Y: position by calendar date within [windowStart, today].
+  // Index-based even-spacing was the bug — with 2 readings on Sat + Sun,
+  // index 0 landed at Mon's column and the line stretched across the
+  // whole week instead of just the right two days.
+  const windowStart = lowerLogDateFor(period, today);
+  const startMs = isoToUtcMs(windowStart);
+  const endMs = isoToUtcMs(today);
+  const readingMs = isoToUtcMs(r.log_date);
+  const span = endMs - startMs;
+  const fraction =
+    span <= 0 ? 1 : Math.max(0, Math.min(1, (readingMs - startMs) / span));
+  return PAD_L + fraction * innerW;
+}
+
+function isoToUtcMs(iso: string): number {
+  return Date.parse(`${iso}T00:00:00Z`);
 }

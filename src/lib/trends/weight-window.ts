@@ -23,7 +23,7 @@ function isoDateInTz(d: Date, tz: string): string {
 // Given today (YYYY-MM-DD in patient tz), return the inclusive lower-bound
 // log_date for the selected window. Caller filters readings whose
 // log_date >= this AND <= today.
-function lowerLogDateFor(period: WindowPeriod, today: string): string {
+export function lowerLogDateFor(period: WindowPeriod, today: string): string {
   const [y, m, d] = today.split('-').map(Number);
   const base = new Date(Date.UTC(y, m - 1, d));
   switch (period) {
