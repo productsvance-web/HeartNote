@@ -207,3 +207,140 @@ function firstWord(s: string | null | undefined): string | null {
   const w = s.trim().split(/\s+/)[0];
   return w && w.length > 0 ? w : null;
 }
+
+// ─── DELETE actions ─────────────────────────────────────────────────────────
+
+const DeleteByIdsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+});
+
+export type DeleteWeightResult =
+  | { ok: true; deleted: number }
+  | { ok: false; error: string };
+
+// Delete a set of weight readings by id. RLS gates the actual DELETE
+// (the policy on daily_log_readings checks caregiver ownership), so a
+// caregiver passing another patient's reading id silently no-ops on
+// those rows. The patient-id WHERE is belt-and-suspenders.
+export async function deleteWeightReadings(
+  raw: { ids: string[] },
+): Promise<DeleteWeightResult> {
+  const parsed = DeleteByIdsSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: 'Invalid input.' };
+  const { ids } = parsed.data;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Not signed in.' };
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('timezone')
+    .eq('id', user.id)
+    .single();
+  if (!profile) return { ok: false, error: 'Profile not found.' };
+
+  const { data: patient } = await supabase
+    .from('patients')
+    .select('id, caregiver_id')
+    .eq('caregiver_id', user.id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .single();
+  if (!patient || patient.caregiver_id !== user.id) {
+    return { ok: false, error: 'Patient not found.' };
+  }
+
+  const { data: deleted, error } = await supabase
+    .from('daily_log_readings')
+    .delete()
+    .eq('patient_id', patient.id)
+    .eq('field', 'weight_lb')
+    .in('id', ids)
+    .select('id');
+  if (error) return { ok: false, error: error.message };
+
+  await reEvaluateToday(supabase, patient.id, profile.timezone);
+
+  revalidatePath('/trends/weight');
+  revalidatePath('/trends');
+  revalidatePath('/dashboard');
+  return { ok: true, deleted: deleted?.length ?? 0 };
+}
+
+// Delete EVERY weight reading for the caregiver's patient. Class-A
+// destructive — the UI MUST gate this behind a typed-confirmation per
+// .claude/rules/destructive-actions.md.
+export async function deleteAllWeightReadings(): Promise<DeleteWeightResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Not signed in.' };
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('timezone')
+    .eq('id', user.id)
+    .single();
+  if (!profile) return { ok: false, error: 'Profile not found.' };
+
+  const { data: patient } = await supabase
+    .from('patients')
+    .select('id, caregiver_id')
+    .eq('caregiver_id', user.id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .single();
+  if (!patient || patient.caregiver_id !== user.id) {
+    return { ok: false, error: 'Patient not found.' };
+  }
+
+  const { data: deleted, error } = await supabase
+    .from('daily_log_readings')
+    .delete()
+    .eq('patient_id', patient.id)
+    .eq('field', 'weight_lb')
+    .select('id');
+  if (error) return { ok: false, error: error.message };
+
+  await reEvaluateToday(supabase, patient.id, profile.timezone);
+
+  revalidatePath('/trends/weight');
+  revalidatePath('/trends');
+  revalidatePath('/dashboard');
+  return { ok: true, deleted: deleted?.length ?? 0 };
+}
+
+// Re-evaluate today's alert tier after a delete. A removed weight
+// reading inside the 7d window can flip a weight_gain trigger, so the
+// home screen color may change.
+async function reEvaluateToday(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  patientId: string,
+  tz: string,
+): Promise<void> {
+  const today = getTodayInTimezone(tz);
+  try {
+    const assessment = await evaluateAlertTier(supabase, patientId, today);
+    await supabase.from('daily_assessments').upsert(
+      [
+        {
+          patient_id: patientId,
+          log_date: today,
+          tier: assessment.tier,
+          triggers: JSON.parse(JSON.stringify(assessment.triggers)),
+          cold_start: assessment.coldStart,
+          source_log_id: null,
+          evaluated_at: new Date().toISOString(),
+        },
+      ],
+      { onConflict: 'patient_id,log_date' },
+    );
+  } catch {
+    // Engine failure is non-blocking — the rows are gone, the next
+    // alert evaluation will pick up the new state.
+  }
+}

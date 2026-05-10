@@ -42,7 +42,7 @@ export default async function WeightTrendPage() {
 
   const { data: rows } = await supabase
     .from('daily_log_readings')
-    .select('value, recorded_at, log_date')
+    .select('id, value, recorded_at, log_date')
     .eq('patient_id', patient.id)
     .eq('field', 'weight_lb')
     .gte('log_date', lower)
@@ -50,6 +50,7 @@ export default async function WeightTrendPage() {
     .order('recorded_at', { ascending: true });
 
   const allReadings: WeightReading[] = (rows ?? []).map((r) => ({
+    id: r.id as string,
     value: Number(r.value),
     recorded_at: r.recorded_at as string,
     log_date: r.log_date as string,

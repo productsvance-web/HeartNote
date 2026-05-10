@@ -366,6 +366,7 @@ export function WeightTrendView({
       {viewDataOpen && (
         <ViewDataSheet
           readings={allReadings}
+          patientFirstName={patientFirstName}
           timezone={timezone}
           today={today}
           onClose={() => setViewDataOpen(false)}

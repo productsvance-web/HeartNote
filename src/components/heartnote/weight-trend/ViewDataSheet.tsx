@@ -1,25 +1,115 @@
-// Read-only chronological list of all weight readings. Slide-up sheet
-// pattern matches AddWeightSheet. Most-recent first. Each row:
-// "182.4 lb" + relative date/time string. Mount-on-open from the parent.
+// Read + delete UI for weight readings. Slide-up sheet with two modes:
 //
-// This is the v1 stub of "View Data" — the user is going to share
-// styling screenshots, at which point this gets refined (sort, filter,
-// delete, export, etc).
+// Read mode: chronological list (most-recent first), "Edit" toggles
+// into select mode, "Delete all" pill at the bottom opens the typed-
+// confirmation modal.
+//
+// Select mode: rows have circular checkboxes; "Select all" toggles all;
+// bottom action bar has Delete (N) + Cancel.
+//
+// Destructive-actions.md compliance:
+// - Single / multi delete confirms with count + identity (window.confirm).
+// - Delete-all uses typed-confirmation echoing the patient's name.
 
 'use client';
 
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { Trash2 } from 'lucide-react';
 import type { WeightReading } from '@/lib/trends/weight-window';
+import {
+  deleteWeightReadings,
+  deleteAllWeightReadings,
+} from '@/app/trends/weight/actions';
 
 interface Props {
   readings: WeightReading[]; // sorted ascending by recorded_at
+  patientFirstName: string;
   timezone: string;
   today: string;
   onClose: () => void;
 }
 
-export function ViewDataSheet({ readings, timezone, today, onClose }: Props) {
-  // Most-recent first for the list.
+export function ViewDataSheet({
+  readings,
+  patientFirstName,
+  timezone,
+  today,
+  onClose,
+}: Props) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [editing, setEditing] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const reversed = [...readings].reverse();
+  const hasReadings = readings.length > 0;
+  const selectedCount = selected.size;
+  const allSelected = hasReadings && selectedCount === readings.length;
+
+  const toggleRow = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(readings.map((r) => r.id)));
+  };
+
+  const exitEdit = () => {
+    setEditing(false);
+    setSelected(new Set());
+    setError(null);
+  };
+
+  const onDeleteSelected = () => {
+    if (selectedCount === 0) return;
+    const range = rangeLabel(
+      reversed.filter((r) => selected.has(r.id)),
+      timezone,
+    );
+    const msg =
+      selectedCount === 1
+        ? `Delete the weight reading from ${range}?`
+        : `Delete ${selectedCount} weight readings (${range})?`;
+    if (!window.confirm(msg)) return;
+    setError(null);
+    startTransition(async () => {
+      const ids = Array.from(selected);
+      const result = await deleteWeightReadings({ ids });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      exitEdit();
+      router.refresh();
+    });
+  };
+
+  const onConfirmAll = (typed: string) => {
+    if (typed.trim().toLowerCase() !== patientFirstName.toLowerCase()) {
+      setError(`Type "${patientFirstName}" exactly to confirm.`);
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteAllWeightReadings();
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setConfirmAll(false);
+      exitEdit();
+      router.refresh();
+    });
+  };
 
   return (
     <div
@@ -62,16 +152,37 @@ export function ViewDataSheet({ readings, timezone, today, onClose }: Props) {
           >
             All weights
           </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-sm text-muted-foreground active:text-foreground"
-          >
-            Done
-          </button>
+          {hasReadings ? (
+            editing ? (
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="text-sm text-foreground active:opacity-60"
+                disabled={pending}
+              >
+                {allSelected ? 'Deselect all' : 'Select all'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="text-sm text-foreground active:opacity-60"
+              >
+                Edit
+              </button>
+            )
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm text-muted-foreground active:text-foreground"
+            >
+              Done
+            </button>
+          )}
         </div>
 
-        {readings.length === 0 ? (
+        {!hasReadings ? (
           <p className="text-[14px] text-muted-foreground py-8 text-center">
             No readings yet.
           </p>
@@ -83,41 +194,255 @@ export function ViewDataSheet({ readings, timezone, today, onClose }: Props) {
               border: '0.5px solid var(--border)',
             }}
           >
-            {reversed.map((r, i) => (
-              <div
-                key={`${r.recorded_at}-${i}`}
-                className="flex items-baseline justify-between"
-                style={{
-                  padding: '14px 16px',
-                  borderBottom:
-                    i < reversed.length - 1
-                      ? '0.5px solid var(--border)'
-                      : 'none',
-                }}
-              >
-                <span
-                  className="font-display text-foreground tabular-nums"
+            {reversed.map((r, i) => {
+              const isSelected = selected.has(r.id);
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  disabled={!editing || pending}
+                  onClick={() => editing && toggleRow(r.id)}
+                  className="w-full flex items-center justify-between text-left active:bg-muted transition disabled:cursor-default"
                   style={{
-                    fontSize: 18,
-                    fontWeight: 500,
-                    letterSpacing: '-0.2px',
+                    padding: '14px 16px',
+                    borderBottom:
+                      i < reversed.length - 1
+                        ? '0.5px solid var(--border)'
+                        : 'none',
+                    background: 'transparent',
                   }}
                 >
-                  {r.value.toFixed(1)}
+                  {editing && (
+                    <span
+                      aria-hidden
+                      className="mr-3 inline-flex items-center justify-center rounded-full"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        border: `1.5px solid ${isSelected ? 'var(--sage-deep)' : 'var(--border)'}`,
+                        background: isSelected
+                          ? 'var(--sage-deep)'
+                          : 'transparent',
+                        color: 'white',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {isSelected && (
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M5 12l5 5L20 7" />
+                        </svg>
+                      )}
+                    </span>
+                  )}
                   <span
-                    className="text-muted-foreground"
-                    style={{ fontSize: 12, fontWeight: 500, marginLeft: 4 }}
+                    className="font-display text-foreground tabular-nums flex-1 text-left"
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 500,
+                      letterSpacing: '-0.2px',
+                    }}
                   >
-                    lb
+                    {r.value.toFixed(1)}
+                    <span
+                      className="text-muted-foreground"
+                      style={{ fontSize: 12, fontWeight: 500, marginLeft: 4 }}
+                    >
+                      lb
+                    </span>
                   </span>
-                </span>
-                <span className="text-[12px] text-muted-foreground tabular-nums">
-                  {whenLabel(r, today, timezone)}
-                </span>
-              </div>
-            ))}
+                  <span className="text-[12px] text-muted-foreground tabular-nums">
+                    {whenLabel(r, today, timezone)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
+
+        {error && (
+          <p
+            className="mt-3 text-[13px] text-center"
+            style={{ color: 'var(--status-alert-foreground)' }}
+          >
+            {error}
+          </p>
+        )}
+
+        {hasReadings && editing && (
+          <div className="mt-4 flex gap-2">
+            <button
+              type="button"
+              onClick={exitEdit}
+              disabled={pending}
+              className="flex-1 rounded-full text-sm font-medium border disabled:opacity-50"
+              style={{
+                height: 44,
+                background: 'var(--card)',
+                borderColor: 'var(--border)',
+                color: 'var(--foreground)',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onDeleteSelected}
+              disabled={selectedCount === 0 || pending}
+              className="flex-1 rounded-full text-sm font-semibold disabled:opacity-40"
+              style={{
+                height: 44,
+                background: 'var(--destructive, #C46A4A)',
+                color: 'white',
+              }}
+            >
+              {pending
+                ? 'Deleting…'
+                : selectedCount === 0
+                  ? 'Delete'
+                  : `Delete (${selectedCount})`}
+            </button>
+          </div>
+        )}
+
+        {hasReadings && !editing && (
+          <button
+            type="button"
+            onClick={() => setConfirmAll(true)}
+            className="mt-4 inline-flex items-center justify-center gap-1.5 self-center text-sm rounded-full px-4 py-2 active:opacity-70 transition"
+            style={{
+              color: 'var(--destructive, #C46A4A)',
+              background: 'transparent',
+              border: '1px solid color-mix(in oklab, var(--destructive, #C46A4A) 30%, transparent)',
+            }}
+          >
+            <Trash2 size={14} />
+            Delete all weight data
+          </button>
+        )}
+      </div>
+
+      {confirmAll && (
+        <DeleteAllConfirm
+          patientFirstName={patientFirstName}
+          totalCount={readings.length}
+          pending={pending}
+          error={error}
+          onCancel={() => {
+            setConfirmAll(false);
+            setError(null);
+          }}
+          onConfirm={onConfirmAll}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeleteAllConfirm({
+  patientFirstName,
+  totalCount,
+  pending,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  patientFirstName: string;
+  totalCount: number;
+  pending: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: (typed: string) => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const matches = typed.trim().toLowerCase() === patientFirstName.toLowerCase();
+
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="delete-all-title"
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: 'rgba(28, 28, 28, 0.5)' }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl p-5"
+        style={{
+          background: 'var(--card)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        }}
+      >
+        <h3
+          id="delete-all-title"
+          className="font-display text-[18px] text-foreground"
+          style={{ fontWeight: 500 }}
+        >
+          Delete all of {patientFirstName}&rsquo;s weight data?
+        </h3>
+        <p className="mt-2 text-[13px] text-foreground">
+          This permanently removes <b>{totalCount}</b> weight reading
+          {totalCount === 1 ? '' : 's'}. It cannot be undone.
+        </p>
+        <p className="mt-3 text-[12px] text-muted-foreground">
+          Type <b>{patientFirstName}</b> to confirm.
+        </p>
+        <input
+          type="text"
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          aria-label="Type patient name to confirm"
+          className="mt-2 w-full rounded-xl px-3 py-2 text-base"
+          style={{
+            background: 'var(--background)',
+            border: '1px solid var(--border)',
+            color: 'var(--foreground)',
+            height: 40,
+          }}
+        />
+        {error && (
+          <p
+            className="mt-2 text-[12px]"
+            style={{ color: 'var(--status-alert-foreground)' }}
+          >
+            {error}
+          </p>
+        )}
+        <div className="mt-4 flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="rounded-full px-4 py-2 text-sm font-medium border disabled:opacity-50"
+            style={{
+              background: 'var(--card)',
+              borderColor: 'var(--border)',
+              color: 'var(--foreground)',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(typed)}
+            disabled={!matches || pending}
+            className="rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-40"
+            style={{
+              background: 'var(--destructive, #C46A4A)',
+              color: 'white',
+            }}
+          >
+            {pending ? 'Deleting…' : 'Delete all'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -139,4 +464,32 @@ function whenLabel(r: WeightReading, today: string, tz: string): string {
       r.log_date.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric',
   }).format(new Date(r.recorded_at));
   return `${date}, ${time}`;
+}
+
+function rangeLabel(rs: WeightReading[], tz: string): string {
+  if (rs.length === 0) return '';
+  if (rs.length === 1) {
+    const r = rs[0];
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(r.recorded_at));
+  }
+  // rs is reversed (most-recent first), so [0] is newest, [last] oldest
+  const newest = rs[0];
+  const oldest = rs[rs.length - 1];
+  const newestStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(newest.recorded_at));
+  const oldestStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(oldest.recorded_at));
+  return `${oldestStr} – ${newestStr}`;
 }

@@ -3,6 +3,7 @@
 // without a render. Tz-aware where it matters.
 
 export type WeightReading = {
+  id: string; // daily_log_readings.id — needed for delete
   recorded_at: string; // full ISO timestamp
   value: number; // lb
   log_date: string; // YYYY-MM-DD in patient tz (denormalized at insert time)

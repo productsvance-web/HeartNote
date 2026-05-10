@@ -13,8 +13,10 @@ import {
 
 const TZ = 'America/Los_Angeles';
 
+let _id = 0;
 function r(recorded_at: string, value: number, log_date?: string): WeightReading {
   return {
+    id: `r-${++_id}`,
     recorded_at,
     value,
     log_date: log_date ?? recorded_at.slice(0, 10),
