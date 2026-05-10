@@ -409,27 +409,34 @@ function decimalPart(v: number): string {
   return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }
 
+// Y-axis always snaps to increments of 10 (lb). Examples:
+//   value 209  → min 200, max 220 (range 20)
+//   value 215  → min 210, max 230 (range 20)
+//   178..209  → min 170, max 210 (range 40)
+//   single 178 → min 170, max 190 (range 20)
+// Minimum span is 20 lb so the trace doesn't pancake on a single reading.
+const Y_AXIS_SNAP_LB = 10;
+const Y_AXIS_MIN_SPAN_LB = 20;
+
 function yScaleFor(
   slice: WeightReading[],
   hero: WeightReading | null,
 ): { min: number; max: number } {
   const values = slice.map((r) => r.value);
   if (hero && !slice.includes(hero)) values.push(hero.value);
-  if (values.length === 0) return { min: 100, max: 200 };
+  if (values.length === 0) return { min: 150, max: 200 };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
-  if (hi - lo < 4) {
-    const mid = (hi + lo) / 2;
-    return { min: Math.floor(mid - 2), max: Math.ceil(mid + 2) };
-  }
-  return { min: Math.floor(lo - 1), max: Math.ceil(hi + 1) };
+  const min = Math.floor(lo / Y_AXIS_SNAP_LB) * Y_AXIS_SNAP_LB;
+  const ceilMax = Math.ceil(hi / Y_AXIS_SNAP_LB) * Y_AXIS_SNAP_LB;
+  const max = Math.max(ceilMax, min + Y_AXIS_MIN_SPAN_LB);
+  return { min, max };
 }
 
+// Ticks every 10 lb across the snapped y-domain.
 function tickStepsFor(min: number, max: number): number[] {
-  const span = max - min;
-  const step = span <= 4 ? 1 : span <= 10 ? 2 : Math.ceil(span / 4);
   const ticks: number[] = [];
-  for (let v = min; v <= max; v += step) ticks.push(v);
+  for (let v = min; v <= max; v += Y_AXIS_SNAP_LB) ticks.push(v);
   return ticks;
 }
 

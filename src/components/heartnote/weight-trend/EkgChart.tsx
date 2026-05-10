@@ -24,7 +24,7 @@ interface Props {
 
 const W = 280;
 const PAD_L = 6;
-const PAD_R = 26;
+const PAD_R = 32; // wider on the right to give the y-axis labels breathing room
 const PAD_T = 12;
 const PAD_B = 16;
 
@@ -73,14 +73,14 @@ export function EkgChart({
               opacity="0.32"
             />
             <text
-              x={W - 3}
-              y={y + 3.2}
+              x={W - 4}
+              y={y + 3.6}
               textAnchor="end"
               fontFamily="Inter, sans-serif"
-              fontSize="8.5"
+              fontSize="10"
               fontWeight="500"
-              fill="#A89A8B"
-              style={{ letterSpacing: '0.2px' }}
+              fill="#6B5E52"
+              style={{ letterSpacing: '0.1px' }}
             >
               {tick}
             </text>
@@ -117,17 +117,7 @@ export function EkgChart({
       )}
 
       {data.length > 0 && (
-        <>
-          <circle cx={lastX} cy={lastY} r="7" fill="#7E9080" fillOpacity="0.30" />
-          <circle
-            cx={lastX}
-            cy={lastY}
-            r="4"
-            fill="#5A6B5C"
-            stroke="#FBF7F0"
-            strokeWidth="1.5"
-          />
-        </>
+        <circle cx={lastX} cy={lastY} r="2.5" fill="#5A6B5C" />
       )}
     </svg>
   );
