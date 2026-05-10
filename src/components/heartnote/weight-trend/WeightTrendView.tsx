@@ -9,12 +9,13 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronLeft, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { EkgChart } from './EkgChart';
 import { AddWeightSheet, type AddWeightInput } from './AddWeightSheet';
 import { InfoMenu } from './InfoMenu';
 import { ViewDataSheet } from './ViewDataSheet';
 import {
+  lowerLogDateFor,
   windowSliceFor,
   intraDayRangeFor,
   type WeightReading,
@@ -41,36 +42,55 @@ export function WeightTrendView({
   allReadings,
 }: Props) {
   const router = useRouter();
-  const [period, setPeriod] = useState<WindowPeriod>('D');
+  const [period, setPeriodRaw] = useState<WindowPeriod>('D');
+  // endDate = the right edge of the visible window. Defaults to today;
+  // chevrons step it backward / forward by one window-width. Period
+  // change resets it to today.
+  const [endDate, setEndDate] = useState(today);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
+  const setPeriod = (p: WindowPeriod) => {
+    setPeriodRaw(p);
+    setEndDate(today);
+  };
+
   const slice = useMemo(
-    () => windowSliceFor(period, today, allReadings),
-    [period, today, allReadings],
+    () => windowSliceFor(period, endDate, allReadings),
+    [period, endDate, allReadings],
   );
 
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  // Hero strictly reflects the selected window. If the user picked D
-  // and nothing was logged today, the hero is "—" — anything else
-  // (e.g., showing the most-recent-ever value with a "0 readings today"
-  // subhead) reads contradictory.
   const hero = slice.length > 0 ? slice[slice.length - 1] : null;
 
   const intraDay = intraDayRangeFor(slice, today, timezone);
 
   const yScale = useMemo(() => yScaleFor(slice), [slice]);
-  const xLabels = useMemo(() => xLabelsFor(period, today), [period, today]);
+  const xLabels = useMemo(
+    () => xLabelsFor(period, endDate),
+    [period, endDate],
+  );
 
   const todayReadings = slice.filter((r) => r.log_date === today);
   const hasAnyReadings = allReadings.length > 0;
-  // Subject line only when there's something to say about today.
+  const isAtToday = endDate === today;
   const subjectLine =
-    todayReadings.length > 0
+    todayReadings.length > 0 && isAtToday
       ? subjectFor(patientFirstName, todayReadings, timezone)
       : null;
+
+  // Scrub bounds. Y is fixed (we only track 12 months). For other
+  // periods, ◀ enables when there's any reading older than the visible
+  // window's start; ▶ enables when the user has scrubbed back from today.
+  const windowStart = lowerLogDateFor(period, endDate);
+  const hasOlderData = allReadings.some((r) => r.log_date < windowStart);
+  const canScrubBack = period !== 'Y' && hasOlderData;
+  const canScrubForward = period !== 'Y' && endDate < today;
+  const showScrubRow = period !== 'Y' && hasAnyReadings;
+  const stepEnd = (dir: -1 | 1) =>
+    setEndDate((curr) => stepEndDate(period, curr, dir, today));
 
   const onSave = async (input: AddWeightInput) => {
     const result = await addWeightReading(input);
@@ -222,15 +242,61 @@ export function WeightTrendView({
               </button>
             ))}
           </div>
+          {/* Scrub row — chevrons step the visible window backward /
+              forward by one window-width. ◀ enables when older data
+              exists; ▶ enables when the user has scrubbed back from
+              today. Hidden on Y (we only track 12 months). */}
+          {showScrubRow && (
+            <div className="flex items-center justify-between mt-1 mb-2 px-1">
+              <button
+                type="button"
+                aria-label="Older window"
+                onClick={() => stepEnd(-1)}
+                disabled={!canScrubBack}
+                className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
+                style={{
+                  width: 28,
+                  height: 28,
+                  background: 'transparent',
+                  color: 'var(--foreground)',
+                  border: 'none',
+                }}
+              >
+                <ChevronLeft size={16} strokeWidth={2} />
+              </button>
+              <span
+                className="text-[12px] text-muted-foreground tabular-nums"
+                style={{ letterSpacing: '0.2px' }}
+              >
+                {rangeLabel(period, endDate, today, timezone)}
+              </span>
+              <button
+                type="button"
+                aria-label="Newer window"
+                onClick={() => stepEnd(1)}
+                disabled={!canScrubForward}
+                className="inline-flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
+                style={{
+                  width: 28,
+                  height: 28,
+                  background: 'transparent',
+                  color: 'var(--foreground)',
+                  border: 'none',
+                }}
+              >
+                <ChevronRight size={16} strokeWidth={2} />
+              </button>
+            </div>
+          )}
+
           {/* Aspect-ratio container so the SVG scales uniformly without
               stretching on wide viewports. The chart frame (gridlines +
-              axis labels) renders even when the slice is empty — no
-              synthetic "tap + below" copy. */}
+              axis labels) renders even when the slice is empty. */}
           <div style={{ width: '100%', aspectRatio: '280 / 132' }}>
             <EkgChart
               data={slice}
               period={period}
-              today={today}
+              today={endDate}
               timezone={timezone}
               xAxisLabels={xLabels}
               yMin={yScale.min}
@@ -522,6 +588,65 @@ function tripleStats(
       sub: slice.length === 1 ? 'one reading' : 'across this window',
     },
   ];
+}
+
+// Step the chart's visible-window end date by one window-width. Returns
+// a YYYY-MM-DD string in the same calendar the input was in. Forward
+// steps cap at `today` so the user can't scrub into the future.
+function stepEndDate(
+  period: WindowPeriod,
+  endDate: string,
+  dir: -1 | 1,
+  today: string,
+): string {
+  if (period === 'Y') return today;
+  const d = new Date(`${endDate}T00:00:00Z`);
+  switch (period) {
+    case 'D':
+      d.setUTCDate(d.getUTCDate() + dir);
+      break;
+    case 'W':
+      d.setUTCDate(d.getUTCDate() + dir * 7);
+      break;
+    case 'M':
+      d.setUTCDate(d.getUTCDate() + dir * 30);
+      break;
+    case '6M':
+      // 6 calendar months — matches lowerLogDateFor's month math so the
+      // new window's start lines up with the previous window's end.
+      d.setUTCMonth(d.getUTCMonth() + dir * 6);
+      break;
+  }
+  const next = d.toISOString().slice(0, 10);
+  if (dir === 1 && next > today) return today;
+  return next;
+}
+
+function rangeLabel(
+  period: WindowPeriod,
+  endDate: string,
+  today: string,
+  tz: string,
+): string {
+  if (period === 'D') {
+    if (endDate === today) return 'Today';
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    }).format(new Date(`${endDate}T12:00:00Z`));
+  }
+  const start = lowerLogDateFor(period, endDate);
+  const fmt = (iso: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      month: 'short',
+      day: 'numeric',
+      year:
+        iso.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric',
+    }).format(new Date(`${iso}T12:00:00Z`));
+  return `${fmt(start)} – ${fmt(endDate)}`;
 }
 
 function subjectFor(
