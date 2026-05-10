@@ -473,9 +473,21 @@ export function Spo2TrendView({
               // W shows dots only — intra-week oxygen readings aren't a
               // continuous trend. D / M / 6M / Y connect the dots.
               showLine={period !== 'W'}
+              // Faint coral line at 88 — matches the Phone 4 mockup
+              // even though the area-fill's gradient transition also
+              // sits there. Keeping both gives the floor a sharper
+              // visual edge.
               alertFloor={{
                 y: SPO2_TIER_1_911,
                 color: 'var(--destructive, #C46A4A)',
+              }}
+              // Area chart: sage tint above 88, coral tint below.
+              // Matches docs/design/heartnote-vitals-trends-mockup.html
+              // Phone 4. Dots are coral when sub-88, sage otherwise.
+              areaFill={{
+                thresholdY: SPO2_TIER_1_911,
+                aboveColor: '#5A6B5C',
+                belowColor: 'var(--destructive, #C46A4A)',
               }}
             />
           </div>

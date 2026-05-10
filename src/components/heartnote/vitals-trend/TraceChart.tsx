@@ -35,6 +35,18 @@ interface Props {
   // Optional clinical floor line (SpO2 88% 911 floor). Drawn dashed,
   // inside the clipPath, beneath the polyline.
   alertFloor?: { y: number; color: string };
+  // Optional area-fill mode (SpO2). When set, the chart renders the area
+  // UNDER the trace line filled with a vertical gradient that hard-
+  // transitions at thresholdY — sage above, coral below. The trace line
+  // is still drawn on top as a thin stroke. Dots are colored per-point
+  // (above thresholdY = above-color, below = below-color).
+  areaFill?: {
+    thresholdY: number;
+    aboveColor: string;
+    belowColor: string;
+    aboveOpacity?: number;
+    belowOpacity?: number;
+  };
   ariaLabel?: string;
 }
 
@@ -55,6 +67,7 @@ export function TraceChart({
   height = 132,
   showLine = true,
   alertFloor,
+  areaFill,
   ariaLabel = 'Vital trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
@@ -104,10 +117,26 @@ export function TraceChart({
     }
   }
 
-  const path = polyIndices.length >= 2
-    ? polylinePath(polyIndices.map((i) => xOf(Date.parse(data[i].recorded_at))),
-                   polyIndices.map((i) => yOf(data[i].value)))
-    : '';
+  const xs = polyIndices.map((i) => xOf(Date.parse(data[i].recorded_at)));
+  const ys = polyIndices.map((i) => yOf(data[i].value));
+  const path = xs.length >= 2 ? polylinePath(xs, ys) : '';
+  // Area path = polyline ending closed to chart bottom-right, then
+  // bottom-left, back to start. Always rendered behind the polyline when
+  // areaFill is on.
+  const bottomY = height - PAD_B;
+  const areaPath =
+    areaFill && xs.length >= 1
+      ? polylinePath(xs, ys) +
+        ` L ${xs[xs.length - 1].toFixed(1)} ${bottomY} L ${xs[0].toFixed(1)} ${bottomY} Z`
+      : '';
+
+  // Gradient stops position (fraction of inner chart height).
+  const gradId = `area-grad-${startMs}`;
+  const thresholdOffset = areaFill
+    ? clamp((yOf(areaFill.thresholdY) - PAD_T) / innerH, 0, 1)
+    : 0;
+  const aboveOpacity = areaFill?.aboveOpacity ?? 0.32;
+  const belowOpacity = areaFill?.belowOpacity ?? 0.38;
 
   return (
     <svg
@@ -122,6 +151,37 @@ export function TraceChart({
         <clipPath id={clipId}>
           <rect x={PAD_L} y={PAD_T} width={innerW} height={innerH} />
         </clipPath>
+        {areaFill && (
+          <linearGradient
+            id={gradId}
+            x1={0}
+            y1={PAD_T}
+            x2={0}
+            y2={height - PAD_B}
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop
+              offset={0}
+              stopColor={areaFill.aboveColor}
+              stopOpacity={aboveOpacity}
+            />
+            <stop
+              offset={thresholdOffset}
+              stopColor={areaFill.aboveColor}
+              stopOpacity={aboveOpacity}
+            />
+            <stop
+              offset={thresholdOffset}
+              stopColor={areaFill.belowColor}
+              stopOpacity={belowOpacity}
+            />
+            <stop
+              offset={1}
+              stopColor={areaFill.belowColor}
+              stopOpacity={belowOpacity}
+            />
+          </linearGradient>
+        )}
       </defs>
 
       {yTicks.map((tick) => {
@@ -171,10 +231,18 @@ export function TraceChart({
         );
       })}
 
-      {/* Polyline + dots + optional alertFloor all clipped to the chart
-          frame so adjacent-reading segments and the floor line don't
-          paint over the y-axis labels or outside the chart. */}
+      {/* Area + polyline + dots + alertFloor all clipped to the chart
+          frame so adjacent-reading segments don't paint over the y-axis
+          labels or outside the chart. Render order: area fill (bottom),
+          dashed floor, polyline, dots (top). */}
       <g clipPath={`url(#${clipId})`}>
+        {areaFill && areaPath && (
+          <path
+            d={areaPath}
+            fill={`url(#${gradId})`}
+            stroke="none"
+          />
+        )}
         {alertFloor && yOf(alertFloor.y) >= PAD_T && yOf(alertFloor.y) <= height - PAD_B && (
           <line
             x1={PAD_L}
@@ -197,18 +265,32 @@ export function TraceChart({
             strokeLinejoin="miter"
           />
         )}
-        {visible.map((r) => (
-          <circle
-            key={r.id}
-            cx={xOf(Date.parse(r.recorded_at))}
-            cy={yOf(r.value)}
-            r="2.5"
-            fill="#5A6B5C"
-          />
-        ))}
+        {visible.map((r) => {
+          // In areaFill mode, color each dot by whether the reading is
+          // above or below the clinical threshold. Otherwise default to
+          // sage-deep (the weight register).
+          const fill = areaFill
+            ? r.value >= areaFill.thresholdY
+              ? areaFill.aboveColor
+              : areaFill.belowColor
+            : '#5A6B5C';
+          return (
+            <circle
+              key={r.id}
+              cx={xOf(Date.parse(r.recorded_at))}
+              cy={yOf(r.value)}
+              r="2.5"
+              fill={fill}
+            />
+          );
+        })}
       </g>
     </svg>
   );
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
 }
 
 function polylinePath(xs: number[], ys: number[]): string {
