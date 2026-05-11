@@ -106,8 +106,10 @@ export function SymptomsModal({
       data-modal-open="true"
       // justify-center centers the sheet so on desktop it sits in the
       // PhoneShell phone-shell-width (max-w-md), not stretched edge-to-edge.
-      // z-60 sits above the bottom-pinned LogComposer (z-50) so the sheet
-      // fully covers it when open.
+      // z-60 sits BELOW the bottom-pinned LogComposer (z-70) — the ear
+      // button inside the composer toggles this modal, so the composer
+      // must remain visible while the sheet is open. The sheet's
+      // marginBottom (set on the inner div) clears the composer height.
       className="fixed inset-0 z-[60] flex items-end justify-center"
       style={{ background: 'color-mix(in oklab, var(--foreground) 25%, transparent)' }}
     >
@@ -116,12 +118,17 @@ export function SymptomsModal({
         // w-full + max-w-md = full-width on phones, phone-shell-width on
         // desktop. Inner column is flex so the head+footer stay pinned and
         // only the middle scrolls.
+        // marginBottom clears the floating LogComposer (z-70) that sits
+        // above the modal — the worst-case composer height (96px textarea
+        // + padding + safe-area) is buffered to 144px so the sheet's
+        // footer ("X of 14 captured today") stays visible above it.
         className="w-full max-w-md max-h-[88vh] flex flex-col overflow-hidden"
         style={{
           background: 'var(--cream-card)',
           borderRadius: '26px 26px 0 0',
           boxShadow: '0 -10px 30px rgba(28, 28, 28, 0.16)',
           animation: 'slide-up-modal 280ms ease-out',
+          marginBottom: 'calc(144px + env(safe-area-inset-bottom))',
         }}
       >
         {/* .modal-grip — 38×5 px-rounded handle. */}

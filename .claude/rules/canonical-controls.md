@@ -130,13 +130,14 @@ half without the other rarely makes sense.
 
 **Pattern:** rounded card pinned to the viewport bottom via `position: fixed`, holding inline affordances (typically a secondary button on the left, a text or transcript area in the middle, and a primary CTA button on the right) — the equivalent of Anthropic's mobile chat composer pinned above the keyboard.
 
-- Container: `position: fixed; bottom: 0; left: 0; right: 0; z-index: 50`, centered with `max-w-md mx-auto px-3`, `paddingBottom: max(0.875rem, env(safe-area-inset-bottom))`, `paddingTop: 8`.
+- Container: `position: fixed; bottom: 0; left: 0; right: 0; z-index: 70`, centered with `max-w-md mx-auto px-3`, `paddingBottom: max(0.875rem, env(safe-area-inset-bottom))`, `paddingTop: 8`.
 - Card body: `rounded-[24px]`, background `color-mix(in oklab, var(--cream-card) 92%, transparent)`, 0.5px ink-12% border, `backdrop-filter: blur(18px) saturate(160%)`, shadow `0 -10px 32px rgba(0,0,0,0.10), 0 -2px 6px rgba(0,0,0,0.05)`, `minHeight: 60`.
 - Layout: `flex items-center gap-3 pr-2 pl-3 py-2`. Pointer-events trick (parent `pointer-events-none`, card `pointer-events-auto`) so the card floats above scroll without blocking the page.
 - Secondary button (left): 38×38 rounded full. Idle = `var(--card)` bg, 0.5px border, foreground glyph. Active = `var(--sage-deep)` filled, white glyph.
 - Text/transcript region (middle): `flex-1 min-w-0 overflow-y-auto max-h-[96px]` with top/bottom mask-fade. Italic display font for transcript text; muted ink-faint color for placeholder.
 - Primary CTA (right): 44×44 rounded full, always `var(--sage-deep)` filled with white glyph, sage-deep glow shadow. Glyph swaps based on state (e.g., Mic ↔ Square for record/stop). HeartNote uses sage-deep here because coral is reserved for clinical alerts — the Anthropic original uses coral.
-- z-stack: composer at `z-50`, sheets/modals that should cover it use `z-60`. The sitewide tier-1 `AlertGlow` also lives at `z-60` (`pointer-events: none`, non-occluding inset coral glow) — it paints alongside the modal without blocking interaction.
+- Primary CTA **pill variant** for save+extract actions: when the primary CTA represents an explicit "commit what's in the buffer" action (e.g., during voice-log recording on /log), the round circle morphs into a 44px-tall pill (~88-96px wide, rounded-full, `px-3`), same sage-deep fill, with a `Square` glyph (12px) + bold "Save" text (14px). Tap commits the buffer and exits the action state.
+- z-stack: composer at **`z-70`** (above the symptoms sheet so the ear button inside the composer never makes the dock vanish). Sheets/modals use `z-60`; the sitewide tier-1 `AlertGlow` also lives at `z-60` (`pointer-events: none`, non-occluding inset coral glow). Modals that share the screen with the composer must offset their `marginBottom` (or equivalent) to clear the composer's worst-case height + safe-area inset — see /log SymptomsModal for reference.
 
 **Reference implementation:** `src/components/heartnote/log/LogComposer.tsx` — the /log voice-log composer (ear + transcript + mic).
 
