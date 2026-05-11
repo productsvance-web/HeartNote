@@ -48,6 +48,7 @@ import {
   SymptomsModal,
   type SymptomTouchState,
 } from '@/components/heartnote/log/SymptomsModal';
+import { VoiceLogDateSheet } from '@/components/heartnote/log/VoiceLogDateSheet';
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 const VOICE_STOP_SILENCE_GATE_MS = 1000;
@@ -144,6 +145,7 @@ export function LogPageClient({ context }: Props) {
 
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
 
   // ─── Autosave: debounced + dirty tracking ────────────────────────────────
   const dirtyRef = useRef(false);
@@ -337,35 +339,49 @@ export function LogPageClient({ context }: Props) {
   }, [flushSave]);
 
   // ─── Voice ───────────────────────────────────────────────────────────────
+  // Mic-tap is a two-stage flow:
+  //   1. Tap → open the VoiceLogDateSheet asking "When is this voice log
+  //      for?". Symptoms modal gets dismissed first (R2).
+  //   2. Sheet confirm (Today or Another day → date) → flush any dirty
+  //      tap-session (R3), then call startRecording with the chosen date.
+  // Stop-tap (recordingStatus === 'recording') is unchanged — single
+  // action, no sheet.
   const onMicClick = useCallback(async () => {
     if (recordingStatus === 'recording') {
       await stopRecording();
       return;
     }
-    // Modal close before recording starts (R2).
     if (modalOpen) {
       setModalOpen(false);
     }
-    // Flush dirty tap-session before voice (R3).
-    if (dirtyRef.current) {
-      const result = await flushSave();
-      if (result && !result.ok) {
-        setRecordingError(`Couldn't save your taps — recording not started.`);
-        return;
-      }
-    }
-    if (inFlightSaveRef.current) {
-      const result = await inFlightSaveRef.current;
-      if (!result.ok) {
-        setRecordingError(`Couldn't save your taps — recording not started.`);
-        return;
-      }
-    }
-    await startRecording();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordingStatus, modalOpen, flushSave]);
+    setDateSheetOpen(true);
+  }, [recordingStatus, modalOpen]);
 
-  async function startRecording() {
+  const onDateSheetConfirm = useCallback(
+    async (logDate: string) => {
+      setDateSheetOpen(false);
+      // Flush dirty tap-session before voice (R3).
+      if (dirtyRef.current) {
+        const result = await flushSave();
+        if (result && !result.ok) {
+          setRecordingError(`Couldn't save your taps — recording not started.`);
+          return;
+        }
+      }
+      if (inFlightSaveRef.current) {
+        const result = await inFlightSaveRef.current;
+        if (!result.ok) {
+          setRecordingError(`Couldn't save your taps — recording not started.`);
+          return;
+        }
+      }
+      await startRecording(logDate);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [flushSave],
+  );
+
+  async function startRecording(logDate: string) {
     setRecordingError(null);
     setRecordSeconds(0);
     setRecordingStatus('requesting-mic');
@@ -406,6 +422,7 @@ export function LogPageClient({ context }: Props) {
 
     const startResult = await flushAndStartVoice({
       patientId: context.patient.id,
+      logDate,
     });
     if (!startResult.ok) {
       stream.getTracks().forEach((t) => t.stop());
@@ -1136,6 +1153,13 @@ export function LogPageClient({ context }: Props) {
         capturedCount={symptomsCapturedCount}
       />
 
+      <VoiceLogDateSheet
+        open={dateSheetOpen}
+        todayLocal={todayInTz(context.timezone)}
+        onCancel={() => setDateSheetOpen(false)}
+        onConfirm={onDateSheetConfirm}
+      />
+
       {/* Recording wake-screen counter — small inline visual when recording */}
       {recordingStatus === 'recording' && (
         <div
@@ -1157,6 +1181,19 @@ export function LogPageClient({ context }: Props) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// "Today" in the patient's timezone as YYYY-MM-DD. Mirrors the local
+// helper in AddReadingSheet — keeps the date sheet's default date in
+// sync with what getTodayInTimezone returns server-side, even when the
+// caregiver's machine timezone differs from profile.timezone.
+function todayInTz(tz: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 // Per-field touch state derived from the most-recent symptom event today.
 // A symptom is 'heard' only if its source row is voice (tap_session_id IS
