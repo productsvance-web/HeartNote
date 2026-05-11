@@ -1,13 +1,12 @@
 // Bottom navigation — three identical ghost-circle utility buttons.
-// Visual register matches src/components/heartnote/log/BottomBar.tsx
-// (canonical-controls.md #6, extended sitewide per user direction
-// 2026-05-10). The glass-bar wrapper and center FAB sphere were retired
-// in that pass — the heavy green Log button was visually dominating
-// every screen.
+// Visual register: canonical-controls.md #6, extended sitewide per user
+// direction 2026-05-10. The glass-bar wrapper and center FAB sphere were
+// retired in that pass — the heavy green Log button was visually
+// dominating every screen.
 //
 // Icon-only by direction. Active route → sage-deep filled, white glyph.
-// Inactive → translucent cream, foreground glyph. Same fade-to-background
-// gradient backdrop as the /log BottomBar.
+// Inactive → translucent cream, foreground glyph. Fade-to-background
+// gradient backdrop.
 
 'use client';
 

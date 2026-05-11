@@ -38,9 +38,8 @@ import { MAX_RECORD_SECONDS } from '@/lib/voice-log/limits';
 import { VitalCard, type VitalCardState } from '@/components/heartnote/log/VitalCard';
 import { StepperControl } from '@/components/heartnote/log/StepperControl';
 import { DualStepperControl } from '@/components/heartnote/log/DualStepperControl';
-import { TranscriptCard } from '@/components/heartnote/log/TranscriptCard';
 import { AlertChipBanner } from '@/components/heartnote/log/AlertChipBanner';
-import { BottomBar } from '@/components/heartnote/log/BottomBar';
+import { LogComposer } from '@/components/heartnote/log/LogComposer';
 import {
   SymptomsModal,
   type SymptomTouchState,
@@ -744,6 +743,20 @@ export function LogPageClient({ context }: Props) {
     return Object.values(symptomsTouch).some((s) => s === 'heard');
   }, [symptomsTouch]);
 
+  // ─── Live transcript for the composer ────────────────────────────────────
+  // While recording, the captured-state `transcript` is null — words live in
+  // finalsRef and the page only re-renders when `finalsTick` bumps. Compose
+  // a live string from the refs so the composer shows words as they stream
+  // in. After stop, fall back to `transcript` (the captured final).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const liveTranscript = useMemo<string | null>(() => {
+    if (recordingStatus === 'recording') {
+      const live = finalsRef.current.join(' ').trim();
+      return live.length > 0 ? live : null;
+    }
+    return transcript;
+  }, [recordingStatus, transcript, finalsTick]);
+
   // ─── Captured-count for modal footer ─────────────────────────────────────
   // Counts the 14 distinct symptoms in the extract.ts schema enum:
   // dyspnea, cough, chest_pain, swelling, fatigue, pnd, syncope,
@@ -812,7 +825,7 @@ export function LogPageClient({ context }: Props) {
       data-page="log"
       data-status={recordingStatus}
       data-modal-open={modalOpen}
-      className="flex flex-col flex-1 min-h-screen pb-2"
+      className="flex flex-col flex-1 min-h-screen pb-40"
     >
       {/* Alert banner — above page header (L9). */}
       {context.assessment && (
@@ -857,12 +870,6 @@ export function LogPageClient({ context }: Props) {
           }}
         >
           {recordingError}
-        </div>
-      )}
-
-      {transcript && (
-        <div className="px-4 pt-3">
-          <TranscriptCard transcript={transcript} />
         </div>
       )}
 
@@ -1045,9 +1052,16 @@ export function LogPageClient({ context }: Props) {
           )}
       </div>
 
-      {/* Bottom bar (L7) */}
-      <BottomBar
+      {/* Bottom-pinned composer — ear + transcript + mic in one floating
+          dock. Replaces the prior sticky BottomBar + inline TranscriptCard
+          pair (PR 2026-05-10). */}
+      <LogComposer
         recording={recordingStatus === 'recording'}
+        disabled={
+          recordingStatus === 'requesting-mic' ||
+          recordingStatus === 'analyzing'
+        }
+        transcript={liveTranscript}
         symptomHeard={symptomHeard}
         modalOpen={modalOpen}
         onMicClick={onMicClick}
