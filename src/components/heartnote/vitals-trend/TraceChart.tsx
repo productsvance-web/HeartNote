@@ -117,24 +117,38 @@ export function TraceChart({
     }
   }
 
+  // For the polyline (weight) we use polyIndices, which includes one
+  // reading immediately before startMs and one after endMs so the line
+  // crosses the window boundary at the interpolated y (Apple Health
+  // continuity).
+  //
+  // For the smoothed area chart (spo2), adjacent off-screen readings
+  // warp the Bezier control points and create overshoot loops at the
+  // visible edges. So we build the smoothed path from ONLY the visible
+  // readings — the area fill closes via the bottom corners and still
+  // looks continuous across windows.
   const xs = polyIndices.map((i) => xOf(Date.parse(data[i].recorded_at)));
   const ys = polyIndices.map((i) => yOf(data[i].value));
-  // When areaFill is set, the trace is drawn smoothed (Catmull-Rom
-  // converted to cubic Bezier) so the area chart reads as a continuous
-  // curve like the design mockup. Weight uses the unsmoothed polyline
-  // path to keep its monitor-like sharpness.
-  const path =
-    xs.length >= 2
-      ? areaFill
-        ? smoothPath(xs, ys)
-        : polylinePath(xs, ys)
+  const visibleXs = visible.map((r) =>
+    xOf(Date.parse(r.recorded_at)),
+  );
+  const visibleYs = visible.map((r) => yOf(r.value));
+
+  const path = areaFill
+    ? visibleXs.length >= 2
+      ? smoothPath(visibleXs, visibleYs)
+      : ''
+    : xs.length >= 2
+      ? polylinePath(xs, ys)
       : '';
-  // Area path = trace path ending closed to chart bottom-right, then
-  // bottom-left, back to start. Rendered behind the polyline.
+
+  // Area path = visible-only trace ending closed to chart bottom-right,
+  // then bottom-left, back to start. Single-visible-reading windows
+  // produce no area (no segment to close). Rendered behind the polyline.
   const bottomY = height - PAD_B;
   const areaPath =
-    areaFill && xs.length >= 1
-      ? `${path || `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`} L ${xs[xs.length - 1].toFixed(1)} ${bottomY} L ${xs[0].toFixed(1)} ${bottomY} Z`
+    areaFill && visibleXs.length >= 2
+      ? `${path} L ${visibleXs[visibleXs.length - 1].toFixed(1)} ${bottomY} L ${visibleXs[0].toFixed(1)} ${bottomY} Z`
       : '';
 
   // Gradient stops position (fraction of inner chart height).
@@ -290,10 +304,10 @@ export function TraceChart({
               key={r.id}
               cx={xOf(Date.parse(r.recorded_at))}
               cy={yOf(r.value)}
-              r={areaFill ? 3 : 2.5}
+              r={areaFill ? 3.5 : 2.5}
               fill={fill}
               stroke={areaFill ? '#FBF7F0' : undefined}
-              strokeWidth={areaFill ? 1.4 : undefined}
+              strokeWidth={areaFill ? 2 : undefined}
             />
           );
         })}
