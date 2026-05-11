@@ -115,14 +115,14 @@ export function WeightTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('D', latestMs, today, timezone),
+    defaultEndForPeriod('D', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -251,25 +251,27 @@ export function WeightTrendView({
           <span
             className="font-display"
             style={{
-              fontSize: 36,
+              fontSize: 78,
               lineHeight: 0.95,
-              letterSpacing: '-1px',
+              letterSpacing: '-3px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {Math.floor(hero?.value ?? 0)}
-            <span style={{ fontSize: 22, letterSpacing: '-0.5px' }}>
-              .{decimalPart(hero?.value ?? 0)}
-            </span>
+            {hero ? Math.floor(hero.value) : '—'}
+            {hero && (
+              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+                .{decimalPart(hero.value)}
+              </span>
+            )}
           </span>
           <span
             className="text-muted-foreground"
             style={{
-              fontSize: 12,
+              fontSize: 14,
               fontWeight: 500,
               letterSpacing: '0.3px',
-              paddingBottom: 6,
+              paddingBottom: 12,
             }}
           >
             lb
@@ -400,8 +402,11 @@ export function WeightTrendView({
           </div>
         </div>
 
-        {/* Stats trio */}
-        {slice.length > 0 && (
+        {/* Stats trio. Render the shell whenever the dataset has data,
+            even if the visible window is currently empty — keeps the
+            page from reflowing as the caregiver scrubs between data
+            days and empty days. */}
+        {hasAnyReadings && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -543,6 +548,15 @@ function tripleStats(
   slice: VitalReading[],
   tz: string,
 ): { label: string; value: string; unit: string; sub: string }[] {
+  if (slice.length === 0) {
+    // Empty visible window — preserve the trio shell so the layout
+    // doesn't jump as the caregiver scrubs.
+    return [
+      { label: 'Latest', value: '—', unit: '', sub: '' },
+      { label: 'Highest', value: '—', unit: '', sub: '' },
+      { label: 'Range', value: '—', unit: '', sub: '' },
+    ];
+  }
   const latest = slice[slice.length - 1];
   const sortedDesc = [...slice].sort((a, b) => b.value - a.value);
   const highest = sortedDesc[0];
@@ -565,7 +579,12 @@ function tripleStats(
       label: 'Range',
       value: range.toFixed(1),
       unit: 'lb',
-      sub: slice.length === 1 ? 'one reading' : 'across this window',
+      sub:
+        slice.length === 1
+          ? 'one reading'
+          : range === 0
+            ? 'no change'
+            : 'across this window',
     },
   ];
 }

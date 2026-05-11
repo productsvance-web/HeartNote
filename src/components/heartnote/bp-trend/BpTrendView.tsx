@@ -96,14 +96,14 @@ export function BpTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('M', latestMs, today, timezone),
+    defaultEndForPeriod('M', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -389,7 +389,7 @@ export function BpTrendView({
           </div>
         </div>
 
-        {slice.length > 0 && (
+        {hasAnyPairs && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -533,6 +533,13 @@ function tripleStatsBp(
   today: string,
   tz: string,
 ): { label: string; value: string; unit: string; sub: string }[] {
+  if (slice.length === 0) {
+    return [
+      { label: 'Highest sys', value: '—', unit: '', sub: '' },
+      { label: 'Lowest sys', value: '—', unit: '', sub: '' },
+      { label: 'Readings', value: '—', unit: '', sub: '' },
+    ];
+  }
   const sortedAsc = [...slice].sort((a, b) => a.sys - b.sys);
   const lowest = sortedAsc[0];
   const highest = sortedAsc[sortedAsc.length - 1];
@@ -557,7 +564,9 @@ function tripleStatsBp(
       label: 'Readings',
       value: String(slice.length),
       unit: '',
-      sub: 'cuff, all manual',
+      // Provenance varies (voice-log + manual entry); drop the "cuff,
+      // all manual" copy from the mockup since it isn't always true.
+      sub: 'in this window',
     },
   ];
 }

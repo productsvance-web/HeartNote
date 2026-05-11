@@ -120,14 +120,14 @@ export function HrTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('W', latestMs, today, timezone),
+    defaultEndForPeriod('W', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -394,7 +394,7 @@ export function HrTrendView({
           </div>
         </div>
 
-        {slice.length > 0 && (
+        {hasAnyReadings && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -587,6 +587,13 @@ function tripleStatsHr(
   today: string,
   tz: string,
 ): { label: string; value: string; unit: string; sub: string }[] {
+  if (slice.length === 0) {
+    return [
+      { label: 'Highest', value: '—', unit: '', sub: '' },
+      { label: 'Lowest', value: '—', unit: '', sub: '' },
+      { label: 'Today', value: '—', unit: '', sub: '' },
+    ];
+  }
   const sortedAsc = [...slice].sort((a, b) => a.value - b.value);
   const lowest = sortedAsc[0];
   const highest = sortedAsc[sortedAsc.length - 1];

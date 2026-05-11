@@ -119,14 +119,14 @@ export function Spo2TrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('D', latestMs, today, timezone),
+    defaultEndForPeriod('D', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -254,25 +254,27 @@ export function Spo2TrendView({
           <span
             className="font-display"
             style={{
-              fontSize: 36,
+              fontSize: 78,
               lineHeight: 0.95,
-              letterSpacing: '-1px',
+              letterSpacing: '-3px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {Math.floor(hero?.value ?? 0)}
-            <span style={{ fontSize: 22, letterSpacing: '-0.5px' }}>
-              .{decimalPart(hero?.value ?? 0)}
-            </span>
+            {hero ? Math.floor(hero.value) : '—'}
+            {hero && (
+              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+                .{decimalPart(hero.value)}
+              </span>
+            )}
           </span>
           <span
             className="text-muted-foreground"
             style={{
-              fontSize: 12,
+              fontSize: 14,
               fontWeight: 500,
               letterSpacing: '0.3px',
-              paddingBottom: 6,
+              paddingBottom: 12,
             }}
           >
             %
@@ -407,8 +409,10 @@ export function Spo2TrendView({
         </div>
 
         {/* Stats trio — Latest / Lowest / Highest. Lowest is the
-            clinically directional cell for SpO2. */}
-        {slice.length > 0 && (
+            clinically directional cell for SpO2. Shell stays rendered
+            whenever the dataset has data so the layout doesn't jump
+            during scrub. */}
+        {hasAnyReadings && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -416,7 +420,10 @@ export function Spo2TrendView({
               border: '1px solid var(--border)',
             }}
           >
-            {tripleStatsSpo2(slice, timezone).map((s, i) => (
+            {(slice.length > 0
+              ? tripleStatsSpo2(slice, timezone)
+              : tripleStatsSpo2Empty()
+            ).map((s, i) => (
               <div key={s.label} className="px-3 pt-3 pb-2.5 relative">
                 {i > 0 && (
                   <span
@@ -539,6 +546,19 @@ function timeLabelFor(r: VitalReading, tz: string): string {
     minute: '2-digit',
     hour12: true,
   }).format(new Date(r.recorded_at));
+}
+
+function tripleStatsSpo2Empty(): {
+  label: string;
+  value: string;
+  unit: string;
+  sub: string;
+}[] {
+  return [
+    { label: 'Latest', value: '—', unit: '', sub: '' },
+    { label: 'Lowest', value: '—', unit: '', sub: '' },
+    { label: 'Highest', value: '—', unit: '', sub: '' },
+  ];
 }
 
 function tripleStatsSpo2(

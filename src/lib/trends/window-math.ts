@@ -74,26 +74,24 @@ export function dowOfDay(dayIso: string, tz: string): number {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
 }
 
-// Default end-of-window for the given period, anchored to the latest
-// reading (or today if no data). D / W / M snap to the end of the
-// containing day / week / month so the visible window aligns with the
-// natural calendar unit; 6M / Y are rolling (windows always end at
-// today's end).
+// Default end-of-window for the given period. Always anchors to today
+// (NOT the latest reading's date) — the page should open on the
+// caregiver's current window so "is there a reading today?" is
+// immediately answerable. Prior behavior dragged the chart to the
+// week-of-the-last-reading; if the latest reading was 3 weeks old, the
+// page opened on a 3-week-old chart. Scrubbing back still works.
 export function defaultEndForPeriod(
   period: WindowPeriod,
-  latestMs: number | null,
   today: string,
   tz: string,
 ): number {
-  const anchorMs = latestMs ?? Date.now();
-  const dayIso = latestMs === null ? today : isoDateOf(anchorMs, tz);
   switch (period) {
     case 'D':
-      return endOfDayMs(dayIso, tz);
+      return endOfDayMs(today, tz);
     case 'W':
-      return endOfWeekMs(dayIso, tz);
+      return endOfWeekMs(today, tz);
     case 'M':
-      return endOfMonthMs(dayIso, tz);
+      return endOfMonthMs(today, tz);
     case '6M':
     case 'Y':
       return endOfDayMs(today, tz);
@@ -304,7 +302,15 @@ export function subheadFor(
   today: string,
 ): string {
   if (period === 'D') {
-    return `${dayTimeLabel(startMs, tz, today)} – ${dayTimeLabel(endMs, tz, today)}`;
+    // D windows span 24h. Label by the calendar day of the START
+    // (midnight of that day to midnight of the next). The old
+    // "Today, 12 AM – May 11, 12 AM" copy was technically accurate but
+    // visually noisy — every D-window subhead read this way.
+    const startDayIso = isoDateOf(startMs, tz);
+    const yesterday = isoOffset(today, -1);
+    if (startDayIso === today) return 'Today';
+    if (startDayIso === yesterday) return 'Yesterday';
+    return shortDateLabel(startMs, tz);
   }
   return `${shortDateLabel(startMs, tz)} – ${shortDateLabel(endMs, tz)}`;
 }

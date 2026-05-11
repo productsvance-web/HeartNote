@@ -154,14 +154,14 @@ export function PillowsTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('Y', latestMs, today, timezone),
+    defaultEndForPeriod('Y', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -446,7 +446,7 @@ export function PillowsTrendView({
                 label: 'Months at 2+',
                 value: String(trailingStats.monthsAt2Plus),
                 unit: '/12',
-                sub: 'months above baseline',
+                sub: 'of last 12 months',
               },
               {
                 label: 'Nights logged',
