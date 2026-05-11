@@ -22,9 +22,8 @@ import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import { isVoiceLogInflight } from '@/lib/voice-log/inflight-gate';
-
-const MIN_BACKDATE_DAYS = 400;
 
 const InputSchema = z.object({
   // SpO2 is one-decimal precision throughout the app (matches voice
@@ -89,7 +88,7 @@ export async function addSpo2Reading(
   }
 
   const logDate = data.recordedAtIsoLocal.slice(0, 10);
-  const earliest = isoOffset(today, -MIN_BACKDATE_DAYS);
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
   if (logDate < earliest) {
     return { ok: false, error: 'Reading date is too far in the past.' };
   }

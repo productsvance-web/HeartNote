@@ -5,7 +5,7 @@
 //      recording for today's local date.
 //
 //   2. "Another day" — reveals a date picker (defaulted to today, max =
-//      today, min = MIN_BACKDATE_DAYS ago) plus a "Start recording" CTA.
+//      today, min = MAX_BACKDATE_DAYS ago) plus a "Start recording" CTA.
 //      Confirming closes the sheet and starts the recording for the
 //      chosen date.
 //
@@ -22,8 +22,7 @@
 
 import { useState } from 'react';
 import { isoOffset } from '@/lib/dates/iso-offset';
-
-const MIN_BACKDATE_DAYS = 400;
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 
 interface Props {
   open: boolean;
@@ -47,7 +46,7 @@ export function VoiceLogDateSheet({
 
   if (!open) return null;
 
-  const minDate = isoOffset(todayLocal, -MIN_BACKDATE_DAYS);
+  const minDate = isoOffset(todayLocal, -MAX_BACKDATE_DAYS);
   const isFuture = date > todayLocal;
   const isTooOld = date < minDate;
   const canStart = !isFuture && !isTooOld;

@@ -24,14 +24,11 @@ import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoOffset } from '@/lib/dates/iso-offset';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import {
   isVoiceLogInflight,
   sweepAbandonedVoiceLogs,
 } from '@/lib/voice-log/inflight-gate';
-
-// Match the trends-add backdate window so caregivers have one consistent
-// horizon for backdating across /log voice and /trends per-vital adds.
-const VOICE_LOG_MAX_BACKDATE_DAYS = 400;
 
 const Severity04 = z.union([
   z.literal(0),
@@ -413,7 +410,7 @@ export async function flushAndStartVoice(input: {
   if (logDate > today) {
     return { ok: false, error: 'Date is in the future.' };
   }
-  const earliest = isoOffset(today, -VOICE_LOG_MAX_BACKDATE_DAYS);
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
   if (logDate < earliest) {
     return { ok: false, error: 'Date is too far in the past.' };
   }

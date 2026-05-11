@@ -25,6 +25,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { isoOffset } from '@/lib/dates/iso-offset';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import type { VitalReadingConfig } from './vital-reading-config';
 
 export type AddReadingInput = {
@@ -48,7 +49,6 @@ interface Props {
 
 const HOLD_DELAY_MS = 350;
 const HOLD_REPEAT_MS = 80;
-const MIN_BACKDATE_DAYS = 400;
 
 export function AddReadingSheet({
   config,
@@ -79,7 +79,7 @@ export function AddReadingSheet({
   }, [value]);
 
   const today = todayInTz(timezone);
-  const minDate = isoOffset(today, -MIN_BACKDATE_DAYS);
+  const minDate = isoOffset(today, -MAX_BACKDATE_DAYS);
   const canSave = value !== null && !pending;
 
   const commit = (next: number) => {

@@ -39,6 +39,7 @@ import {
   type DeepgramClient,
 } from '@/lib/voice-log/deepgram-client';
 import { MAX_RECORD_SECONDS } from '@/lib/voice-log/limits';
+import { getTodayInTimezone } from '@/lib/dates/today';
 import { VitalCard, type VitalCardState } from '@/components/heartnote/log/VitalCard';
 import { StepperControl } from '@/components/heartnote/log/StepperControl';
 import { DualStepperControl } from '@/components/heartnote/log/DualStepperControl';
@@ -146,6 +147,10 @@ export function LogPageClient({ context }: Props) {
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
   const [dateSheetOpen, setDateSheetOpen] = useState(false);
+  // Date the most-recent recording landed on. null until a recording
+  // completes. When non-null and ≠ today, pageCopy shows a "Saved for
+  // [date]" headline so backdated saves don't appear silent.
+  const [recordedForDate, setRecordedForDate] = useState<string | null>(null);
 
   // ─── Autosave: debounced + dirty tracking ────────────────────────────────
   const dirtyRef = useRef(false);
@@ -360,6 +365,7 @@ export function LogPageClient({ context }: Props) {
   const onDateSheetConfirm = useCallback(
     async (logDate: string) => {
       setDateSheetOpen(false);
+      setRecordedForDate(logDate);
       // Flush dirty tap-session before voice (R3).
       if (dirtyRef.current) {
         const result = await flushSave();
@@ -893,7 +899,7 @@ export function LogPageClient({ context }: Props) {
   });
 
   // ─── Eyebrow + headline ──────────────────────────────────────────────────
-  const { headline, subhead } = pageCopy(recordingStatus, context);
+  const { headline, subhead } = pageCopy(recordingStatus, context, recordedForDate);
 
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
@@ -1155,7 +1161,7 @@ export function LogPageClient({ context }: Props) {
 
       <VoiceLogDateSheet
         open={dateSheetOpen}
-        todayLocal={todayInTz(context.timezone)}
+        todayLocal={getTodayInTimezone(context.timezone)}
         onCancel={() => setDateSheetOpen(false)}
         onConfirm={onDateSheetConfirm}
       />
@@ -1181,19 +1187,6 @@ export function LogPageClient({ context }: Props) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-// "Today" in the patient's timezone as YYYY-MM-DD. Mirrors the local
-// helper in AddReadingSheet — keeps the date sheet's default date in
-// sync with what getTodayInTimezone returns server-side, even when the
-// caregiver's machine timezone differs from profile.timezone.
-function todayInTz(tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-}
 
 // Per-field touch state derived from the most-recent symptom event today.
 // A symptom is 'heard' only if its source row is voice (tap_session_id IS
@@ -1365,6 +1358,7 @@ function buildSymptomsPatch(s: SymptomState): SaveLogPatch['symptoms'] {
 function pageCopy(
   status: RecordingStatus,
   ctx: LogPageContext,
+  recordedForDate: string | null,
 ): { headline: string; subhead: string } {
   if (status === 'recording') {
     return {
@@ -1378,11 +1372,25 @@ function pageCopy(
       subhead: 'A few seconds — keep this open.',
     };
   }
-  if (status === 'complete' && ctx.transcript) {
-    return {
-      headline: "Today's check-in is in.",
-      subhead: 'Tap a card to adjust, or open the listener for symptoms.',
-    };
+  if (status === 'complete') {
+    // Backdated: the transcript and extracted vitals/symptoms land on the
+    // chosen day's daily_logs row, not today's. router.refresh re-loads
+    // /log for today so none of it is visible on this page — say so
+    // explicitly instead of pretending today's check-in is in.
+    const today = getTodayInTimezone(ctx.timezone);
+    if (recordedForDate && recordedForDate !== today) {
+      return {
+        headline: `Saved for ${formatHumanDate(recordedForDate)}.`,
+        subhead:
+          "That day's trends will reflect this. Continue logging today below.",
+      };
+    }
+    if (ctx.transcript) {
+      return {
+        headline: "Today's check-in is in.",
+        subhead: 'Tap a card to adjust, or open the listener for symptoms.',
+      };
+    }
   }
   // Idle — nothing logged today (or just a tap-session in progress).
   // Mockup-verbatim copy for the cold-start state.
@@ -1391,4 +1399,21 @@ function pageCopy(
     subhead:
       'Speak once and the vitals fill themselves — or tap any card. Symptoms live behind the listener button at the bottom-right.',
   };
+}
+
+// YYYY-MM-DD → "Mon, May 11" using UTC interpretation. Mirrors the
+// formatter inside VoiceLogDateSheet — kept inline (not extracted) since
+// these two paths are independent: the sheet picker formats display
+// labels in the bottom sheet; the headline formats post-save copy. Two
+// usages, both in the /log feature, both small.
+function formatHumanDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(dt);
 }
