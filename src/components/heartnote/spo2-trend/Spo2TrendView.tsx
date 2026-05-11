@@ -11,12 +11,6 @@
 //   - TraceChart gets an alertFloor at 88 — dashed coral line.
 //   - Stat trio is Latest / Lowest / Highest. Lowest is the clinically
 //     directional cell for SpO2.
-//
-// Window-math helpers (defaultEndForPeriod / forwardBound / backwardBound /
-// windowSpanMs / xLabelsFor / subheadFor and their date helpers) are
-// duplicated from WeightTrendView. Per the plan, hoist to a shared
-// window-math.ts at the third invocation (heart rate). Two callers is
-// duplicate-now-extract-later territory.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -35,10 +29,16 @@ import type {
   WindowPeriod,
 } from '@/lib/trends/vital-reading';
 import { yScaleFor } from '@/lib/trends/y-scale';
+import {
+  backwardBoundForPeriod,
+  defaultEndForPeriod,
+  forwardBoundForPeriod,
+  subheadFor,
+  windowSpanMs,
+  xLabelsFor,
+} from '@/lib/trends/window-math';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { SPO2_TIER_1_911 } from '@/lib/clinical/thresholds';
-import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
-import { isoOffset } from '@/lib/dates/iso-offset';
 import {
   addSpo2Reading,
   deleteSpo2Readings,
@@ -53,9 +53,6 @@ interface Props {
 }
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
-
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 
 // SpO2-specific config consumed by the shared sheets. One-decimal
 // precision throughout — matches the voice-log extraction pattern, the
@@ -82,122 +79,6 @@ const SPO2_CONFIG: VitalReadingConfig = {
     plural: 'oxygen readings',
   },
 };
-
-function windowSpanMs(period: WindowPeriod): number {
-  switch (period) {
-    case 'D':
-      return DAY_MS;
-    case 'W':
-      return 7 * DAY_MS;
-    case 'M':
-      return 30 * DAY_MS;
-    case '6M':
-      return 182 * DAY_MS;
-    case 'Y':
-      return 365 * DAY_MS;
-  }
-}
-
-function endOfDayMs(dayIso: string, tz: string): number {
-  const next = isoOffset(dayIso, 1);
-  const iso = isoFromWallClock(`${next}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function endOfWeekMs(dayIso: string, tz: string): number {
-  const dow = dowOfDay(dayIso, tz);
-  const daysToNextSun = dow === 0 ? 7 : 7 - dow;
-  const nextSun = isoOffset(dayIso, daysToNextSun);
-  const iso = isoFromWallClock(`${nextSun}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function endOfMonthMs(dayIso: string, tz: string): number {
-  const [y, m] = dayIso.split('-').map(Number);
-  const ny = m === 12 ? y + 1 : y;
-  const nm = m === 12 ? 1 : m + 1;
-  const firstOfNext = `${ny}-${String(nm).padStart(2, '0')}-01`;
-  const iso = isoFromWallClock(`${firstOfNext}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function isoDateOf(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms));
-}
-
-function dowOfDay(dayIso: string, tz: string): number {
-  const d = new Date(`${dayIso}T12:00:00Z`);
-  const name = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(d);
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
-}
-
-function defaultEndForPeriod(
-  period: WindowPeriod,
-  latestMs: number | null,
-  today: string,
-  tz: string,
-): number {
-  const anchorMs = latestMs ?? Date.now();
-  const dayIso = latestMs === null ? today : isoDateOf(anchorMs, tz);
-  switch (period) {
-    case 'D':
-      return endOfDayMs(dayIso, tz);
-    case 'W':
-      return endOfWeekMs(dayIso, tz);
-    case 'M':
-      return endOfMonthMs(dayIso, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(today, tz);
-  }
-}
-
-function backwardBoundForPeriod(
-  period: WindowPeriod,
-  oldestMs: number | null,
-  today: string,
-  tz: string,
-): number {
-  if (oldestMs === null) return endOfDayMs(today, tz);
-  const dayIso = isoDateOf(oldestMs, tz);
-  switch (period) {
-    case 'D':
-      return endOfDayMs(dayIso, tz);
-    case 'W':
-      return endOfWeekMs(dayIso, tz);
-    case 'M':
-      return endOfMonthMs(dayIso, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(dayIso, tz);
-  }
-}
-
-function forwardBoundForPeriod(
-  period: WindowPeriod,
-  today: string,
-  tz: string,
-): number {
-  switch (period) {
-    case 'D':
-      return endOfDayMs(today, tz);
-    case 'W':
-      return endOfWeekMs(today, tz);
-    case 'M':
-      return endOfMonthMs(today, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(today, tz);
-  }
-}
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
@@ -280,8 +161,8 @@ export function Spo2TrendView({
   );
 
   const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, timezone),
-    [period, startMs, endMs, timezone],
+    () => subheadFor(period, startMs, endMs, timezone, today),
+    [period, startMs, endMs, timezone, today],
   );
 
   const hasAnyReadings = allReadings.length > 0;
@@ -647,195 +528,6 @@ export function Spo2TrendView({
       )}
     </>
   );
-}
-
-// ─── X labels (duplicated from WeightTrendView — hoist at HR) ───────────────
-
-function xLabelsFor(
-  period: WindowPeriod,
-  endMs: number,
-  tz: string,
-): { x: number; label: string }[] {
-  const span = windowSpanMs(period);
-  const startMs = endMs - span;
-  if (period === 'D') {
-    return anchorsAtWallClockHours(startMs, endMs, tz, [0, 6, 12, 18], hourLabel);
-  }
-  if (period === 'W') {
-    return anchorsAtMidnights(startMs, endMs, tz, weekdayLabel);
-  }
-  if (period === 'M') {
-    return anchorsOnDayOfWeek(startMs, endMs, tz, 0, shortDateLabel);
-  }
-  return anchorsAtMonthStarts(startMs, endMs, tz, monthLabel);
-}
-
-function anchorsAtWallClockHours(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  hours: number[],
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = -1; dayOffset <= 2; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    for (const h of hours) {
-      const wallClock = `${dayIso}T${String(h).padStart(2, '0')}:00`;
-      const iso = isoFromWallClock(wallClock, tz);
-      if (!iso) continue;
-      const ms = Date.parse(iso);
-      if (ms >= startMs && ms <= endMs) {
-        out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-      }
-    }
-  }
-  return out;
-}
-
-function anchorsAtMidnights(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = 0; dayOffset <= 9; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function anchorsOnDayOfWeek(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  targetDow: number,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = 0; dayOffset <= 32; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    const dow = dowOfDay(dayIso, tz);
-    if (dow !== targetDow) continue;
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function anchorsAtMonthStarts(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  const startDayIso = isoDateOf(startMs, tz);
-  const [y, m] = startDayIso.split('-').map(Number);
-  for (let i = 0; i <= 14; i++) {
-    const targetMonth0 = m - 1 + i;
-    const targetY = y + Math.floor(targetMonth0 / 12);
-    const targetM = (targetMonth0 % 12) + 1;
-    const dayIso = `${targetY}-${String(targetM).padStart(2, '0')}-01`;
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function hourLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    hour12: true,
-  }).format(new Date(ms));
-}
-
-function weekdayLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(new Date(ms));
-}
-
-function shortDateLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date(ms));
-}
-
-function monthLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    month: 'short',
-  }).format(new Date(ms));
-}
-
-// ─── Subhead (duplicated from WeightTrendView — hoist at HR) ────────────────
-
-function subheadFor(
-  period: WindowPeriod,
-  startMs: number,
-  endMs: number,
-  tz: string,
-): string {
-  if (period === 'D') {
-    return `${dayTimeLabel(startMs, tz)} – ${dayTimeLabel(endMs, tz)}`;
-  }
-  return `${shortDateLabel(startMs, tz)} – ${shortDateLabel(endMs, tz)}`;
-}
-
-function dayTimeLabel(ms: number, tz: string): string {
-  const dayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms));
-  const todayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-  const yesterdayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(Date.now() - DAY_MS));
-  const time = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    hour12: true,
-  }).format(new Date(ms));
-  if (dayKey === todayKey) return `Today, ${time}`;
-  if (dayKey === yesterdayKey) return `Yesterday, ${time}`;
-  return `${shortDateLabel(ms, tz)}, ${time}`;
 }
 
 // ─── Stats trio (SpO2-specific) ─────────────────────────────────────────────
