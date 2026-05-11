@@ -115,14 +115,37 @@ half without the other rarely makes sense.
 
 **Reference implementations:**
 - `src/components/heartnote/weight-trend/WeightTrendView.tsx` — the "+" Add weight button on /trends/weight.
-- `docs/design/heartnote-log-redesign-mockup.html` — the mic and ear/symptom buttons on /log (mockup; not yet implemented in src/).
+- `src/components/heartnote/BottomNav.tsx` — the three sitewide nav buttons (Home / Log / Me). User directed the nav match this register on 2026-05-10 so the heavy green Log FAB no longer dominates every screen; the three nav buttons share the 46×46 ghost-circle geometry and active-state sage-deep fill.
 
-**When to use:** page-level utility actions that don't fit the inline list/value registers — adding a new entity to the page (a weight reading, a voice log), opening a related modal (the symptom sheet), or initiating a recording session. The button affords "do something at the page level" rather than "modify this specific row/value."
+(The previous `/log` mockup at `docs/design/heartnote-log-redesign-mockup.html` showed isolated mic + ear buttons in this register; that's been superseded by the floating composer dock — register #7 below.)
+
+**When to use:** page-level utility actions that don't fit the inline list/value registers — adding a new entity to the page (a weight reading, a voice log), opening a related modal (the symptom sheet), or initiating a recording session. The button affords "do something at the page level" rather than "modify this specific row/value." **Also acceptable for sitewide primary nav** when the design explicitly directs the match (see BottomNav reference above).
 
 **Forbidden alternatives for this kind:**
 - A solid sage-circle plus (register #3). That's for adding rows to a visible list. The bottom-bar button initiates a separate flow (a sheet) — different affordance.
 - A coral pill button (register #4). The bottom-bar utility is constructive, not destructive.
 - Multiple bottom-bar buttons in different visual styles on the same page. If a page needs more than one, both must use this register.
+
+### 7. Floating composer dock (Anthropic-composer-style bottom card)
+
+**Pattern:** rounded card pinned to the viewport bottom via `position: fixed`, holding inline affordances (typically a secondary button on the left, a text or transcript area in the middle, and a primary CTA button on the right) — the equivalent of Anthropic's mobile chat composer pinned above the keyboard.
+
+- Container: `position: fixed; bottom: 0; left: 0; right: 0; z-index: 50`, centered with `max-w-md mx-auto px-3`, `paddingBottom: max(0.875rem, env(safe-area-inset-bottom))`, `paddingTop: 8`.
+- Card body: `rounded-[24px]`, background `color-mix(in oklab, var(--cream-card) 92%, transparent)`, 0.5px ink-12% border, `backdrop-filter: blur(18px) saturate(160%)`, shadow `0 -10px 32px rgba(0,0,0,0.10), 0 -2px 6px rgba(0,0,0,0.05)`, `minHeight: 60`.
+- Layout: `flex items-center gap-3 pr-2 pl-3 py-2`. Pointer-events trick (parent `pointer-events-none`, card `pointer-events-auto`) so the card floats above scroll without blocking the page.
+- Secondary button (left): 38×38 rounded full. Idle = `var(--card)` bg, 0.5px border, foreground glyph. Active = `var(--sage-deep)` filled, white glyph.
+- Text/transcript region (middle): `flex-1 min-w-0 overflow-y-auto max-h-[96px]` with top/bottom mask-fade. Italic display font for transcript text; muted ink-faint color for placeholder.
+- Primary CTA (right): 44×44 rounded full, always `var(--sage-deep)` filled with white glyph, sage-deep glow shadow. Glyph swaps based on state (e.g., Mic ↔ Square for record/stop). HeartNote uses sage-deep here because coral is reserved for clinical alerts — the Anthropic original uses coral.
+- z-stack: composer at `z-50`, sheets/modals that should cover it use `z-60`. The sitewide tier-1 `AlertGlow` also lives at `z-60` (`pointer-events: none`, non-occluding inset coral glow) — it paints alongside the modal without blocking interaction.
+
+**Reference implementation:** `src/components/heartnote/log/LogComposer.tsx` — the /log voice-log composer (ear + transcript + mic).
+
+**When to use:** when a single page has a primary CTA + supporting affordance + persistent content readout that the caregiver needs available regardless of scroll position. Currently /log only. Distinct from register #6 (single floating button) because the composer holds multiple inline affordances + a text region in one container.
+
+**Forbidden alternatives for this kind:**
+- A `position: sticky` bottom bar. Sticky's parent-overflow contract can break when sheets lock body scroll (`body { overflow: hidden }`) — empirically the previous `/log` BottomBar disappeared after the symptoms sheet closed in some browsers. Fixed has no such dependency.
+- A separate floating utility button (register #6) plus an inline content card. Two bottom-pinned surfaces on the same page is the visual fragmentation this register exists to prevent.
+- Coral primary CTA. Coral is reserved for clinical-alert visuals; the composer's primary action is operational, not destructive.
 
 ## Decision flow when adding a new interactive
 
@@ -152,9 +175,13 @@ Increment/decrement a numeric value
 Page-level utility action (open a sheet, add an entity, start a flow)
   → Pattern #6: floating utility button (translucent cream, backdrop blur)
   → reference: /trends/weight Add-weight button
+
+Bottom-pinned card with multiple inline affordances + a content region
+  → Pattern #7: floating composer dock
+  → reference: /log LogComposer
 ```
 
-If the new action doesn't fit any of these six kinds, name what's different and ask. Don't invent a seventh register.
+If the new action doesn't fit any of these seven kinds, name what's different and ask. Don't invent an eighth register.
 
 ## Currently-out-of-canon places
 

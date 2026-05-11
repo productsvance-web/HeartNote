@@ -24,6 +24,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import type { VitalReadingConfig } from './vital-reading-config';
 import { WhenCard } from './WhenCard';
 
@@ -48,7 +49,6 @@ interface Props {
 
 const HOLD_DELAY_MS = 350;
 const HOLD_REPEAT_MS = 80;
-const MIN_BACKDATE_DAYS = 400;
 
 export function AddReadingSheet({
   config,
@@ -334,7 +334,7 @@ export function AddReadingSheet({
           onDateChange={setDate}
           onTimeChange={setTime}
           timezone={timezone}
-          minBackdateDays={MIN_BACKDATE_DAYS}
+          minBackdateDays={MAX_BACKDATE_DAYS}
           dateOnly={config.dateOnly}
         />
 

@@ -23,6 +23,12 @@ import { evaluateAlertTier } from '@/lib/alerts/evaluate';
 import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import { isoOffset } from '@/lib/dates/iso-offset';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
+import {
+  isVoiceLogInflight,
+  sweepAbandonedVoiceLogs,
+} from '@/lib/voice-log/inflight-gate';
 
 const Severity04 = z.union([
   z.literal(0),
@@ -162,15 +168,10 @@ export async function upsertTodayTapSession(
 
   // Fail-closed against in-flight voice processing. The voice path moves
   // a row from pending → analyzing immediately on processVoiceLog start,
-  // so checking only `pending` would race the analyzing window. (Lifted
-  // from the deleted /log/manual/actions.ts.)
-  const { data: pending } = await supabase
-    .from('daily_logs')
-    .select('id')
-    .eq('patient_id', patient.id)
-    .eq('log_date', today)
-    .in('processing_status', ['pending', 'analyzing']);
-  if (pending && pending.length > 0) {
+  // so checking only `pending` would race the analyzing window. The
+  // helper also reaps abandoned-empty pending rows past the lease TTL
+  // — see src/lib/voice-log/inflight-gate.ts for the lease pattern.
+  if (await isVoiceLogInflight(supabase, patient.id, today)) {
     return {
       ok: false,
       error: 'Voice log still processing — try again in a moment.',
@@ -353,16 +354,26 @@ export async function upsertTodayTapSession(
   return { ok: true, logId };
 }
 
-const StartVoiceSchema = z.object({ patientId: z.string().uuid() });
+const StartVoiceSchema = z.object({
+  patientId: z.string().uuid(),
+  // Optional. YYYY-MM-DD in the patient's local timezone. When omitted
+  // the server defaults to today. Validated below: must not be in the
+  // future and not older than VOICE_LOG_MAX_BACKDATE_DAYS.
+  logDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Bad date')
+    .optional(),
+});
 
 export async function flushAndStartVoice(input: {
   patientId: string;
+  logDate?: string;
 }): Promise<{ ok: true; logId: string } | { ok: false; error: string }> {
   // The flush itself is client-side: the caller awaits any pending
   // upsertTodayTapSession before calling this. Server just creates the
-  // pending voice row.
+  // pending voice row, applying the user-chosen log_date if provided.
   const parsed = StartVoiceSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Invalid patient.' };
+  if (!parsed.success) return { ok: false, error: 'Invalid input.' };
 
   const supabase = await createClient();
   const {
@@ -385,12 +396,30 @@ export async function flushAndStartVoice(input: {
     .single();
   if (!profile) return { ok: false, error: 'Profile not found.' };
 
+  // Reap any abandoned-empty pending rows from prior aborted sessions for
+  // this patient. Best-effort cleanup so the table doesn't accumulate
+  // cruft over time; doesn't block recording even if it fails.
+  await sweepAbandonedVoiceLogs(supabase, parsed.data.patientId);
+
   const today = getTodayInTimezone(profile.timezone);
+  const logDate = parsed.data.logDate ?? today;
+
+  // Validate the chosen date. Future is rejected (you can't have a
+  // check-in for tomorrow). The 400-day floor matches the trends-add
+  // backdate window so caregivers have one consistent horizon.
+  if (logDate > today) {
+    return { ok: false, error: 'Date is in the future.' };
+  }
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
+  if (logDate < earliest) {
+    return { ok: false, error: 'Date is too far in the past.' };
+  }
+
   const { data: log, error } = await supabase
     .from('daily_logs')
     .insert({
       patient_id: parsed.data.patientId,
-      log_date: today,
+      log_date: logDate,
       processing_status: 'pending',
       processing_error: null,
       transcribed_text: null,

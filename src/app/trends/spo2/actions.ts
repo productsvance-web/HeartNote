@@ -22,8 +22,8 @@ import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
-
-const MIN_BACKDATE_DAYS = 400;
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
+import { isVoiceLogInflight } from '@/lib/voice-log/inflight-gate';
 
 const InputSchema = z.object({
   // SpO2 is one-decimal precision throughout the app (matches voice
@@ -88,26 +88,19 @@ export async function addSpo2Reading(
   }
 
   const logDate = data.recordedAtIsoLocal.slice(0, 10);
-  const earliest = isoOffset(today, -MIN_BACKDATE_DAYS);
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
   if (logDate < earliest) {
     return { ok: false, error: 'Reading date is too far in the past.' };
   }
 
   // Fail-closed against in-flight voice processing for today. Backdated
-  // saves bypass — they don't race the voice pipeline.
-  if (logDate === today) {
-    const { data: pending } = await supabase
-      .from('daily_logs')
-      .select('id')
-      .eq('patient_id', patient.id)
-      .eq('log_date', today)
-      .in('processing_status', ['pending', 'analyzing']);
-    if (pending && pending.length > 0) {
-      return {
-        ok: false,
-        error: 'Voice log still processing — try again in a moment.',
-      };
-    }
+  // saves bypass — they don't race the voice pipeline. The helper also
+  // reaps abandoned-empty pending rows past the lease TTL.
+  if (logDate === today && (await isVoiceLogInflight(supabase, patient.id, today))) {
+    return {
+      ok: false,
+      error: 'Voice log still processing — try again in a moment.',
+    };
   }
 
   // 1. Always create a parent daily_logs row.

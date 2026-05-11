@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DualStepperControl } from '@/components/heartnote/log/DualStepperControl';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import { WhenCard } from './WhenCard';
 
 export type AddBpInput = {
@@ -29,7 +30,6 @@ interface Props {
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
-const MIN_BACKDATE_DAYS = 400;
 
 export function AddBpSheet({
   onClose,
@@ -202,7 +202,7 @@ export function AddBpSheet({
           onDateChange={setDate}
           onTimeChange={setTime}
           timezone={timezone}
-          minBackdateDays={MIN_BACKDATE_DAYS}
+          minBackdateDays={MAX_BACKDATE_DAYS}
         />
 
         {error && (

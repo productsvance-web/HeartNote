@@ -106,7 +106,9 @@ export function SymptomsModal({
       data-modal-open="true"
       // justify-center centers the sheet so on desktop it sits in the
       // PhoneShell phone-shell-width (max-w-md), not stretched edge-to-edge.
-      className="fixed inset-0 z-40 flex items-end justify-center"
+      // z-60 sits above the bottom-pinned LogComposer (z-50) so the sheet
+      // fully covers it when open.
+      className="fixed inset-0 z-[60] flex items-end justify-center"
       style={{ background: 'color-mix(in oklab, var(--foreground) 25%, transparent)' }}
     >
       <div

@@ -20,7 +20,7 @@ import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
 
-const MIN_BACKDATE_DAYS = 400;
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 
 // Bounds come from READING_RANGE — the same source the DB CHECK
 // constraint matches. DualStepperControl's NumberChip applies a
@@ -87,7 +87,7 @@ export async function addBpReading(raw: AddBpInput): Promise<AddBpResult> {
   }
 
   const logDate = data.recordedAtIsoLocal.slice(0, 10);
-  const earliest = isoOffset(today, -MIN_BACKDATE_DAYS);
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
   if (logDate < earliest) {
     return { ok: false, error: 'Reading date is too far in the past.' };
   }

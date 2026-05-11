@@ -26,7 +26,7 @@ export default async function LogPage() {
   if (!profile?.onboarding_completed_at) redirect('/onboarding');
 
   const today = getTodayInTimezone(profile.timezone);
-  const ctx = await loadLogPageContext(supabase, user.id, today);
+  const ctx = await loadLogPageContext(supabase, user.id, today, profile.timezone);
   if (!ctx) redirect('/onboarding');
 
   return (

@@ -18,7 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
-import type { LogPageContext, SymptomState } from '@/lib/log/page-context';
+import type {
+  LogPageContext,
+  SymptomState,
+  SymptomSourcesState,
+} from '@/lib/log/page-context';
 import {
   upsertTodayTapSession,
   flushAndStartVoice,
@@ -34,19 +38,20 @@ import {
   openDeepgramClient,
   type DeepgramClient,
 } from '@/lib/voice-log/deepgram-client';
+import { MAX_RECORD_SECONDS } from '@/lib/voice-log/limits';
+import { getTodayInTimezone } from '@/lib/dates/today';
 import { VitalCard, type VitalCardState } from '@/components/heartnote/log/VitalCard';
 import { StepperControl } from '@/components/heartnote/log/StepperControl';
 import { DualStepperControl } from '@/components/heartnote/log/DualStepperControl';
-import { TranscriptCard } from '@/components/heartnote/log/TranscriptCard';
 import { AlertChipBanner } from '@/components/heartnote/log/AlertChipBanner';
-import { BottomBar } from '@/components/heartnote/log/BottomBar';
+import { LogComposer } from '@/components/heartnote/log/LogComposer';
 import {
   SymptomsModal,
   type SymptomTouchState,
 } from '@/components/heartnote/log/SymptomsModal';
+import { VoiceLogDateSheet } from '@/components/heartnote/log/VoiceLogDateSheet';
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
-const MAX_RECORD_SECONDS = 120;
 const VOICE_STOP_SILENCE_GATE_MS = 1000;
 
 type RecordingStatus =
@@ -135,70 +140,17 @@ export function LogPageClient({ context }: Props) {
   }));
 
   const [symptoms, setSymptoms] = useState<SymptomState>(context.symptoms);
-  const [symptomsTouch, setSymptomsTouch] = useState<SymptomTouchState>(() => {
-    // Per-field touch state on hydrate. A symptom is 'heard' only if its
-    // most-recent event today came from a voice row (source_log_id matches
-    // a daily_logs row with tap_session_id IS NULL). Tap-only events are
-    // 'tapped' even after reload — H3 fix to avoid lighting the ear glow
-    // on tap-only sessions.
-    const out: SymptomTouchState = {};
-    const s = context.symptoms;
-    const src = context.symptomSources;
-    const stateFor = (
-      hasValue: boolean,
-      source: 'voice' | 'tap' | null,
-    ): VitalCardState | undefined => {
-      if (!hasValue) return undefined;
-      if (source === 'voice') return 'heard';
-      return 'tapped';
-    };
-    out.dyspneaSeverity = stateFor(s.dyspneaSeverity !== null, src.dyspneaSeverity);
-    out.cough = stateFor(s.cough !== null, src.cough);
-    out.sputumColor = stateFor(s.sputumColor !== null, src.sputumColor);
-    out.swellingSeverity = stateFor(
-      s.swellingSeverity !== null,
-      src.swellingSeverity,
-    );
-    out.swellingRegion = stateFor(s.swellingRegion !== null, src.swellingRegion);
-    out.swellingResolvesOvernight = stateFor(
-      s.swellingResolvesOvernight !== null,
-      src.swellingResolvesOvernight,
-    );
-    out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
-    // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
-    // even though the modal renders the SegmentedControl with value=null
-    // for severe (modal omits the severity-4 button by design). Hydrate the
-    // card to state='alert' so the corner pip + outline match the banner
-    // the engine fires above the page.
-    // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
-    out.cognitionChange =
-      s.cognitionChange === 'severe'
-        ? 'alert'
-        : stateFor(s.cognitionChange !== null, src.cognitionChange);
-    // appetite/urineOutput are day-level fields; treat as tapped when set.
-    if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
-    if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
-    out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
-    out.chestPainCharacter = stateFor(
-      s.chestPainCharacter !== null,
-      src.chestPainCharacter,
-    );
-    out.syncope = stateFor(s.syncope !== null, src.syncope);
-    out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
-    out.pnd = stateFor(s.pnd !== null, src.pnd);
-    out.earlySatiety = stateFor(s.earlySatiety !== null, src.earlySatiety);
-    out.extremitiesColdClammy = stateFor(
-      s.extremitiesColdClammy !== null,
-      src.extremitiesColdClammy,
-    );
-    out.pulseIrregular = stateFor(s.pulseIrregular !== null, src.pulseIrregular);
-    out.dizziness = stateFor(s.dizziness !== null, src.dizziness);
-    out.nausea = stateFor(s.nausea !== null, src.nausea);
-    return out;
-  });
+  const [symptomsTouch, setSymptomsTouch] = useState<SymptomTouchState>(() =>
+    deriveSymptomsTouchFromContext(context.symptoms, context.symptomSources),
+  );
 
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
+  // Date the most-recent recording landed on. null until a recording
+  // completes. When non-null and ≠ today, pageCopy shows a "Saved for
+  // [date]" headline so backdated saves don't appear silent.
+  const [recordedForDate, setRecordedForDate] = useState<string | null>(null);
 
   // ─── Autosave: debounced + dirty tracking ────────────────────────────────
   const dirtyRef = useRef(false);
@@ -392,35 +344,50 @@ export function LogPageClient({ context }: Props) {
   }, [flushSave]);
 
   // ─── Voice ───────────────────────────────────────────────────────────────
+  // Mic-tap is a two-stage flow:
+  //   1. Tap → open the VoiceLogDateSheet asking "When is this voice log
+  //      for?". Symptoms modal gets dismissed first (R2).
+  //   2. Sheet confirm (Today or Another day → date) → flush any dirty
+  //      tap-session (R3), then call startRecording with the chosen date.
+  // Stop-tap (recordingStatus === 'recording') is unchanged — single
+  // action, no sheet.
   const onMicClick = useCallback(async () => {
     if (recordingStatus === 'recording') {
       await stopRecording();
       return;
     }
-    // Modal close before recording starts (R2).
     if (modalOpen) {
       setModalOpen(false);
     }
-    // Flush dirty tap-session before voice (R3).
-    if (dirtyRef.current) {
-      const result = await flushSave();
-      if (result && !result.ok) {
-        setRecordingError(`Couldn't save your taps — recording not started.`);
-        return;
-      }
-    }
-    if (inFlightSaveRef.current) {
-      const result = await inFlightSaveRef.current;
-      if (!result.ok) {
-        setRecordingError(`Couldn't save your taps — recording not started.`);
-        return;
-      }
-    }
-    await startRecording();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordingStatus, modalOpen, flushSave]);
+    setDateSheetOpen(true);
+  }, [recordingStatus, modalOpen]);
 
-  async function startRecording() {
+  const onDateSheetConfirm = useCallback(
+    async (logDate: string) => {
+      setDateSheetOpen(false);
+      setRecordedForDate(logDate);
+      // Flush dirty tap-session before voice (R3).
+      if (dirtyRef.current) {
+        const result = await flushSave();
+        if (result && !result.ok) {
+          setRecordingError(`Couldn't save your taps — recording not started.`);
+          return;
+        }
+      }
+      if (inFlightSaveRef.current) {
+        const result = await inFlightSaveRef.current;
+        if (!result.ok) {
+          setRecordingError(`Couldn't save your taps — recording not started.`);
+          return;
+        }
+      }
+      await startRecording(logDate);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [flushSave],
+  );
+
+  async function startRecording(logDate: string) {
     setRecordingError(null);
     setRecordSeconds(0);
     setRecordingStatus('requesting-mic');
@@ -461,6 +428,7 @@ export function LogPageClient({ context }: Props) {
 
     const startResult = await flushAndStartVoice({
       patientId: context.patient.id,
+      logDate,
     });
     if (!startResult.ok) {
       stream.getTracks().forEach((t) => t.stop());
@@ -739,10 +707,137 @@ export function LogPageClient({ context }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingStatus]);
 
+  // ─── Re-hydrate from server after voice processing completes ─────────────
+  // useState initializers only run on first mount, so AI-extracted symptoms
+  // (and any vitals Claude refined past what the live regex caught during
+  // recording) wouldn't make it into the modal/cards on their own — the
+  // page would render the freshly-extracted server values but the modal
+  // would still show the stale empty state from page-load time.
+  //
+  // This effect bridges that gap: when context shows a newly-completed
+  // voice row (different id than the last one we hydrated from), pull
+  // the new server values into state. Tap-during-record stays sticky
+  // per R1 — any field the user has manually tapped keeps its value
+  // and 'tapped' touch state.
+  const lastHydratedVoiceLogIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!context.todayLogId) return;
+    if (context.todayLogStatus !== 'complete') return;
+    if (!context.todayLogIsVoice) return;
+    if (lastHydratedVoiceLogIdRef.current === context.todayLogId) return;
+    lastHydratedVoiceLogIdRef.current = context.todayLogId;
+
+    // Symptoms — overwrite each field unless the user tapped it.
+    setSymptoms((current) => {
+      const next: SymptomState = { ...current };
+      for (const key of Object.keys(context.symptoms) as Array<keyof SymptomState>) {
+        if (symptomsTouch[key] !== 'tapped') {
+          // Field-by-field assignment with structural-union narrowing is
+          // noisy in TS; the cast keeps the loop legible. Each symptom
+          // pair (state ↔ context) shares the same SymptomState typing.
+          (next[key] as SymptomState[typeof key]) = context.symptoms[key];
+        }
+      }
+      return next;
+    });
+    setSymptomsTouch((current) => {
+      const fresh = deriveSymptomsTouchFromContext(
+        context.symptoms,
+        context.symptomSources,
+      );
+      const next: SymptomTouchState = { ...fresh };
+      for (const key of Object.keys(current) as Array<keyof SymptomTouchState>) {
+        if (current[key] === 'tapped') next[key] = 'tapped';
+      }
+      return next;
+    });
+
+    // Vitals — same pattern. Live regex extraction handles the common
+    // numbers during recording, but Claude can refine values post-stop
+    // or surface ones the regex missed; sync them in.
+    setVitals((current) => ({
+      weightLb:
+        vitalsTouch.weight === 'tapped'
+          ? current.weightLb
+          : context.vitals.weight.todayLb,
+      pillowCount:
+        vitalsTouch.pillows === 'tapped'
+          ? current.pillowCount
+          : context.vitals.pillows.todayCount,
+      bp:
+        vitalsTouch.bp === 'tapped'
+          ? current.bp
+          : context.vitals.bp.today
+            ? {
+                sys: context.vitals.bp.today.sys,
+                dia: context.vitals.bp.today.dia,
+              }
+            : null,
+      hrBpm:
+        vitalsTouch.hr === 'tapped'
+          ? current.hrBpm
+          : context.vitals.hr.todayBpm,
+      spo2Pct:
+        vitalsTouch.spo2 === 'tapped'
+          ? current.spo2Pct
+          : context.vitals.spo2.todayPct,
+    }));
+    setVitalsTouch((current) => ({
+      weight:
+        current.weight === 'tapped'
+          ? 'tapped'
+          : context.vitals.weight.todayLb !== null
+            ? 'heard'
+            : 'muted',
+      pillows:
+        current.pillows === 'tapped'
+          ? 'tapped'
+          : context.vitals.pillows.todayCount !== null
+            ? 'heard'
+            : 'muted',
+      bp:
+        current.bp === 'tapped'
+          ? 'tapped'
+          : context.vitals.bp.today !== null
+            ? 'heard'
+            : 'muted',
+      hr:
+        current.hr === 'tapped'
+          ? 'tapped'
+          : context.vitals.hr.todayBpm !== null
+            ? 'heard'
+            : 'muted',
+      spo2:
+        current.spo2 === 'tapped'
+          ? 'tapped'
+          : context.vitals.spo2.todayPct !== null
+            ? 'heard'
+            : 'muted',
+    }));
+    // symptomsTouch + vitalsTouch are read from the closure of the render
+    // that schedules this effect — that's the latest value at effect-run
+    // time, since the effect only re-runs when context.todayLogId changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context.todayLogId, context.todayLogStatus, context.todayLogIsVoice]);
+
   // ─── "Symptom heard" detection (drives ear button glow) ──────────────────
   const symptomHeard = useMemo(() => {
     return Object.values(symptomsTouch).some((s) => s === 'heard');
   }, [symptomsTouch]);
+
+  // ─── Live transcript for the composer ────────────────────────────────────
+  // While recording, the captured-state `transcript` is null — words live in
+  // finalsRef and the page only re-renders when `finalsTick` bumps. Compose
+  // a live string from the refs so the composer shows words as they stream
+  // in. After stop, fall back to `transcript` (the captured final).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const liveTranscript = useMemo<string | null>(() => {
+    if (recordingStatus === 'recording') {
+      const live = finalsRef.current.join(' ').trim();
+      return live.length > 0 ? live : null;
+    }
+    return transcript;
+  }, [recordingStatus, transcript, finalsTick]);
 
   // ─── Captured-count for modal footer ─────────────────────────────────────
   // Counts the 14 distinct symptoms in the extract.ts schema enum:
@@ -804,7 +899,7 @@ export function LogPageClient({ context }: Props) {
   });
 
   // ─── Eyebrow + headline ──────────────────────────────────────────────────
-  const { headline, subhead } = pageCopy(recordingStatus, context);
+  const { headline, subhead } = pageCopy(recordingStatus, context, recordedForDate);
 
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
@@ -812,7 +907,7 @@ export function LogPageClient({ context }: Props) {
       data-page="log"
       data-status={recordingStatus}
       data-modal-open={modalOpen}
-      className="flex flex-col flex-1 min-h-screen pb-2"
+      className="flex flex-col flex-1 min-h-screen pb-40"
     >
       {/* Alert banner — above page header (L9). */}
       {context.assessment && (
@@ -857,12 +952,6 @@ export function LogPageClient({ context }: Props) {
           }}
         >
           {recordingError}
-        </div>
-      )}
-
-      {transcript && (
-        <div className="px-4 pt-3">
-          <TranscriptCard transcript={transcript} />
         </div>
       )}
 
@@ -1045,9 +1134,16 @@ export function LogPageClient({ context }: Props) {
           )}
       </div>
 
-      {/* Bottom bar (L7) */}
-      <BottomBar
+      {/* Bottom-pinned composer — ear + transcript + mic in one floating
+          dock. Replaces the prior sticky BottomBar + inline TranscriptCard
+          pair (PR 2026-05-10). */}
+      <LogComposer
         recording={recordingStatus === 'recording'}
+        disabled={
+          recordingStatus === 'requesting-mic' ||
+          recordingStatus === 'analyzing'
+        }
+        transcript={liveTranscript}
         symptomHeard={symptomHeard}
         modalOpen={modalOpen}
         onMicClick={onMicClick}
@@ -1061,6 +1157,13 @@ export function LogPageClient({ context }: Props) {
         touchState={symptomsTouch}
         onChange={onSymptomsChange}
         capturedCount={symptomsCapturedCount}
+      />
+
+      <VoiceLogDateSheet
+        open={dateSheetOpen}
+        todayLocal={getTodayInTimezone(context.timezone)}
+        onCancel={() => setDateSheetOpen(false)}
+        onConfirm={onDateSheetConfirm}
       />
 
       {/* Recording wake-screen counter — small inline visual when recording */}
@@ -1084,6 +1187,70 @@ export function LogPageClient({ context }: Props) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Per-field touch state derived from the most-recent symptom event today.
+// A symptom is 'heard' only if its source row is voice (tap_session_id IS
+// NULL); tap-only events are 'tapped' even after reload — H3 fix to keep
+// the ear glow off on tap-only sessions. Used by the useState initializer
+// AND the post-voice re-hydrate effect, so both paths derive identical
+// touch state from the same context shape.
+function deriveSymptomsTouchFromContext(
+  s: SymptomState,
+  src: SymptomSourcesState,
+): SymptomTouchState {
+  const out: SymptomTouchState = {};
+  const stateFor = (
+    hasValue: boolean,
+    source: 'voice' | 'tap' | null,
+  ): VitalCardState | undefined => {
+    if (!hasValue) return undefined;
+    if (source === 'voice') return 'heard';
+    return 'tapped';
+  };
+  out.dyspneaSeverity = stateFor(s.dyspneaSeverity !== null, src.dyspneaSeverity);
+  out.cough = stateFor(s.cough !== null, src.cough);
+  out.sputumColor = stateFor(s.sputumColor !== null, src.sputumColor);
+  out.swellingSeverity = stateFor(
+    s.swellingSeverity !== null,
+    src.swellingSeverity,
+  );
+  out.swellingRegion = stateFor(s.swellingRegion !== null, src.swellingRegion);
+  out.swellingResolvesOvernight = stateFor(
+    s.swellingResolvesOvernight !== null,
+    src.swellingResolvesOvernight,
+  );
+  out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
+  // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
+  // even though the modal renders the SegmentedControl with value=null
+  // for severe (modal omits the severity-4 button by design). Hydrate the
+  // card to state='alert' so the corner pip + outline match the banner
+  // the engine fires above the page.
+  // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
+  out.cognitionChange =
+    s.cognitionChange === 'severe'
+      ? 'alert'
+      : stateFor(s.cognitionChange !== null, src.cognitionChange);
+  // appetite/urineOutput are day-level fields; treat as tapped when set.
+  if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
+  if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
+  out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
+  out.chestPainCharacter = stateFor(
+    s.chestPainCharacter !== null,
+    src.chestPainCharacter,
+  );
+  out.syncope = stateFor(s.syncope !== null, src.syncope);
+  out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
+  out.pnd = stateFor(s.pnd !== null, src.pnd);
+  out.earlySatiety = stateFor(s.earlySatiety !== null, src.earlySatiety);
+  out.extremitiesColdClammy = stateFor(
+    s.extremitiesColdClammy !== null,
+    src.extremitiesColdClammy,
+  );
+  out.pulseIrregular = stateFor(s.pulseIrregular !== null, src.pulseIrregular);
+  out.dizziness = stateFor(s.dizziness !== null, src.dizziness);
+  out.nausea = stateFor(s.nausea !== null, src.nausea);
+  return out;
+}
 
 // Mirrors the standalone tier-1 conditions in src/lib/alerts/evaluate.ts
 // (T1.1, T1.2, T1.3, T1.4, T1.5, T1.6). Compound tier-1 rules (T1.7 SpO2,
@@ -1191,6 +1358,7 @@ function buildSymptomsPatch(s: SymptomState): SaveLogPatch['symptoms'] {
 function pageCopy(
   status: RecordingStatus,
   ctx: LogPageContext,
+  recordedForDate: string | null,
 ): { headline: string; subhead: string } {
   if (status === 'recording') {
     return {
@@ -1204,11 +1372,25 @@ function pageCopy(
       subhead: 'A few seconds — keep this open.',
     };
   }
-  if (status === 'complete' && ctx.transcript) {
-    return {
-      headline: "Today's check-in is in.",
-      subhead: 'Tap a card to adjust, or open the listener for symptoms.',
-    };
+  if (status === 'complete') {
+    // Backdated: the transcript and extracted vitals/symptoms land on the
+    // chosen day's daily_logs row, not today's. router.refresh re-loads
+    // /log for today so none of it is visible on this page — say so
+    // explicitly instead of pretending today's check-in is in.
+    const today = getTodayInTimezone(ctx.timezone);
+    if (recordedForDate && recordedForDate !== today) {
+      return {
+        headline: `Saved for ${formatHumanDate(recordedForDate)}.`,
+        subhead:
+          "That day's trends will reflect this. Continue logging today below.",
+      };
+    }
+    if (ctx.transcript) {
+      return {
+        headline: "Today's check-in is in.",
+        subhead: 'Tap a card to adjust, or open the listener for symptoms.',
+      };
+    }
   }
   // Idle — nothing logged today (or just a tap-session in progress).
   // Mockup-verbatim copy for the cold-start state.
@@ -1217,4 +1399,21 @@ function pageCopy(
     subhead:
       'Speak once and the vitals fill themselves — or tap any card. Symptoms live behind the listener button at the bottom-right.',
   };
+}
+
+// YYYY-MM-DD → "Mon, May 11" using UTC interpretation. Mirrors the
+// formatter inside VoiceLogDateSheet — kept inline (not extracted) since
+// these two paths are independent: the sheet picker formats display
+// labels in the bottom sheet; the headline formats post-save copy. Two
+// usages, both in the /log feature, both small.
+function formatHumanDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(dt);
 }

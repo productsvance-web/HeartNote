@@ -21,7 +21,7 @@ import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoOffset } from '@/lib/dates/iso-offset';
 
-const MIN_BACKDATE_DAYS = 400;
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 
 const InputSchema = z.object({
   pillowCount: z
@@ -78,7 +78,7 @@ export async function addPillowReading(
     return { ok: false, error: 'Reading date is in the future.' };
   }
 
-  const earliest = isoOffset(today, -MIN_BACKDATE_DAYS);
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
   if (data.logDate < earliest) {
     return { ok: false, error: 'Reading date is too far in the past.' };
   }
