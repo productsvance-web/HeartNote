@@ -29,7 +29,6 @@ import {
   backwardBoundForPeriod,
   defaultEndForPeriod,
   forwardBoundForPeriod,
-  shortDateLabel,
   subheadFor,
   windowSpanMs,
   xLabelsFor,
@@ -104,12 +103,8 @@ export function WeightTrendView({
 
   const [period, setPeriodRaw] = useState<WindowPeriod>('D');
 
-  // Period-aware default + bounds. D snaps to day boundaries; W to
-  // weeks (Sun-Sat); M to calendar months. 6M/Y are rolling.
-  const defaultEnd = useMemo(
-    () => defaultEndForPeriod(period, latestMs, today, timezone),
-    [period, latestMs, today, timezone],
-  );
+  // Period-aware bounds. D snaps to day boundaries; W to weeks
+  // (Sun-Sat); M to calendar months. 6M/Y are rolling.
   const forwardBound = useMemo(
     () => forwardBoundForPeriod(period, today, timezone),
     [period, today, timezone],
