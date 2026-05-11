@@ -199,7 +199,13 @@ export function LogEditForm({
         ),
       newReadings: readings
         .filter((r) => r.created && !r.removed)
-        .map((r) => ({ field: r.field as ReadingField, value: r.value })),
+        .map((r) => ({
+          // daily_log_readings.field enum excludes pillow_count (which
+          // lives on daily_logs as a day-level summary). Narrow the
+          // cast accordingly.
+          field: r.field as Exclude<ReadingField, 'pillow_count'>,
+          value: r.value,
+        })),
       newSymptoms: symptoms
         .filter((s) => s.created && !s.removed)
         .map((s) => ({
