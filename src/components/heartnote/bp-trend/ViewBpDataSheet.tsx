@@ -1,50 +1,40 @@
-// Read + delete UI for any single-value vital's readings. Slide-up sheet
-// with two modes:
+// BP-specific read+delete sheet. Iterates BpPair[] (one row per
+// reading event) instead of the shared VitalReading[]. Selection keys
+// are source_log_id so a partial-pair delete is impossible.
 //
-// Read mode: chronological list (most-recent first), "Edit" toggles
-// into select mode, "Delete all" pill at the bottom fires a window
-// .confirm() that echoes the patient's first name + count.
-//
-// Select mode: rows have circular checkboxes; "Select all" toggles all;
-// bottom action bar has Delete (N) + Cancel.
-//
-// Destructive-actions.md classification: vital readings are class-B
-// (reversible-with-effort: caregiver can re-enter). Both single/multi
-// delete and "delete all" use confirm() with the target identity in
-// the prompt — no typed-confirmation modal.
+// Generic-izing the shared ViewDataSheet for one extra caller costs
+// more in surface area than this 200-line fork costs in duplication.
+// Plan-engineering-AC cap: if this file exceeds 250 lines, switch to a
+// generic <TRow> on ViewDataSheet.
 
 'use client';
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
-import type { VitalReading } from '@/lib/trends/vital-reading';
-import type { VitalReadingConfig } from './vital-reading-config';
+import type { BpPair } from '@/lib/trends/bp-pair';
 
-type DeleteResult = { ok: true; deleted: number } | { ok: false; error: string };
+type DeleteResult =
+  | { ok: true; deleted: number }
+  | { ok: false; error: string };
 
 interface Props {
-  config: VitalReadingConfig;
-  readings: VitalReading[]; // sorted ascending by recorded_at
+  pairs: BpPair[]; // sorted asc by recorded_at
   patientFirstName: string;
   timezone: string;
   today: string;
   onClose: () => void;
-  // Delete actions are passed in (not imported) so each /trends/<vital>
-  // page wires its own server actions without ViewDataSheet importing
-  // them by name.
-  deleteByIds: (input: { ids: string[] }) => Promise<DeleteResult>;
+  deleteByPairs: (input: { sourceLogIds: string[] }) => Promise<DeleteResult>;
   deleteAll: () => Promise<DeleteResult>;
 }
 
-export function ViewDataSheet({
-  config,
-  readings,
+export function ViewBpDataSheet({
+  pairs,
   patientFirstName,
   timezone,
   today,
   onClose,
-  deleteByIds,
+  deleteByPairs,
   deleteAll,
 }: Props) {
   const router = useRouter();
@@ -53,23 +43,23 @@ export function ViewDataSheet({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  const reversed = [...readings].reverse();
-  const hasReadings = readings.length > 0;
+  const reversed = [...pairs].reverse();
+  const hasPairs = pairs.length > 0;
   const selectedCount = selected.size;
-  const allSelected = hasReadings && selectedCount === readings.length;
+  const allSelected = hasPairs && selectedCount === pairs.length;
 
-  const toggleRow = (id: string) => {
+  const toggleRow = (sourceLogId: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(sourceLogId)) next.delete(sourceLogId);
+      else next.add(sourceLogId);
       return next;
     });
   };
 
   const toggleAll = () => {
     if (allSelected) setSelected(new Set());
-    else setSelected(new Set(readings.map((r) => r.id)));
+    else setSelected(new Set(pairs.map((p) => p.sourceLogId)));
   };
 
   const exitEdit = () => {
@@ -78,26 +68,21 @@ export function ViewDataSheet({
     setError(null);
   };
 
-  // 'Delete' for permanently-destroying-row vitals (weight, spo2, hr,
-  // bp); 'Clear' for daily_logs-column vitals (pillows) where the
-  // underlying mutation is an UPDATE setting the column to NULL.
-  const verb = config.actionVerb ?? 'Delete';
-
   const onDeleteSelected = () => {
     if (selectedCount === 0) return;
     const range = rangeLabel(
-      reversed.filter((r) => selected.has(r.id)),
+      reversed.filter((p) => selected.has(p.sourceLogId)),
       timezone,
     );
     const msg =
       selectedCount === 1
-        ? `${verb} the ${config.deleteNoun.singular} from ${range}?`
-        : `${verb} ${selectedCount} ${config.deleteNoun.plural} (${range})?`;
+        ? `Delete the blood pressure reading from ${range}?`
+        : `Delete ${selectedCount} blood pressure readings (${range})?`;
     if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
-      const ids = Array.from(selected);
-      const result = await deleteByIds({ ids });
+      const sourceLogIds = Array.from(selected);
+      const result = await deleteByPairs({ sourceLogIds });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -108,14 +93,8 @@ export function ViewDataSheet({
   };
 
   const onDeleteAll = () => {
-    if (readings.length === 0) return;
-    // 'Clear' is reversible-with-effort (caregiver can re-enter), so
-    // the "cannot be undone" clause only attaches to the destructive
-    // 'Delete' variant.
-    const msg =
-      verb === 'Clear'
-        ? `${verb} ${readings.length} ${config.deleteNoun.plural} from ${patientFirstName}'s logs?`
-        : `${verb} all ${readings.length} of ${patientFirstName}'s ${config.deleteNoun.plural}? This cannot be undone.`;
+    if (pairs.length === 0) return;
+    const msg = `Delete all ${pairs.length} of ${patientFirstName}'s blood pressure readings? This cannot be undone.`;
     if (!window.confirm(msg)) return;
     setError(null);
     startTransition(async () => {
@@ -134,7 +113,7 @@ export function ViewDataSheet({
       className="fixed inset-0 z-40 flex items-end justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label={`View ${config.fieldLabel.toLowerCase()} data`}
+      aria-label="View blood pressure data"
     >
       <button
         type="button"
@@ -168,9 +147,9 @@ export function ViewDataSheet({
             className="font-display text-[20px] text-foreground"
             style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
           >
-            {config.listTitle}
+            All blood pressure readings
           </h2>
-          {hasReadings ? (
+          {hasPairs ? (
             editing ? (
               <button
                 type="button"
@@ -200,7 +179,7 @@ export function ViewDataSheet({
           )}
         </div>
 
-        {!hasReadings ? (
+        {!hasPairs ? (
           <p className="text-[14px] text-muted-foreground py-8 text-center">
             No readings yet.
           </p>
@@ -212,14 +191,14 @@ export function ViewDataSheet({
               border: '0.5px solid var(--border)',
             }}
           >
-            {reversed.map((r, i) => {
-              const isSelected = selected.has(r.id);
+            {reversed.map((p, i) => {
+              const isSelected = selected.has(p.sourceLogId);
               return (
                 <button
-                  key={r.id}
+                  key={p.sourceLogId}
                   type="button"
                   disabled={!editing || pending}
-                  onClick={() => editing && toggleRow(r.id)}
+                  onClick={() => editing && toggleRow(p.sourceLogId)}
                   className="w-full flex items-center justify-between text-left active:bg-muted transition disabled:cursor-default"
                   style={{
                     padding: '14px 16px',
@@ -269,16 +248,16 @@ export function ViewDataSheet({
                       letterSpacing: '-0.2px',
                     }}
                   >
-                    {config.formatValue(r.value)}
+                    {p.sys} / {p.dia}
                     <span
                       className="text-muted-foreground"
                       style={{ fontSize: 12, fontWeight: 500, marginLeft: 4 }}
                     >
-                      {config.unit}
+                      mmHg
                     </span>
                   </span>
                   <span className="text-[12px] text-muted-foreground tabular-nums">
-                    {whenLabel(r, today, timezone)}
+                    {whenLabel(p, today, timezone)}
                   </span>
                 </button>
               );
@@ -295,7 +274,7 @@ export function ViewDataSheet({
           </p>
         )}
 
-        {hasReadings && editing && (
+        {hasPairs && editing && (
           <div className="mt-4 flex gap-2">
             <button
               type="button"
@@ -323,15 +302,15 @@ export function ViewDataSheet({
               }}
             >
               {pending
-                ? `${verb.slice(0, -1)}ing…`
+                ? 'Deleting…'
                 : selectedCount === 0
-                  ? verb
-                  : `${verb} (${selectedCount})`}
+                  ? 'Delete'
+                  : `Delete (${selectedCount})`}
             </button>
           </div>
         )}
 
-        {hasReadings && !editing && (
+        {hasPairs && !editing && (
           <button
             type="button"
             onClick={onDeleteAll}
@@ -344,11 +323,7 @@ export function ViewDataSheet({
             }}
           >
             <Trash2 size={14} />
-            {pending
-              ? `${verb.slice(0, -1)}ing…`
-              : verb === 'Clear'
-                ? `Clear all ${config.fieldLabel.toLowerCase()} data`
-                : `Delete all ${config.fieldLabel.toLowerCase()} data`}
+            {pending ? 'Deleting…' : 'Delete all blood pressure data'}
           </button>
         )}
       </div>
@@ -356,39 +331,38 @@ export function ViewDataSheet({
   );
 }
 
-function whenLabel(r: VitalReading, today: string, tz: string): string {
+function whenLabel(p: BpPair, today: string, tz: string): string {
   const time = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  }).format(new Date(r.recorded_at));
-  if (r.log_date === today) return `Today, ${time}`;
+  }).format(new Date(p.recorded_at));
+  if (p.log_date === today) return `Today, ${time}`;
   const date = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     month: 'short',
     day: 'numeric',
     year:
-      r.log_date.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric',
-  }).format(new Date(r.recorded_at));
+      p.log_date.slice(0, 4) === today.slice(0, 4) ? undefined : 'numeric',
+  }).format(new Date(p.recorded_at));
   return `${date}, ${time}`;
 }
 
-function rangeLabel(rs: VitalReading[], tz: string): string {
-  if (rs.length === 0) return '';
-  if (rs.length === 1) {
-    const r = rs[0];
+function rangeLabel(ps: BpPair[], tz: string): string {
+  if (ps.length === 0) return '';
+  if (ps.length === 1) {
+    const p = ps[0];
     return new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-    }).format(new Date(r.recorded_at));
+    }).format(new Date(p.recorded_at));
   }
-  // rs is reversed (most-recent first), so [0] is newest, [last] oldest
-  const newest = rs[0];
-  const oldest = rs[rs.length - 1];
+  const newest = ps[0];
+  const oldest = ps[ps.length - 1];
   const newestStr = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     month: 'short',
@@ -401,4 +375,3 @@ function rangeLabel(rs: VitalReading[], tz: string): string {
   }).format(new Date(oldest.recorded_at));
   return `${oldestStr} – ${newestStr}`;
 }
-
