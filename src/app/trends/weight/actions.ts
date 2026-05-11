@@ -19,6 +19,7 @@ import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
+import { isVoiceLogInflight } from '@/lib/voice-log/inflight-gate';
 
 const MIN_BACKDATE_DAYS = 400;
 
@@ -82,22 +83,14 @@ export async function addWeightReading(
     return { ok: false, error: 'Reading date is too far in the past.' };
   }
 
-  // Fail-closed against in-flight voice processing for today (matches
-  // /log/manual). Backdated saves bypass — they don't race the voice
-  // pipeline.
-  if (logDate === today) {
-    const { data: pending } = await supabase
-      .from('daily_logs')
-      .select('id')
-      .eq('patient_id', patient.id)
-      .eq('log_date', today)
-      .in('processing_status', ['pending', 'analyzing']);
-    if (pending && pending.length > 0) {
-      return {
-        ok: false,
-        error: 'Voice log still processing — try again in a moment.',
-      };
-    }
+  // Fail-closed against in-flight voice processing for today. Backdated
+  // saves bypass — they don't race the voice pipeline. The helper also
+  // reaps abandoned-empty pending rows past the lease TTL.
+  if (logDate === today && (await isVoiceLogInflight(supabase, patient.id, today))) {
+    return {
+      ok: false,
+      error: 'Voice log still processing — try again in a moment.',
+    };
   }
 
   // 1. Always create a parent daily_logs row. Keeps the dashboard's

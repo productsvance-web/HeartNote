@@ -34,6 +34,7 @@ import {
   openDeepgramClient,
   type DeepgramClient,
 } from '@/lib/voice-log/deepgram-client';
+import { MAX_RECORD_SECONDS } from '@/lib/voice-log/limits';
 import { VitalCard, type VitalCardState } from '@/components/heartnote/log/VitalCard';
 import { StepperControl } from '@/components/heartnote/log/StepperControl';
 import { DualStepperControl } from '@/components/heartnote/log/DualStepperControl';
@@ -46,7 +47,6 @@ import {
 } from '@/components/heartnote/log/SymptomsModal';
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
-const MAX_RECORD_SECONDS = 120;
 const VOICE_STOP_SILENCE_GATE_MS = 1000;
 
 type RecordingStatus =

@@ -23,6 +23,10 @@ import { evaluateAlertTier } from '@/lib/alerts/evaluate';
 import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import {
+  isVoiceLogInflight,
+  sweepAbandonedVoiceLogs,
+} from '@/lib/voice-log/inflight-gate';
 
 const Severity04 = z.union([
   z.literal(0),
@@ -162,15 +166,10 @@ export async function upsertTodayTapSession(
 
   // Fail-closed against in-flight voice processing. The voice path moves
   // a row from pending → analyzing immediately on processVoiceLog start,
-  // so checking only `pending` would race the analyzing window. (Lifted
-  // from the deleted /log/manual/actions.ts.)
-  const { data: pending } = await supabase
-    .from('daily_logs')
-    .select('id')
-    .eq('patient_id', patient.id)
-    .eq('log_date', today)
-    .in('processing_status', ['pending', 'analyzing']);
-  if (pending && pending.length > 0) {
+  // so checking only `pending` would race the analyzing window. The
+  // helper also reaps abandoned-empty pending rows past the lease TTL
+  // — see src/lib/voice-log/inflight-gate.ts for the lease pattern.
+  if (await isVoiceLogInflight(supabase, patient.id, today)) {
     return {
       ok: false,
       error: 'Voice log still processing — try again in a moment.',
@@ -384,6 +383,11 @@ export async function flushAndStartVoice(input: {
     .eq('id', user.id)
     .single();
   if (!profile) return { ok: false, error: 'Profile not found.' };
+
+  // Reap any abandoned-empty pending rows from prior aborted sessions for
+  // this patient. Best-effort cleanup so the table doesn't accumulate
+  // cruft over time; doesn't block recording even if it fails.
+  await sweepAbandonedVoiceLogs(supabase, parsed.data.patientId);
 
   const today = getTodayInTimezone(profile.timezone);
   const { data: log, error } = await supabase
