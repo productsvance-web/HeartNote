@@ -26,12 +26,11 @@ import { isoOffset } from '@/lib/dates/iso-offset';
 const MIN_BACKDATE_DAYS = 400;
 
 const InputSchema = z.object({
-  // SpO2 is integer-only on the manual stepper. The Zod schema enforces
-  // this; the engine does not — voice-extracted readings can be decimal
-  // (e.g. "96.5") and remain valid because they bypass this action.
+  // SpO2 is one-decimal precision throughout the app (matches voice
+  // extraction, which captures e.g. "91.4"). DB CHECK constraint enforces
+  // [50, 100]; the engine compares raw numeric values.
   value: z
     .number()
-    .int()
     .min(READING_RANGE.spo2[0])
     .max(READING_RANGE.spo2[1]),
   recordedAtIsoLocal: z

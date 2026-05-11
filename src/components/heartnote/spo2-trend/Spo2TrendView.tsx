@@ -57,23 +57,26 @@ const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-// SpO2-specific config consumed by the shared sheets.
+// SpO2-specific config consumed by the shared sheets. One-decimal
+// precision throughout — matches the voice-log extraction pattern, the
+// DB CHECK constraint (which allows decimals), and the weight register
+// (also 0.1 precision with press-and-hold).
 const SPO2_CONFIG: VitalReadingConfig = {
   field: 'spo2',
   fieldLabel: 'Oxygen',
   unit: '%',
   range: READING_RANGE.spo2,
-  step: 1,
-  integer: true,
-  splitDecimal: false,
-  pressAndHold: false,
-  formatValue: (v) => String(Math.round(v)),
+  step: 0.1,
+  integer: false,
+  splitDecimal: true,
+  pressAndHold: true,
+  formatValue: (v) => v.toFixed(1),
   sheetTitle: 'Add oxygen',
   listTitle: 'All oxygen readings',
   // Patients have no "baseline SpO2" column. Eyebrow shows the previous
   // reading only, when there is one.
   eyebrowLine: (_baseline, seed) =>
-    seed !== null ? `last ${Math.round(seed)} %` : null,
+    seed !== null ? `last ${seed.toFixed(1)} %` : null,
   deleteNoun: {
     singular: 'oxygen reading',
     plural: 'oxygen readings',
@@ -363,11 +366,12 @@ export function Spo2TrendView({
       </header>
 
       <div className="px-5 pb-32">
-        {/* Hero. Same layout slot whether populated or muted-empty —
-            integer-only render (SpO2 readouts are whole numbers). */}
+        {/* Hero. Same split-decimal pattern as weight (large integer +
+            smaller decimal). One-decimal precision matches the rest of
+            the SpO2 stack. */}
         <div className="mt-3 flex items-end gap-2">
           <span
-            className="font-display tabular-nums"
+            className="font-display"
             style={{
               fontSize: 36,
               lineHeight: 0.95,
@@ -376,7 +380,10 @@ export function Spo2TrendView({
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {hero ? Math.round(hero.value) : '—'}
+            {Math.floor(hero?.value ?? 0)}
+            <span style={{ fontSize: 22, letterSpacing: '-0.5px' }}>
+              .{decimalPart(hero?.value ?? 0)}
+            </span>
           </span>
           <span
             className="text-muted-foreground"
@@ -850,7 +857,7 @@ function tripleStatsSpo2(
   const sortedAsc = [...slice].sort((a, b) => a.value - b.value);
   const lowest = sortedAsc[0];
   const highest = sortedAsc[sortedAsc.length - 1];
-  const fmt = (v: number) => String(Math.round(v));
+  const fmt = (v: number) => v.toFixed(1);
   return [
     {
       label: 'Latest',
@@ -871,4 +878,8 @@ function tripleStatsSpo2(
       sub: timeLabelFor(highest, tz),
     },
   ];
+}
+
+function decimalPart(v: number): string {
+  return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }

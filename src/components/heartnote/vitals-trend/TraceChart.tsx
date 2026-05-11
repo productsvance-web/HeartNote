@@ -119,15 +119,22 @@ export function TraceChart({
 
   const xs = polyIndices.map((i) => xOf(Date.parse(data[i].recorded_at)));
   const ys = polyIndices.map((i) => yOf(data[i].value));
-  const path = xs.length >= 2 ? polylinePath(xs, ys) : '';
-  // Area path = polyline ending closed to chart bottom-right, then
-  // bottom-left, back to start. Always rendered behind the polyline when
-  // areaFill is on.
+  // When areaFill is set, the trace is drawn smoothed (Catmull-Rom
+  // converted to cubic Bezier) so the area chart reads as a continuous
+  // curve like the design mockup. Weight uses the unsmoothed polyline
+  // path to keep its monitor-like sharpness.
+  const path =
+    xs.length >= 2
+      ? areaFill
+        ? smoothPath(xs, ys)
+        : polylinePath(xs, ys)
+      : '';
+  // Area path = trace path ending closed to chart bottom-right, then
+  // bottom-left, back to start. Rendered behind the polyline.
   const bottomY = height - PAD_B;
   const areaPath =
     areaFill && xs.length >= 1
-      ? polylinePath(xs, ys) +
-        ` L ${xs[xs.length - 1].toFixed(1)} ${bottomY} L ${xs[0].toFixed(1)} ${bottomY} Z`
+      ? `${path || `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`} L ${xs[xs.length - 1].toFixed(1)} ${bottomY} L ${xs[0].toFixed(1)} ${bottomY} Z`
       : '';
 
   // Gradient stops position (fraction of inner chart height).
@@ -274,13 +281,19 @@ export function TraceChart({
               ? areaFill.aboveColor
               : areaFill.belowColor
             : '#5A6B5C';
+          // areaFill adds a cream stroke around each dot so it visually
+          // separates from the colored fill below (Apple Health pattern).
+          // Weight (no areaFill) renders bare dots — its register has
+          // no fill to separate from.
           return (
             <circle
               key={r.id}
               cx={xOf(Date.parse(r.recorded_at))}
               cy={yOf(r.value)}
-              r="2.5"
+              r={areaFill ? 3 : 2.5}
               fill={fill}
+              stroke={areaFill ? '#FBF7F0' : undefined}
+              strokeWidth={areaFill ? 1.4 : undefined}
             />
           );
         })}
@@ -298,6 +311,36 @@ function polylinePath(xs: number[], ys: number[]): string {
   let d = `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`;
   for (let i = 1; i < xs.length; i++) {
     d += ` L ${xs[i].toFixed(1)} ${ys[i].toFixed(1)}`;
+  }
+  return d;
+}
+
+// Catmull-Rom-style smoothing converted to cubic Bezier segments. Each
+// segment between Pi and Pi+1 uses control points derived from the
+// neighbors Pi-1 and Pi+2 (or the segment endpoints themselves at the
+// boundaries). Tension 0.5 = a moderately smooth curve that still
+// passes through every data point — no overshoot.
+function smoothPath(xs: number[], ys: number[]): string {
+  const n = xs.length;
+  if (n === 0) return '';
+  if (n === 1) return `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`;
+  let d = `M ${xs[0].toFixed(1)} ${ys[0].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const p0x = i === 0 ? xs[0] : xs[i - 1];
+    const p0y = i === 0 ? ys[0] : ys[i - 1];
+    const p1x = xs[i];
+    const p1y = ys[i];
+    const p2x = xs[i + 1];
+    const p2y = ys[i + 1];
+    const p3x = i + 2 < n ? xs[i + 2] : xs[n - 1];
+    const p3y = i + 2 < n ? ys[i + 2] : ys[n - 1];
+
+    const cp1x = p1x + (p2x - p0x) / 6;
+    const cp1y = p1y + (p2y - p0y) / 6;
+    const cp2x = p2x - (p3x - p1x) / 6;
+    const cp2y = p2y - (p3y - p1y) / 6;
+
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2x.toFixed(1)} ${p2y.toFixed(1)}`;
   }
   return d;
 }
