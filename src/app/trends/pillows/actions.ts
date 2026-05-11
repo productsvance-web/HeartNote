@@ -237,11 +237,16 @@ export async function clearPillowReadings(
   // columns. Voice-log data (transcribed_text, structured_observations,
   // other vitals) on the same row is preserved. RLS gates this via the
   // existing `caregiver crud own logs` policy on daily_logs.
+  //
+  // `not('pillow_count', 'is', null)` filter keeps the reported count
+  // honest: a caller's id list that happens to include already-cleared
+  // rows won't inflate `deleted`.
   const { data: updated, error } = await supabase
     .from('daily_logs')
     .update({ pillow_count: null })
     .eq('patient_id', patient.id)
     .in('id', ids)
+    .not('pillow_count', 'is', null)
     .select('id');
   if (error) return { ok: false, error: error.message };
 

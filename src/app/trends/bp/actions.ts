@@ -22,6 +22,12 @@ import { isoOffset } from '@/lib/dates/iso-offset';
 
 const MIN_BACKDATE_DAYS = 400;
 
+// Bounds come from READING_RANGE — the same source the DB CHECK
+// constraint matches. DualStepperControl's NumberChip applies a
+// tighter floor (SYS_INPUT_MIN=70, DIA_INPUT_MIN=30) for tap-to-type
+// to stop someone typing a value incompatible with consciousness; the
+// stepper buttons themselves respect the wider range, and the action
+// matches the wider range to allow that. Intentional asymmetry.
 const InputSchema = z.object({
   systolic: z
     .number()

@@ -82,6 +82,7 @@ export function ViewDataSheet({
   // bp); 'Clear' for daily_logs-column vitals (pillows) where the
   // underlying mutation is an UPDATE setting the column to NULL.
   const verb = config.actionVerb ?? 'Delete';
+  const inProgressVerb = verb === 'Clear' ? 'Clearing' : 'Deleting';
 
   const onDeleteSelected = () => {
     if (selectedCount === 0) return;
@@ -323,7 +324,7 @@ export function ViewDataSheet({
               }}
             >
               {pending
-                ? `${verb.slice(0, -1)}ing…`
+                ? `${inProgressVerb}…`
                 : selectedCount === 0
                   ? verb
                   : `${verb} (${selectedCount})`}
@@ -345,7 +346,7 @@ export function ViewDataSheet({
           >
             <Trash2 size={14} />
             {pending
-              ? `${verb.slice(0, -1)}ing…`
+              ? `${inProgressVerb}…`
               : verb === 'Clear'
                 ? `Clear all ${config.fieldLabel.toLowerCase()} data`
                 : `Delete all ${config.fieldLabel.toLowerCase()} data`}
