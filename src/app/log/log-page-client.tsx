@@ -101,19 +101,36 @@ export function LogPageClient({ context }: Props) {
   const [voiceLogId, setVoiceLogId] = useState<string | null>(
     context.todayLogIsVoice ? context.todayLogId : null,
   );
-  const [transcript, setTranscript] = useState<string | null>(context.transcript);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+
+  // The composer text is the single source of truth for the transcript —
+  // both during recording (Deepgram-streamed words + user edits) and after
+  // (the captured transcript). Hydrates from server context on mount.
+  const [composerText, setComposerText] = useState<string>(
+    context.transcript ?? '',
+  );
+  // Mirror ref so plain functions (stopRecording, auto-stop handlers) can
+  // read the current value without stale-closure issues.
+  const composerTextRef = useRef<string>(context.transcript ?? '');
 
   const dgClientRef = useRef<DeepgramClient | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
   const finalsRef = useRef<string[]>([]);
+  // Counter of how many finals from finalsRef have been drained into
+  // composerText. The drain happens in a queued useEffect (keyed on
+  // finalsTick) so the append never races with the textarea's onChange
+  // inside the same React batch.
+  const lastConsumedFinalsCountRef = useRef<number>(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Auto-stop on a trailing stop-phrase ("end note", "I'm done", etc.):
   // we re-render whenever a new final arrives so the watcher effect runs.
   const [finalsTick, setFinalsTick] = useState(0);
   const lastFinalAtRef = useRef<number>(0);
+  // Debounce handle for live extraction so per-keystroke re-extracts don't
+  // flicker the vital tiles mid-typing.
+  const liveExtractTimerRef = useRef<number | null>(null);
   const voiceStopTimerRef = useRef<number | null>(null);
   // One-attempt reconnect budget per recording session. Reset on every
   // startRecording.
@@ -439,11 +456,17 @@ export function LogPageClient({ context }: Props) {
     setVoiceLogId(startResult.logId);
 
     finalsRef.current = [];
+    lastConsumedFinalsCountRef.current = 0;
     reconnectedOnceRef.current = false;
 
     const opened = await openSession(stream);
     if (!opened) return; // openSession surfaced its own error state
 
+    // Clear composer to a blank slate for the new recording session. The
+    // prior captured transcript is already persisted; this new session
+    // produces a fresh log row server-side.
+    setComposerText('');
+    composerTextRef.current = '';
     setRecordingStatus('recording');
     void acquireWakeLock();
     timerRef.current = window.setInterval(() => {
@@ -492,12 +515,12 @@ export function LogPageClient({ context }: Props) {
         if (isFinal) {
           finalsRef.current = [...finalsRef.current, text];
           lastFinalAtRef.current = Date.now();
-          // Bump tick to drive the stop-phrase watcher effect.
+          // Bump tick: drives both the stop-phrase watcher AND the
+          // queued Deepgram drain that appends finals to composerText.
+          // Doing the composerText append in a post-batch useEffect (not
+          // here, inline) avoids races with the textarea's onChange
+          // setComposerText calls.
           setFinalsTick((n) => n + 1);
-          // Live regex extraction for vitals — fills with state='heard'
-          // ONLY if the field is not already 'tapped' (R1).
-          const live = extractNumericTiles(finalsRef.current.join(' '));
-          applyLiveExtraction(live);
         }
       },
       onError: () => {
@@ -553,9 +576,13 @@ export function LogPageClient({ context }: Props) {
 
     setRecordingStatus('analyzing');
     if (reasonNote) setRecordingError(reasonNote);
-    // Give WS a beat to flush.
+    // Give WS a beat to flush. Then the composer's current text — which
+    // includes any user-typed corrections layered on the Deepgram stream
+    // — is what we persist. composerTextRef avoids stale closures since
+    // this function is also invoked from useEffects (stop-phrase watcher,
+    // visibility, time-limit).
     await new Promise((r) => setTimeout(r, 250));
-    const finalText = finalsRef.current.join(' ').trim();
+    const finalText = composerTextRef.current.trim();
 
     if (!voiceLogId) {
       setRecordingStatus('error');
@@ -567,8 +594,6 @@ export function LogPageClient({ context }: Props) {
       setRecordingError("We didn't catch anything — try again.");
       return;
     }
-
-    setTranscript(finalText);
 
     try {
       const res = await fetch(`/api/voice-log/${voiceLogId}/process`, {
@@ -825,19 +850,70 @@ export function LogPageClient({ context }: Props) {
     return Object.values(symptomsTouch).some((s) => s === 'heard');
   }, [symptomsTouch]);
 
-  // ─── Live transcript for the composer ────────────────────────────────────
-  // While recording, the captured-state `transcript` is null — words live in
-  // finalsRef and the page only re-renders when `finalsTick` bumps. Compose
-  // a live string from the refs so the composer shows words as they stream
-  // in. After stop, fall back to `transcript` (the captured final).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const liveTranscript = useMemo<string | null>(() => {
-    if (recordingStatus === 'recording') {
-      const live = finalsRef.current.join(' ').trim();
-      return live.length > 0 ? live : null;
+  // ─── Composer text plumbing ──────────────────────────────────────────────
+  // composerText is the single source of truth for the composer's editable
+  // textarea (during recording) and its read-only display (after).
+
+  // Keep the ref in sync so stopRecording and auto-stop handlers — called
+  // from useEffects that close over older snapshots — can read the live
+  // value without stale closures.
+  useEffect(() => {
+    composerTextRef.current = composerText;
+  }, [composerText]);
+
+  // Queued Deepgram drain: whenever finalsTick bumps, append any
+  // not-yet-consumed finals to composerText. Doing this in a useEffect
+  // (post-batch) instead of inline in the Deepgram callback avoids races
+  // with the textarea's onChange setComposerText inside the same React
+  // batch — a final landing in the exact 16ms window of a keystroke would
+  // otherwise be overwritten by the keystroke's value-based setter.
+  useEffect(() => {
+    if (recordingStatus !== 'recording') return;
+    const len = finalsRef.current.length;
+    if (len <= lastConsumedFinalsCountRef.current) return;
+    const newFinals = finalsRef.current
+      .slice(lastConsumedFinalsCountRef.current)
+      .join(' ');
+    lastConsumedFinalsCountRef.current = len;
+    setComposerText((prev) =>
+      prev ? `${prev} ${newFinals}` : newFinals,
+    );
+  }, [finalsTick, recordingStatus]);
+
+  // Debounced live extraction during recording: re-run vital-tile
+  // extraction 250ms after the last composerText change. Without the
+  // debounce, typing "220" one digit at a time would flicker the weight
+  // tile through 2 → 22 → 220.
+  useEffect(() => {
+    if (recordingStatus !== 'recording') return;
+    if (liveExtractTimerRef.current) {
+      window.clearTimeout(liveExtractTimerRef.current);
     }
-    return transcript;
-  }, [recordingStatus, transcript, finalsTick]);
+    liveExtractTimerRef.current = window.setTimeout(() => {
+      const live = extractNumericTiles(composerText);
+      applyLiveExtraction(live);
+      liveExtractTimerRef.current = null;
+    }, 250);
+    return () => {
+      if (liveExtractTimerRef.current) {
+        window.clearTimeout(liveExtractTimerRef.current);
+        liveExtractTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composerText, recordingStatus]);
+
+  // Save = stop recording + persist + re-extract. Stop-phrase / time-limit
+  // / mic-revoke / tab-hidden auto-stops still call stopRecording directly
+  // as safety nets.
+  const onSaveClick = useCallback(() => {
+    void stopRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onTranscriptChange = useCallback((value: string) => {
+    setComposerText(value);
+  }, []);
 
   // ─── Captured-count for modal footer ─────────────────────────────────────
   // Counts the 14 distinct symptoms in the extract.ts schema enum:
@@ -1143,11 +1219,13 @@ export function LogPageClient({ context }: Props) {
           recordingStatus === 'requesting-mic' ||
           recordingStatus === 'analyzing'
         }
-        transcript={liveTranscript}
+        transcript={composerText}
         symptomHeard={symptomHeard}
         modalOpen={modalOpen}
         onMicClick={onMicClick}
+        onSaveClick={onSaveClick}
         onEarClick={() => setModalOpen((open) => !open)}
+        onTranscriptChange={onTranscriptChange}
       />
 
       <SymptomsModal

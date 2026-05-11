@@ -1,21 +1,18 @@
 // Bottom-pinned composer for /log. Single floating dock that owns:
 //   - The ear button (opens/closes symptoms sheet)
 //   - The live/captured transcript text (italic Fraunces)
-//   - The mic button (start/stop voice recording)
+//   - The mic OR Save control on the right
 //
-// Visual reference: the Anthropic Claude mobile-app composer — rounded
-// cream card pinned above the keyboard with affordances inline. User
-// directive 2026-05-10 ("follow Anthropic"). Coral is reserved in
-// HeartNote for clinical alerts, so the primary CTA mic uses
-// `--sage-deep` instead of Anthropic's coral.
+// Recording-state behavior (added 2026-05-11):
+//   - Text region becomes an editable <textarea>. Words Deepgram streams
+//     in append to the end of the buffer; the caregiver can place their
+//     cursor anywhere and type to correct.
+//   - The mic round button morphs into a 44px-tall "Save" pill with a
+//     Square indicator. Tap Save → stop recording, persist transcript,
+//     re-run extraction against the corrected text.
 //
-// Replaces the previous sticky <BottomBar> + inline <TranscriptCard>
-// pair. The previous mic disappeared after the symptoms modal closed,
-// most likely because <BottomBar> used CSS `sticky` and SymptomsModal
-// locks `body { overflow: hidden }`. Sticky's parent-overflow contract
-// can break on iOS Safari in that state. `position: fixed` has no such
-// dependency. (If a deeper compositing cause exists, fixed positioning
-// still evades it — strictly safer.)
+// z-70 so this dock sits ABOVE the symptoms modal (z-60) — the ear is
+// IN this dock; tapping it should never make the dock vanish.
 //
 // Canonical-controls register #7 — see .claude/rules/canonical-controls.md.
 
@@ -27,12 +24,14 @@ import { Mic, Square, Ear } from 'lucide-react';
 interface Props {
   recording: boolean;
   disabled?: boolean;
-  transcript: string | null;
+  transcript: string;
   placeholder?: string;
   symptomHeard: boolean;
   modalOpen: boolean;
   onMicClick: () => void;
+  onSaveClick: () => void;
   onEarClick: () => void;
+  onTranscriptChange: (value: string) => void;
 }
 
 export function LogComposer({
@@ -43,22 +42,32 @@ export function LogComposer({
   symptomHeard,
   modalOpen,
   onMicClick,
+  onSaveClick,
   onEarClick,
+  onTranscriptChange,
 }: Props) {
-  const hasTranscript = transcript !== null && transcript.trim().length > 0;
+  const hasTranscript = transcript.trim().length > 0;
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Auto-scroll the transcript region to the bottom as new words stream in
   // so the most-recent text stays visible without the caregiver scrolling.
+  // Skip if the textarea has focus (user is mid-edit) so we don't yank the
+  // viewport while they're typing.
   useEffect(() => {
-    if (!recording || !scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!recording) return;
+    const focused =
+      typeof document !== 'undefined' &&
+      document.activeElement === textareaRef.current;
+    if (focused) return;
+    const node = textareaRef.current ?? scrollRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
   }, [transcript, recording]);
 
   return (
     <div
       data-log-composer
-      className="fixed bottom-0 inset-x-0 z-50 pointer-events-none"
+      className="fixed bottom-0 inset-x-0 z-[70] pointer-events-none"
     >
       <div
         className="mx-auto max-w-md px-3"
@@ -128,44 +137,84 @@ export function LogComposer({
                 'linear-gradient(180deg, transparent 0%, black 16%, black 84%, transparent 100%)',
             }}
           >
-            <p
-              className="font-display italic leading-relaxed"
-              style={{
-                fontSize: 15,
-                color: hasTranscript ? 'var(--foreground)' : 'var(--ink-faint)',
-                margin: 0,
-                paddingTop: 6,
-                paddingBottom: 6,
-              }}
-            >
-              {hasTranscript ? transcript : placeholder}
-            </p>
+            {recording ? (
+              <textarea
+                ref={textareaRef}
+                value={transcript}
+                onChange={(e) => onTranscriptChange(e.target.value)}
+                aria-label="Voice log transcript — editable"
+                placeholder={placeholder}
+                className="w-full font-display italic leading-relaxed resize-none bg-transparent border-0 outline-none"
+                style={{
+                  fontSize: 15,
+                  color: 'var(--foreground)',
+                  margin: 0,
+                  paddingTop: 6,
+                  paddingBottom: 6,
+                  minHeight: 24,
+                }}
+                rows={3}
+              />
+            ) : (
+              <p
+                className="font-display italic leading-relaxed"
+                style={{
+                  fontSize: 15,
+                  color: hasTranscript ? 'var(--foreground)' : 'var(--ink-faint)',
+                  margin: 0,
+                  paddingTop: 6,
+                  paddingBottom: 6,
+                }}
+              >
+                {hasTranscript ? transcript : placeholder}
+              </p>
+            )}
           </div>
 
-          {/* Mic button — primary CTA, sage-deep filled */}
-          <button
-            type="button"
-            aria-label={recording ? 'Stop recording and save' : 'Start recording'}
-            onClick={onMicClick}
-            disabled={disabled}
-            className="inline-flex shrink-0 items-center justify-center rounded-full active:scale-[0.94] transition disabled:cursor-not-allowed"
-            style={{
-              width: 44,
-              height: 44,
-              background: 'var(--sage-deep)',
-              border: '1px solid var(--sage-deep)',
-              color: 'var(--card)',
-              opacity: disabled ? 0.45 : 1,
-              boxShadow:
-                '0 4px 14px color-mix(in oklab, var(--sage-deep) 35%, transparent)',
-            }}
-          >
-            {recording ? (
-              <Square size={16} fill="currentColor" />
-            ) : (
+          {/* Right control: Save pill while recording, mic round otherwise */}
+          {recording ? (
+            <button
+              type="button"
+              aria-label="Save voice log"
+              onClick={onSaveClick}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full px-3 active:scale-[0.97] transition"
+              style={{
+                height: 44,
+                minWidth: 88,
+                background: 'var(--sage-deep)',
+                border: '1px solid var(--sage-deep)',
+                color: 'var(--card)',
+                boxShadow:
+                  '0 4px 14px color-mix(in oklab, var(--sage-deep) 35%, transparent)',
+                fontWeight: 600,
+                fontSize: 14,
+                letterSpacing: '0.01em',
+              }}
+            >
+              <Square size={12} fill="currentColor" />
+              Save
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label="Start recording"
+              onClick={onMicClick}
+              disabled={disabled}
+              className="inline-flex shrink-0 items-center justify-center rounded-full active:scale-[0.94] transition disabled:cursor-not-allowed"
+              style={{
+                width: 44,
+                height: 44,
+                background: 'var(--sage-deep)',
+                border: '1px solid var(--sage-deep)',
+                color: 'var(--card)',
+                opacity: disabled ? 0.45 : 1,
+                boxShadow:
+                  '0 4px 14px color-mix(in oklab, var(--sage-deep) 35%, transparent)',
+              }}
+            >
               <Mic size={18} strokeWidth={1.9} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
     </div>
