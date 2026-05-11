@@ -973,8 +973,7 @@ export function LogPageClient({ context }: Props) {
             defaultValue={context.vitals.spo2.yesterdayPct}
             min={50}
             max={100}
-            step={1}
-            integer
+            step={0.1}
             inputMin={70}
             fieldLabel="oxygen"
             unit="%"

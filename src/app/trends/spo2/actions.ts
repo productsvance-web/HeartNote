@@ -1,14 +1,17 @@
 'use server';
 
-// Server action backing the "+" sheet on /trends/weight. ALWAYS creates
-// a parent daily_logs row (processing_status='complete') for the chosen
-// log_date, then inserts a daily_log_readings row with source_log_id
-// pointing at it. The parent log is what keeps the dashboard's
-// willShowVitals gate, the dashboard's `daily_log_id ∈ todaysLogIds`
-// alerts query, and the existing /log/[id]/edit page (which lists
-// readings by source_log_id) coherent. After the inserts, today's alert
-// engine is re-evaluated so backdated readings inside the 7d window can
-// flip the home screen color.
+// Server actions for the /trends/spo2 page. Mirror addWeightReading +
+// deleteWeightReadings + deleteAllWeightReadings, with field='spo2'.
+// The alert engine (src/lib/alerts/evaluate.ts T1.7a / T1.7b) already
+// handles SpO2 thresholds — no engine change needed.
+//
+// Always creates a parent daily_logs row (processing_status='complete')
+// for the chosen log_date, then inserts a daily_log_readings row with
+// source_log_id pointing at it. Keeps the dashboard's willShowVitals
+// gate, daily_log_id ∈ todaysLogIds alerts query, and /log/[id]/edit
+// listing all coherent. After the inserts, today's alert engine is
+// re-evaluated so backdated readings inside the 24h freshness window
+// can flip the home screen color.
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
@@ -23,21 +26,24 @@ import { isoOffset } from '@/lib/dates/iso-offset';
 const MIN_BACKDATE_DAYS = 400;
 
 const InputSchema = z.object({
+  // SpO2 is one-decimal precision throughout the app (matches voice
+  // extraction, which captures e.g. "91.4"). DB CHECK constraint enforces
+  // [50, 100]; the engine compares raw numeric values.
   value: z
     .number()
-    .min(READING_RANGE.weight_lb[0])
-    .max(READING_RANGE.weight_lb[1]),
+    .min(READING_RANGE.spo2[0])
+    .max(READING_RANGE.spo2[1]),
   recordedAtIsoLocal: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, 'Bad date/time'),
 });
 
-export type AddWeightInput = z.infer<typeof InputSchema>;
-export type AddWeightResult = { ok: true } | { ok: false; error: string };
+export type AddSpo2Input = z.infer<typeof InputSchema>;
+export type AddSpo2Result = { ok: true } | { ok: false; error: string };
 
-export async function addWeightReading(
-  raw: AddWeightInput,
-): Promise<AddWeightResult> {
+export async function addSpo2Reading(
+  raw: AddSpo2Input,
+): Promise<AddSpo2Result> {
   const parsed = InputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: 'Invalid input.' };
   const data = parsed.data;
@@ -55,6 +61,11 @@ export async function addWeightReading(
     .single();
   if (!profile) return { ok: false, error: 'Profile not found.' };
 
+  // Patient SELECT includes the columns generateAlertReasoning needs.
+  // SpO2 is the trigger that fires the engine here, but a sub-88 save
+  // can co-fire weight_gain / orthopnea / etc. if those rules also hit
+  // — the reasoning function reads all assessment.triggers and may use
+  // dry_weight_lb / normal_pillow_count / nyha_class in its output.
   const { data: patient } = await supabase
     .from('patients')
     .select(
@@ -82,9 +93,8 @@ export async function addWeightReading(
     return { ok: false, error: 'Reading date is too far in the past.' };
   }
 
-  // Fail-closed against in-flight voice processing for today (matches
-  // /log/manual). Backdated saves bypass — they don't race the voice
-  // pipeline.
+  // Fail-closed against in-flight voice processing for today. Backdated
+  // saves bypass — they don't race the voice pipeline.
   if (logDate === today) {
     const { data: pending } = await supabase
       .from('daily_logs')
@@ -100,10 +110,7 @@ export async function addWeightReading(
     }
   }
 
-  // 1. Always create a parent daily_logs row. Keeps the dashboard's
-  //    willShowVitals + alerts queries + /log/[id]/edit listing all
-  //    coherent. processing_status='complete' so the dashboard treats
-  //    it as a banked entry.
+  // 1. Always create a parent daily_logs row.
   const { data: newLog, error: insertLogErr } = await supabase
     .from('daily_logs')
     .insert({
@@ -121,15 +128,14 @@ export async function addWeightReading(
   }
   const newLogId = newLog.id;
 
-  // 2. Insert the reading. recorded_at is the caregiver's chosen wall-
-  //    clock time (resolved through the patient's timezone).
+  // 2. Insert the reading.
   const { error: insertReadingErr } = await supabase
     .from('daily_log_readings')
     .insert({
       patient_id: patient.id,
       log_date: logDate,
       recorded_at: recordedAt,
-      field: 'weight_lb',
+      field: 'spo2',
       value: data.value,
       source_log_id: newLogId,
     });
@@ -137,9 +143,10 @@ export async function addWeightReading(
     return { ok: false, error: insertReadingErr.message };
   }
 
-  // 3. Re-evaluate today's alert tier (mirrors /log/manual). The engine
-  //    looks back 8 days of readings, so a backdated entry inside the 7d
-  //    window can flip a weight_gain trigger.
+  // 3. Re-evaluate today's alert tier. T1.7a (<88) and T1.7b (<90 with
+  //    new dyspnea) read the freshest spo2 reading within the 24h
+  //    freshness window — a backdated insert today flips home-screen
+  //    color if it's the freshest.
   try {
     const assessment = await evaluateAlertTier(supabase, patient.id, today);
     const { error: upsertErr } = await supabase
@@ -200,7 +207,7 @@ export async function addWeightReading(
     };
   }
 
-  revalidatePath('/trends/weight');
+  revalidatePath('/trends/spo2');
   revalidatePath('/trends');
   revalidatePath('/dashboard');
   return { ok: true };
@@ -218,17 +225,13 @@ const DeleteByIdsSchema = z.object({
   ids: z.array(z.string().uuid()).min(1).max(500),
 });
 
-export type DeleteWeightResult =
+export type DeleteSpo2Result =
   | { ok: true; deleted: number }
   | { ok: false; error: string };
 
-// Delete a set of weight readings by id. RLS gates the actual DELETE
-// (the policy on daily_log_readings checks caregiver ownership), so a
-// caregiver passing another patient's reading id silently no-ops on
-// those rows. The patient-id WHERE is belt-and-suspenders.
-export async function deleteWeightReadings(
+export async function deleteSpo2Readings(
   raw: { ids: string[] },
-): Promise<DeleteWeightResult> {
+): Promise<DeleteSpo2Result> {
   const parsed = DeleteByIdsSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: 'Invalid input.' };
   const { ids } = parsed.data;
@@ -261,23 +264,20 @@ export async function deleteWeightReadings(
     .from('daily_log_readings')
     .delete()
     .eq('patient_id', patient.id)
-    .eq('field', 'weight_lb')
+    .eq('field', 'spo2')
     .in('id', ids)
     .select('id');
   if (error) return { ok: false, error: error.message };
 
   await reEvaluateToday(supabase, patient.id, profile.timezone);
 
-  revalidatePath('/trends/weight');
+  revalidatePath('/trends/spo2');
   revalidatePath('/trends');
   revalidatePath('/dashboard');
   return { ok: true, deleted: deleted?.length ?? 0 };
 }
 
-// Delete EVERY weight reading for the caregiver's patient. Class-A
-// destructive — the UI MUST gate this behind a typed-confirmation per
-// .claude/rules/destructive-actions.md.
-export async function deleteAllWeightReadings(): Promise<DeleteWeightResult> {
+export async function deleteAllSpo2Readings(): Promise<DeleteSpo2Result> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -306,21 +306,18 @@ export async function deleteAllWeightReadings(): Promise<DeleteWeightResult> {
     .from('daily_log_readings')
     .delete()
     .eq('patient_id', patient.id)
-    .eq('field', 'weight_lb')
+    .eq('field', 'spo2')
     .select('id');
   if (error) return { ok: false, error: error.message };
 
   await reEvaluateToday(supabase, patient.id, profile.timezone);
 
-  revalidatePath('/trends/weight');
+  revalidatePath('/trends/spo2');
   revalidatePath('/trends');
   revalidatePath('/dashboard');
   return { ok: true, deleted: deleted?.length ?? 0 };
 }
 
-// Re-evaluate today's alert tier after a delete. A removed weight
-// reading inside the 7d window can flip a weight_gain trigger, so the
-// home screen color may change.
 async function reEvaluateToday(
   supabase: Awaited<ReturnType<typeof createClient>>,
   patientId: string,

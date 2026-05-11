@@ -68,7 +68,6 @@ const SaveLogPatchSchema = z.object({
       .optional(),
     spo2Pct: z
       .number()
-      .int()
       .min(READING_RANGE.spo2[0])
       .max(READING_RANGE.spo2[1])
       .nullable()

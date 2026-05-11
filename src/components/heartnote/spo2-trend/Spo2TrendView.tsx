@@ -1,12 +1,22 @@
 'use client';
 
-// Client view for /trends/weight. Window state is a single endMs (ms
-// since epoch) — the right edge of the visible window. Period
-// determines the window's WIDTH; endMs determines its position.
+// Client view for /trends/spo2. Same windowing model + drag-to-scrub
+// behavior as WeightTrendView (single endMs ms-since-epoch, D scrubs
+// continuously, W/M/6M paginate at 25% threshold, Y has no scrub).
 //
-// Drag on the chart pans the window through time (Apple Health style).
-// Chevrons step by full window-width. Y has no scrub (we only track
-// 12 months). Period change resets endMs to "now" / end-of-today.
+// Differences from WeightTrendView:
+//   - Hero shows integer-only ("96 %"), not the split-decimal weight pattern.
+//   - Y-scale clamps to floor=88 / ceiling=100 so the 911 floor is always
+//     on screen; single-value half-range is 5 (vs weight's 10).
+//   - TraceChart gets an alertFloor at 88 — dashed coral line.
+//   - Stat trio is Latest / Lowest / Highest. Lowest is the clinically
+//     directional cell for SpO2.
+//
+// Window-math helpers (defaultEndForPeriod / forwardBound / backwardBound /
+// windowSpanMs / xLabelsFor / subheadFor and their date helpers) are
+// duplicated from WeightTrendView. Per the plan, hoist to a shared
+// window-math.ts at the third invocation (heart rate). Two callers is
+// duplicate-now-extract-later territory.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -26,48 +36,52 @@ import type {
 } from '@/lib/trends/vital-reading';
 import { yScaleFor } from '@/lib/trends/y-scale';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
+import { SPO2_TIER_1_911 } from '@/lib/clinical/thresholds';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
 import { isoOffset } from '@/lib/dates/iso-offset';
 import {
-  addWeightReading,
-  deleteWeightReadings,
-  deleteAllWeightReadings,
-} from '@/app/trends/weight/actions';
+  addSpo2Reading,
+  deleteSpo2Readings,
+  deleteAllSpo2Readings,
+} from '@/app/trends/spo2/actions';
 
 interface Props {
   patientFirstName: string;
   timezone: string;
   today: string;
-  baselineLb: number | null;
   allReadings: VitalReading[];
 }
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
 
-// Weight-specific config consumed by the shared sheets.
-const WEIGHT_CONFIG: VitalReadingConfig = {
-  field: 'weight_lb',
-  fieldLabel: 'Weight',
-  unit: 'lb',
-  range: READING_RANGE.weight_lb,
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+// SpO2-specific config consumed by the shared sheets. One-decimal
+// precision throughout — matches the voice-log extraction pattern, the
+// DB CHECK constraint (which allows decimals), and the weight register
+// (also 0.1 precision with press-and-hold).
+const SPO2_CONFIG: VitalReadingConfig = {
+  field: 'spo2',
+  fieldLabel: 'Oxygen',
+  unit: '%',
+  range: READING_RANGE.spo2,
   step: 0.1,
   integer: false,
   splitDecimal: true,
   pressAndHold: true,
   formatValue: (v) => v.toFixed(1),
-  sheetTitle: 'Add weight',
-  listTitle: 'All weights',
-  eyebrowLine: (baseline, seed) =>
-    baseline !== null
-      ? `vs. baseline ${baseline.toFixed(1)} lb`
-      : seed !== null
-        ? `last ${seed.toFixed(1)} lb`
-        : null,
-  deleteNoun: { singular: 'weight reading', plural: 'weight readings' },
+  sheetTitle: 'Add oxygen',
+  listTitle: 'All oxygen readings',
+  // Patients have no "baseline SpO2" column. Eyebrow shows the previous
+  // reading only, when there is one.
+  eyebrowLine: (_baseline, seed) =>
+    seed !== null ? `last ${seed.toFixed(1)} %` : null,
+  deleteNoun: {
+    singular: 'oxygen reading',
+    plural: 'oxygen readings',
+  },
 };
-
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 
 function windowSpanMs(period: WindowPeriod): number {
   switch (period) {
@@ -84,23 +98,20 @@ function windowSpanMs(period: WindowPeriod): number {
   }
 }
 
-// End-of-day midnight in patient tz, given a YYYY-MM-DD calendar date.
 function endOfDayMs(dayIso: string, tz: string): number {
   const next = isoOffset(dayIso, 1);
   const iso = isoFromWallClock(`${next}T00:00`, tz);
   return iso ? Date.parse(iso) : Date.now();
 }
 
-// End of the (Sun-Sat) week containing dayIso = next Sunday midnight.
 function endOfWeekMs(dayIso: string, tz: string): number {
-  const dow = dowOfDay(dayIso, tz); // 0 = Sun, 6 = Sat
+  const dow = dowOfDay(dayIso, tz);
   const daysToNextSun = dow === 0 ? 7 : 7 - dow;
   const nextSun = isoOffset(dayIso, daysToNextSun);
   const iso = isoFromWallClock(`${nextSun}T00:00`, tz);
   return iso ? Date.parse(iso) : Date.now();
 }
 
-// End of the calendar month containing dayIso = first of next month.
 function endOfMonthMs(dayIso: string, tz: string): number {
   const [y, m] = dayIso.split('-').map(Number);
   const ny = m === 12 ? y + 1 : y;
@@ -128,11 +139,6 @@ function dowOfDay(dayIso: string, tz: string): number {
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
 }
 
-// Default end-of-window for the given period, anchored to the latest
-// reading (or today if no data). D / W / M snap to the end of the
-// containing day / week / month so the visible window aligns with the
-// natural calendar unit; 6M / Y are rolling (windows always end at
-// today's end).
 function defaultEndForPeriod(
   period: WindowPeriod,
   latestMs: number | null,
@@ -154,8 +160,6 @@ function defaultEndForPeriod(
   }
 }
 
-// Smallest valid endMs — clamped so the user can't scrub to a window
-// that no longer contains any data.
 function backwardBoundForPeriod(
   period: WindowPeriod,
   oldestMs: number | null,
@@ -177,8 +181,6 @@ function backwardBoundForPeriod(
   }
 }
 
-// Largest valid endMs — clamped so the user can't scrub past today
-// (or, for D/W/M, past the end of today's day/week/month).
 function forwardBoundForPeriod(
   period: WindowPeriod,
   today: string,
@@ -201,16 +203,14 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-export function WeightTrendView({
+export function Spo2TrendView({
   patientFirstName,
   timezone,
   today,
-  baselineLb,
   allReadings,
 }: Props) {
   const router = useRouter();
 
-  // Anchor + bounds derived from the data, not from "today".
   const latestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -228,12 +228,6 @@ export function WeightTrendView({
 
   const [period, setPeriodRaw] = useState<WindowPeriod>('D');
 
-  // Period-aware default + bounds. D snaps to day boundaries; W to
-  // weeks (Sun-Sat); M to calendar months. 6M/Y are rolling.
-  const defaultEnd = useMemo(
-    () => defaultEndForPeriod(period, latestMs, today, timezone),
-    [period, latestMs, today, timezone],
-  );
   const forwardBound = useMemo(
     () => forwardBoundForPeriod(period, today, timezone),
     [period, today, timezone],
@@ -268,11 +262,18 @@ export function WeightTrendView({
 
   const hero = slice.length > 0 ? slice[slice.length - 1] : null;
 
-  // Y-axis is derived from the WHOLE dataset, not the visible window.
-  // That keeps the axis stable as the user drags D-day-to-D-day instead
-  // of zooming in on each day's tiny intra-day range. The 3-label
-  // exception only fires when the entire table has a single reading.
-  const yScale = useMemo(() => yScaleFor(allReadings), [allReadings]);
+  // Y-axis derived from the whole dataset with floor + ceiling clamps
+  // so the 88% line is always on screen and the chart never extends
+  // above the physiological ceiling of 100%.
+  const yScale = useMemo(
+    () =>
+      yScaleFor(allReadings, {
+        floor: SPO2_TIER_1_911,
+        ceiling: 100,
+        singleValueHalfRange: 5,
+      }),
+    [allReadings],
+  );
   const xLabels = useMemo(
     () => xLabelsFor(period, endMs, timezone),
     [period, endMs, timezone],
@@ -285,10 +286,6 @@ export function WeightTrendView({
 
   const hasAnyReadings = allReadings.length > 0;
 
-  // Drag-to-scrub (Apple Health style). pointerdown on the chart starts
-  // a drag; pointermove translates endMs by (-dx / chartWidth) × span.
-  // pointerup ends. touch-action: pan-y on the container so vertical
-  // page scrolling still works.
   const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
     null,
   );
@@ -314,15 +311,11 @@ export function WeightTrendView({
     const span = windowSpanMs(period);
 
     if (period === 'D') {
-      // Continuous drag in hour-units. Clamp to [backwardBound, forwardBound].
       const dt = -(dx / w) * span;
       setEndMs(clamp(startEnd + dt, backwardBound, forwardBound));
       return;
     }
 
-    // W / M / 6M: swipe-paging. Each chart-width drag past a 25% threshold
-    // = one full window-step. Preserves week / month boundaries (the
-    // user's rule: "weeks scrub in entire weeks").
     const threshold = w * 0.25;
     if (Math.abs(dx) < threshold) {
       setEndMs(clamp(startEnd, backwardBound, forwardBound));
@@ -342,7 +335,7 @@ export function WeightTrendView({
   }, []);
 
   const onSave = async (input: AddReadingInput) => {
-    const result = await addWeightReading(input);
+    const result = await addSpo2Reading(input);
     if (result.ok) router.refresh();
     return result;
   };
@@ -368,14 +361,14 @@ export function WeightTrendView({
           className="font-display text-[16px]"
           style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
         >
-          Weight
+          Oxygen
         </h1>
       </header>
 
       <div className="px-5 pb-32">
-        {/* Hero. Same size whether data is present or muted-empty —
-            keeps the layout still and stops the page from re-flowing
-            as you scrub between empty and populated windows. */}
+        {/* Hero. Same split-decimal pattern as weight (large integer +
+            smaller decimal). One-decimal precision matches the rest of
+            the SpO2 stack. */}
         <div className="mt-3 flex items-end gap-2">
           <span
             className="font-display"
@@ -401,10 +394,9 @@ export function WeightTrendView({
               paddingBottom: 6,
             }}
           >
-            lb
+            %
           </span>
         </div>
-        {/* Subhead reflects the visible window's exact time range. */}
         <p
           className="text-[12px] text-muted-foreground mt-1"
           style={{ letterSpacing: '0.3px' }}
@@ -419,13 +411,13 @@ export function WeightTrendView({
               className="font-display text-foreground"
               style={{ fontSize: 14, fontWeight: 500, letterSpacing: '-0.2px' }}
             >
-              Weight
+              Oxygen saturation
             </span>
             <span
               className="text-[10px] text-muted-foreground uppercase"
               style={{ letterSpacing: '0.5px', fontWeight: 500 }}
             >
-              lb
+              %
             </span>
           </div>
           <div
@@ -461,9 +453,6 @@ export function WeightTrendView({
             ))}
           </div>
 
-          {/* Chart container — the drag handler lives here. The SVG inside
-              uses an aspect-ratio box so it scales uniformly and never
-              stretches on wide viewports. */}
           <div
             ref={chartWrapRef}
             onPointerDown={onChartPointerDown}
@@ -487,26 +476,33 @@ export function WeightTrendView({
               yMin={yScale.min}
               yMax={yScale.max}
               yTicks={yScale.ticks}
-              ariaLabel="Weight trend chart"
-              // W shows dots only — readings within a single week are
-              // independent weigh-ins, not a continuous trend. D / M /
-              // 6M / Y connect the dots.
+              ariaLabel="Oxygen trend chart"
+              // W shows dots only — intra-week oxygen readings aren't a
+              // continuous trend. D / M / 6M / Y connect the dots.
               showLine={period !== 'W'}
+              // Faint coral line at 88 — matches the Phone 4 mockup
+              // even though the area-fill's gradient transition also
+              // sits there. Keeping both gives the floor a sharper
+              // visual edge.
+              alertFloor={{
+                y: SPO2_TIER_1_911,
+                color: 'var(--destructive, #C46A4A)',
+              }}
+              // Area chart: sage tint above 88, coral tint below.
+              // Matches docs/design/heartnote-vitals-trends-mockup.html
+              // Phone 4. Dots are coral when sub-88, sage otherwise.
+              areaFill={{
+                thresholdY: SPO2_TIER_1_911,
+                aboveColor: '#5A6B5C',
+                belowColor: 'var(--destructive, #C46A4A)',
+              }}
             />
           </div>
-          {/* X axis labels are absolutely positioned at the same x-coordinate
-              as their vertical gridline in the SVG. As the user drags, both
-              gridlines and labels slide together — the dots stay anchored to
-              their real timestamps in the visible window. */}
           <div
             className="relative"
             style={{ width: '100%', height: 14, marginTop: -2 }}
           >
             {xLabels.map((l, i) => {
-              // Map fractional x in inner data area to a percentage of the
-              // SVG container's full width. SVG = 280-wide, PAD_L = 6,
-              // PAD_R = 32, innerW = 242 → label sits at PAD_L + l.x*innerW
-              // in viewBox units, normalized to %.
               const positionPct = ((6 + l.x * 242) / 280) * 100;
               return (
                 <span
@@ -529,7 +525,8 @@ export function WeightTrendView({
           </div>
         </div>
 
-        {/* Stats trio */}
+        {/* Stats trio — Latest / Lowest / Highest. Lowest is the
+            clinically directional cell for SpO2. */}
         {slice.length > 0 && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
@@ -538,7 +535,7 @@ export function WeightTrendView({
               border: '1px solid var(--border)',
             }}
           >
-            {tripleStats(slice, timezone).map((s, i) => (
+            {tripleStatsSpo2(slice, timezone).map((s, i) => (
               <div key={s.label} className="px-3 pt-3 pb-2.5 relative">
                 {i > 0 && (
                   <span
@@ -592,7 +589,6 @@ export function WeightTrendView({
         )}
       </div>
 
-      {/* Bottom-bar floating utility row. */}
       <div
         className="fixed left-0 right-0 flex justify-between items-end pointer-events-none"
         style={{
@@ -609,7 +605,7 @@ export function WeightTrendView({
         />
         <button
           type="button"
-          aria-label="Add weight"
+          aria-label="Add oxygen reading"
           onClick={() => setSheetOpen(true)}
           className="inline-flex items-center justify-center rounded-full pointer-events-auto active:scale-95 transition"
           style={{
@@ -628,10 +624,10 @@ export function WeightTrendView({
 
       {sheetOpen && (
         <AddReadingSheet
-          config={WEIGHT_CONFIG}
+          config={SPO2_CONFIG}
           onClose={() => setSheetOpen(false)}
           seedValue={latestEver?.value ?? null}
-          baselineValue={baselineLb}
+          baselineValue={null}
           timezone={timezone}
           onSave={onSave}
         />
@@ -639,30 +635,22 @@ export function WeightTrendView({
 
       {viewDataOpen && (
         <ViewDataSheet
-          config={WEIGHT_CONFIG}
+          config={SPO2_CONFIG}
           readings={allReadings}
           patientFirstName={patientFirstName}
           timezone={timezone}
           today={today}
           onClose={() => setViewDataOpen(false)}
-          deleteByIds={deleteWeightReadings}
-          deleteAll={deleteAllWeightReadings}
+          deleteByIds={deleteSpo2Readings}
+          deleteAll={deleteAllSpo2Readings}
         />
       )}
     </>
   );
 }
 
-function decimalPart(v: number): string {
-  return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
-}
+// ─── X labels (duplicated from WeightTrendView — hoist at HR) ───────────────
 
-// ─── X labels ────────────────────────────────────────────────────────────────
-
-// Generate labels anchored to REAL CALENDAR INSTANTS (real midnight,
-// real 6 AM, real Sunday). As the window pans, the labels' x positions
-// shift continuously — so the gridlines visually "slide" with the data
-// instead of staying at fixed fractions while the dots fly past.
 function xLabelsFor(
   period: WindowPeriod,
   endMs: number,
@@ -679,7 +667,6 @@ function xLabelsFor(
   if (period === 'M') {
     return anchorsOnDayOfWeek(startMs, endMs, tz, 0, shortDateLabel);
   }
-  // 6M and Y: anchor to first of each month.
   return anchorsAtMonthStarts(startMs, endMs, tz, monthLabel);
 }
 
@@ -693,9 +680,6 @@ function anchorsAtWallClockHours(
   const startDayIso = isoDateOf(startMs, tz);
   const span = endMs - startMs;
   const out: { x: number; label: string }[] = [];
-  // Window is at most 24h, so candidates from the start day and the
-  // next day cover everything. Iterate one day before too in case of
-  // tz-shift edge cases.
   for (let dayOffset = -1; dayOffset <= 2; dayOffset++) {
     const dayIso = isoOffset(startDayIso, dayOffset);
     for (const h of hours) {
@@ -720,9 +704,6 @@ function anchorsAtMidnights(
   const startDayIso = isoDateOf(startMs, tz);
   const span = endMs - startMs;
   const out: { x: number; label: string }[] = [];
-  // W is 7 days, but the iso-day boundaries inside the window can be 7
-  // or 8 (depending on whether the window starts at midnight). Iterate
-  // a generous range and filter.
   for (let dayOffset = 0; dayOffset <= 9; dayOffset++) {
     const dayIso = isoOffset(startDayIso, dayOffset);
     const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
@@ -739,7 +720,7 @@ function anchorsOnDayOfWeek(
   startMs: number,
   endMs: number,
   tz: string,
-  targetDow: number, // 0 = Sun, 6 = Sat
+  targetDow: number,
   fmt: (ms: number, tz: string) => string,
 ): { x: number; label: string }[] {
   const startDayIso = isoDateOf(startMs, tz);
@@ -747,7 +728,7 @@ function anchorsOnDayOfWeek(
   const out: { x: number; label: string }[] = [];
   for (let dayOffset = 0; dayOffset <= 32; dayOffset++) {
     const dayIso = isoOffset(startDayIso, dayOffset);
-    const dow = dayOfWeekInTz(dayIso, tz);
+    const dow = dowOfDay(dayIso, tz);
     if (dow !== targetDow) continue;
     const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
     if (!iso) continue;
@@ -767,12 +748,10 @@ function anchorsAtMonthStarts(
 ): { x: number; label: string }[] {
   const span = endMs - startMs;
   const out: { x: number; label: string }[] = [];
-  // Iterate up to 14 months back/forward to cover Y's 12-month window
-  // plus margin.
   const startDayIso = isoDateOf(startMs, tz);
   const [y, m] = startDayIso.split('-').map(Number);
   for (let i = 0; i <= 14; i++) {
-    const targetMonth0 = m - 1 + i; // zero-indexed month from Jan
+    const targetMonth0 = m - 1 + i;
     const targetY = y + Math.floor(targetMonth0 / 12);
     const targetM = (targetMonth0 % 12) + 1;
     const dayIso = `${targetY}-${String(targetM).padStart(2, '0')}-01`;
@@ -784,15 +763,6 @@ function anchorsAtMonthStarts(
     }
   }
   return out;
-}
-
-function dayOfWeekInTz(dayIso: string, tz: string): number {
-  const d = new Date(`${dayIso}T12:00:00Z`);
-  const name = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(d);
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
 }
 
 function hourLabel(ms: number, tz: string): string {
@@ -825,7 +795,7 @@ function monthLabel(ms: number, tz: string): string {
   }).format(new Date(ms));
 }
 
-// ─── Subhead ─────────────────────────────────────────────────────────────────
+// ─── Subhead (duplicated from WeightTrendView — hoist at HR) ────────────────
 
 function subheadFor(
   period: WindowPeriod,
@@ -839,7 +809,6 @@ function subheadFor(
   return `${shortDateLabel(startMs, tz)} – ${shortDateLabel(endMs, tz)}`;
 }
 
-// "Yesterday, 9 AM" / "Today, 11 PM" / "May 5, 9 AM"
 function dayTimeLabel(ms: number, tz: string): string {
   const dayKey = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -869,7 +838,7 @@ function dayTimeLabel(ms: number, tz: string): string {
   return `${shortDateLabel(ms, tz)}, ${time}`;
 }
 
-// ─── Stats trio ──────────────────────────────────────────────────────────────
+// ─── Stats trio (SpO2-specific) ─────────────────────────────────────────────
 
 function timeLabelFor(r: VitalReading, tz: string): string {
   return new Intl.DateTimeFormat('en-US', {
@@ -880,33 +849,37 @@ function timeLabelFor(r: VitalReading, tz: string): string {
   }).format(new Date(r.recorded_at));
 }
 
-function tripleStats(
+function tripleStatsSpo2(
   slice: VitalReading[],
   tz: string,
 ): { label: string; value: string; unit: string; sub: string }[] {
   const latest = slice[slice.length - 1];
-  const sortedDesc = [...slice].sort((a, b) => b.value - a.value);
-  const highest = sortedDesc[0];
-  const lowest = sortedDesc[sortedDesc.length - 1];
-  const range = slice.length === 1 ? 0 : highest.value - lowest.value;
+  const sortedAsc = [...slice].sort((a, b) => a.value - b.value);
+  const lowest = sortedAsc[0];
+  const highest = sortedAsc[sortedAsc.length - 1];
+  const fmt = (v: number) => v.toFixed(1);
   return [
     {
       label: 'Latest',
-      value: latest.value.toFixed(1),
-      unit: 'lb',
+      value: fmt(latest.value),
+      unit: '%',
       sub: timeLabelFor(latest, tz),
     },
     {
-      label: 'Highest',
-      value: highest.value.toFixed(1),
-      unit: 'lb',
-      sub: timeLabelFor(highest, tz),
+      label: 'Lowest',
+      value: fmt(lowest.value),
+      unit: '%',
+      sub: timeLabelFor(lowest, tz),
     },
     {
-      label: 'Range',
-      value: range.toFixed(1),
-      unit: 'lb',
-      sub: slice.length === 1 ? 'one reading' : 'across this window',
+      label: 'Highest',
+      value: fmt(highest.value),
+      unit: '%',
+      sub: timeLabelFor(highest, tz),
     },
   ];
+}
+
+function decimalPart(v: number): string {
+  return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
 }

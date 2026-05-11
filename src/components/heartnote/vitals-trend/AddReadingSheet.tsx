@@ -1,18 +1,20 @@
-// Slide-up sheet for adding a weight reading. The Weight card here
-// matches the canonical vitals card from
-// docs/design/heartnote-log-redesign-mockup.html — large serif numeric
-// flanked by white-circle ± buttons spread to the outer edges, status
-// dot + title-case label up top, "vs. baseline" or "last X.X lb" on the
+// Slide-up sheet for adding a single-value vital reading. Generic over
+// weight (0.1 precision + press-and-hold) and spo2 (integer-only + tap).
+// Driven by a VitalReadingConfig.
+//
+// The card here matches the canonical /log vitals card register: large
+// serif numeric flanked by white-circle ± buttons spread to the outer
+// edges, status dot + title-case label up top, eyebrow line on the
 // right.
 //
 // Two interaction modes on the value:
-// 1. ± buttons: tap = single step (0.1 lb); press-and-hold = repeat at
-//    ~12/sec after a 350ms delay. Refs back the auto-repeat so the
-//    setInterval doesn't read a stale React state value (see
-//    feedback_react_closure_in_timers).
-// 2. The value chip is itself a numeric input — caregiver can tap and
-//    type any digit directly. inputMode='decimal' summons the right
-//    mobile keyboard. onBlur clamps to the [min, max] range.
+// 1. ± buttons: tap = single step. If config.pressAndHold is true, press-
+//    and-hold repeats at ~12/sec after a 350ms delay (the weight pattern).
+//    Refs back the auto-repeat so the setInterval doesn't read a stale
+//    React state value (feedback_react_closure_in_timers).
+// 2. The value chip is a numeric input — caregiver can tap and type any
+//    digit. inputMode='decimal' on weight, 'numeric' on integer configs.
+//    onBlur clamps to [min, max].
 //
 // Mount-on-open: the parent renders this only while open, so the lazy
 // useState initializers run on every open and the date/time inputs
@@ -22,38 +24,45 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { isoOffset } from '@/lib/dates/iso-offset';
+import type { VitalReadingConfig } from './vital-reading-config';
 
-export type AddWeightInput = {
-  weightLb: number;
-  recordedAtIsoLocal: string; // "YYYY-MM-DDTHH:MM" — server combines w/ tz
+export type AddReadingInput = {
+  value: number;
+  recordedAtIsoLocal: string;
 };
 
 interface Props {
+  config: VitalReadingConfig;
   onClose: () => void;
-  seedValue: number | null; // last logged weight, used as the chip seed
-  baselineLb: number | null; // patient.dry_weight_lb, used in the eyebrow
+  // Last logged value of this vital, used as the chip seed for ± taps.
+  seedValue: number | null;
+  // Patient-level reference (e.g. dry_weight_lb for weight). Some
+  // vitals don't have one and pass null.
+  baselineValue: number | null;
   timezone: string;
   onSave: (
-    input: AddWeightInput,
+    input: AddReadingInput,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
-const STEP = 0.1;
 const HOLD_DELAY_MS = 350;
 const HOLD_REPEAT_MS = 80;
 const MIN_BACKDATE_DAYS = 400;
-const [WEIGHT_MIN, WEIGHT_MAX] = READING_RANGE.weight_lb;
 
-export function AddWeightSheet({
+export function AddReadingSheet({
+  config,
   onClose,
   seedValue,
-  baselineLb,
+  baselineValue,
   timezone,
   onSave,
 }: Props) {
-  const [weight, setWeight] = useState<number | null>(null);
+  const [MIN, MAX] = config.range;
+  const STEP = config.step;
+  const INTEGER = config.integer;
+
+  const [value, setValue] = useState<number | null>(null);
   const [text, setText] = useState<string>('');
   const [date, setDate] = useState(() => todayInTz(timezone));
   const [time, setTime] = useState(() => currentTimeHHMM(timezone));
@@ -61,32 +70,34 @@ export function AddWeightSheet({
   const [error, setError] = useState<string | null>(null);
 
   const submittingRef = useRef(false);
-  // Ref to the latest committed weight, kept in sync via useEffect so
-  // setInterval callbacks read the post-render value (not the closure
-  // capture). Required for press-and-hold to actually advance the value.
+  // Latest committed value, kept in sync via useEffect so setInterval
+  // callbacks read the post-render value (not the closure capture).
+  // Required for press-and-hold to actually advance the value.
   const valueRef = useRef<number | null>(null);
   useEffect(() => {
-    valueRef.current = weight;
-  }, [weight]);
+    valueRef.current = value;
+  }, [value]);
 
   const today = todayInTz(timezone);
   const minDate = isoOffset(today, -MIN_BACKDATE_DAYS);
-  const canSave = weight !== null && !pending;
+  const canSave = value !== null && !pending;
 
   const commit = (next: number) => {
-    const clamped = clamp(next, WEIGHT_MIN, WEIGHT_MAX);
-    const rounded = Math.round(clamped * 10) / 10;
-    setWeight(rounded);
-    setText(rounded.toFixed(1));
+    const clamped = clamp(next, MIN, MAX);
+    const rounded = INTEGER
+      ? Math.round(clamped)
+      : Math.round(clamped * 10) / 10;
+    setValue(rounded);
+    setText(INTEGER ? String(rounded) : rounded.toFixed(1));
   };
 
   const adjust = (delta: number) => {
-    const base = valueRef.current ?? seedValue ?? 180;
+    const base = valueRef.current ?? seedValue ?? (MIN + MAX) / 2;
     commit(base + delta);
   };
 
-  // Press-and-hold auto-repeat. Pointer events instead of mousedown to
-  // cover touch + mouse + pen with one path. Cleared on pointerup,
+  // Press-and-hold auto-repeat (weight pattern). Pointer events instead
+  // of mousedown to cover touch + mouse + pen. Cleared on pointerup,
   // pointerleave, pointercancel, and unmount.
   const holdRef = useRef<{
     delay: ReturnType<typeof setTimeout> | null;
@@ -104,44 +115,54 @@ export function AddWeightSheet({
     }
   };
 
-  const startHold = (delta: number) => {
-    stopHold();
-    adjust(delta); // immediate first tick
-    holdRef.current.delay = setTimeout(() => {
-      holdRef.current.repeat = setInterval(() => adjust(delta), HOLD_REPEAT_MS);
-    }, HOLD_DELAY_MS);
+  const startTap = (delta: number) => {
+    if (config.pressAndHold) {
+      stopHold();
+      adjust(delta); // immediate first tick
+      holdRef.current.delay = setTimeout(() => {
+        holdRef.current.repeat = setInterval(
+          () => adjust(delta),
+          HOLD_REPEAT_MS,
+        );
+      }, HOLD_DELAY_MS);
+    } else {
+      // Tap-only mode (spo2). One adjust per pointerdown, no repeat.
+      adjust(delta);
+    }
   };
 
   useEffect(() => stopHold, []);
 
   const onTextChange = (raw: string) => {
-    const cleaned = raw.replace(/[^0-9.]/g, '');
+    const cleaned = INTEGER
+      ? raw.replace(/[^0-9]/g, '')
+      : raw.replace(/[^0-9.]/g, '');
     setText(cleaned);
     const n = Number(cleaned);
     if (cleaned === '' || Number.isNaN(n)) {
-      setWeight(null);
+      setValue(null);
       return;
     }
-    setWeight(n);
+    setValue(n);
   };
 
   const onTextBlur = () => {
-    if (weight === null) {
+    if (value === null) {
       setText('');
       return;
     }
-    commit(weight);
+    commit(value);
   };
 
   const submit = async () => {
-    if (weight === null) return;
+    if (value === null) return;
     if (submittingRef.current) return;
     submittingRef.current = true;
     setPending(true);
     setError(null);
     try {
       const result = await onSave({
-        weightLb: clamp(weight, WEIGHT_MIN, WEIGHT_MAX),
+        value: clamp(value, MIN, MAX),
         recordedAtIsoLocal: `${date}T${time}`,
       });
       if (result.ok) {
@@ -158,19 +179,14 @@ export function AddWeightSheet({
     }
   };
 
-  const eyebrowRight =
-    baselineLb !== null
-      ? `vs. baseline ${baselineLb.toFixed(1)} lb`
-      : seedValue !== null
-        ? `last ${seedValue.toFixed(1)} lb`
-        : null;
+  const eyebrowRight = config.eyebrowLine(baselineValue, seedValue);
 
   return (
     <div
       className="fixed inset-0 z-40 flex items-end justify-center"
       role="dialog"
       aria-modal="true"
-      aria-label="Add weight reading"
+      aria-label={`Add ${config.fieldLabel.toLowerCase()} reading`}
     >
       <button
         type="button"
@@ -203,7 +219,7 @@ export function AddWeightSheet({
             className="font-display text-[20px] text-foreground"
             style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
           >
-            Add weight
+            {config.sheetTitle}
           </h2>
           <button
             type="button"
@@ -214,7 +230,7 @@ export function AddWeightSheet({
           </button>
         </div>
 
-        {/* Weight card — matches the canonical /log vitals card register. */}
+        {/* Value card — matches the canonical /log vitals card register. */}
         <section
           className="rounded-3xl px-5 pt-4 pb-5"
           style={{
@@ -240,7 +256,7 @@ export function AddWeightSheet({
                 className="text-[15px] font-semibold text-foreground"
                 style={{ letterSpacing: '-0.1px' }}
               >
-                Weight
+                {config.fieldLabel}
               </span>
             </div>
             {eyebrowRight && (
@@ -252,8 +268,9 @@ export function AddWeightSheet({
 
           <div className="flex items-center justify-between gap-3">
             <CircleHoldButton
-              ariaLabel="Decrement weight"
-              onPointerDown={() => startHold(-STEP)}
+              ariaLabel={`Decrement ${config.fieldLabel.toLowerCase()}`}
+              disabled={value !== null && value <= MIN}
+              onPointerDown={() => startTap(-STEP)}
               onPointerUp={stopHold}
               onPointerLeave={stopHold}
               onPointerCancel={stopHold}
@@ -261,14 +278,17 @@ export function AddWeightSheet({
               <Glyph kind="minus" />
             </CircleHoldButton>
 
-            {/* Editable value chip. Native input — caregivers can type
-                any digit. inputMode='decimal' selects the right mobile
-                keyboard. */}
-            <label className="flex-1 text-center cursor-text" aria-label="Weight value">
+            {/* Editable value chip. Native input — caregiver can type any
+                digit. inputMode = 'decimal' for weight, 'numeric' for
+                integer configs (spo2). */}
+            <label
+              className="flex-1 text-center cursor-text"
+              aria-label={`${config.fieldLabel} value`}
+            >
               <input
                 type="text"
-                inputMode="decimal"
-                pattern="[0-9]*\.?[0-9]?"
+                inputMode={INTEGER ? 'numeric' : 'decimal'}
+                pattern={INTEGER ? '[0-9]*' : '[0-9]*\\.?[0-9]?'}
                 value={text}
                 onChange={(e) => onTextChange(e.target.value)}
                 onBlur={onTextBlur}
@@ -279,7 +299,7 @@ export function AddWeightSheet({
                   lineHeight: 1,
                   letterSpacing: '-1.5px',
                   color:
-                    weight === null
+                    value === null
                       ? 'var(--muted-foreground)'
                       : 'var(--foreground)',
                   fontWeight: 400,
@@ -289,13 +309,14 @@ export function AddWeightSheet({
                 aria-hidden
                 className="block text-[13px] text-muted-foreground mt-1"
               >
-                lb
+                {config.unit}
               </span>
             </label>
 
             <CircleHoldButton
-              ariaLabel="Increment weight"
-              onPointerDown={() => startHold(STEP)}
+              ariaLabel={`Increment ${config.fieldLabel.toLowerCase()}`}
+              disabled={value !== null && value >= MAX}
+              onPointerDown={() => startTap(STEP)}
               onPointerUp={stopHold}
               onPointerLeave={stopHold}
               onPointerCancel={stopHold}
@@ -398,6 +419,7 @@ export function AddWeightSheet({
 
 function CircleHoldButton({
   ariaLabel,
+  disabled = false,
   onPointerDown,
   onPointerUp,
   onPointerLeave,
@@ -405,6 +427,7 @@ function CircleHoldButton({
   children,
 }: {
   ariaLabel: string;
+  disabled?: boolean;
   onPointerDown: () => void;
   onPointerUp: () => void;
   onPointerLeave: () => void;
@@ -415,19 +438,19 @@ function CircleHoldButton({
     <button
       type="button"
       aria-label={ariaLabel}
-      onPointerDown={(e) => {
-        e.preventDefault(); // suppress focus + native repeat on iOS
-        onPointerDown();
-      }}
-      onPointerUp={onPointerUp}
-      onPointerLeave={onPointerLeave}
-      onPointerCancel={onPointerCancel}
-      // Click-through fallback for keyboards / a11y screen readers that
-      // don't fire pointerdown — onClick is called once. The pointerdown
-      // path already adjusted, so we no-op here for pointer users via
-      // the e.preventDefault above (which doesn't actually block click,
-      // but the holdRef logic dedupes). Cheap defense.
-      className="inline-flex items-center justify-center rounded-full active:scale-[0.94] transition select-none"
+      disabled={disabled}
+      onPointerDown={
+        disabled
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              onPointerDown();
+            }
+      }
+      onPointerUp={disabled ? undefined : onPointerUp}
+      onPointerLeave={disabled ? undefined : onPointerLeave}
+      onPointerCancel={disabled ? undefined : onPointerCancel}
+      className="inline-flex items-center justify-center rounded-full active:scale-[0.94] transition select-none disabled:opacity-30 disabled:active:scale-100"
       style={{
         width: 44,
         height: 44,
@@ -435,7 +458,7 @@ function CircleHoldButton({
         border: '1px solid var(--border)',
         color: 'var(--foreground)',
         boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-        touchAction: 'manipulation', // prevents iOS double-tap zoom
+        touchAction: 'manipulation',
       }}
     >
       {children}
