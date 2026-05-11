@@ -47,6 +47,17 @@ interface Props {
     aboveOpacity?: number;
     belowOpacity?: number;
   };
+  // Optional range-bar mode (Heart rate). When provided, the chart
+  // renders one vertical sage bar per entry from min to max with a
+  // cream-stroked dot at the mean. The line + dots branch is
+  // suppressed — bars + mean dots ARE the data marks.
+  rangeBars?: {
+    dayKey: string;
+    min: number;
+    mean: number;
+    max: number;
+    recordedAtMs: number;
+  }[];
   ariaLabel?: string;
 }
 
@@ -68,6 +79,7 @@ export function TraceChart({
   showLine = true,
   alertFloor,
   areaFill,
+  rangeBars,
   ariaLabel = 'Vital trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
@@ -276,7 +288,7 @@ export function TraceChart({
             opacity="0.85"
           />
         )}
-        {showLine && path && (
+        {showLine && !rangeBars && path && (
           <path
             d={path}
             fill="none"
@@ -286,7 +298,43 @@ export function TraceChart({
             strokeLinejoin="miter"
           />
         )}
-        {visible.map((r) => {
+        {rangeBars?.map((r, i) => {
+          const x = xOf(r.recordedAtMs);
+          const yMax = yOf(r.max);
+          const yMin = yOf(r.min);
+          const yMean = yOf(r.mean);
+          const isLast = i === rangeBars.length - 1;
+          return (
+            <g key={r.dayKey}>
+              <rect
+                x={x - 1.6}
+                y={yMax}
+                width={3.2}
+                height={Math.max(yMin - yMax, 1)}
+                rx={1.6}
+                fill={isLast ? '#5A6B5C' : '#7E9080'}
+                opacity={isLast ? 1 : 0.65}
+              />
+              {isLast && (
+                <circle
+                  cx={x}
+                  cy={yMean}
+                  r={6}
+                  fill="rgba(126,144,128,0.30)"
+                />
+              )}
+              <circle
+                cx={x}
+                cy={yMean}
+                r={isLast ? 3.4 : 2.2}
+                fill="#FBF7F0"
+                stroke={isLast ? '#5A6B5C' : '#7E9080'}
+                strokeWidth={1.5}
+              />
+            </g>
+          );
+        })}
+        {!rangeBars && visible.map((r) => {
           // In areaFill mode, color each dot by whether the reading is
           // above or below the clinical threshold. Otherwise default to
           // sage-deep (the weight register).
