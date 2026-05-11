@@ -129,7 +129,7 @@ export async function loadLogPageContext(
       .order('recorded_at', { ascending: false }),
     supabase
       .from('daily_log_symptom_events')
-      .select('symptom,present,severity,body_region,nocturnal,sputum_color,resolves_overnight,postural,recorded_at,source_log_id')
+      .select('symptom,present,severity,body_region,nocturnal,sputum_color,chest_pain_character,resolves_overnight,postural,recorded_at,source_log_id')
       .eq('patient_id', patient.id)
       .eq('log_date', today)
       .order('recorded_at', { ascending: false }),

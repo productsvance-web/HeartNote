@@ -5,6 +5,7 @@
 
 'use client';
 
+import type { ReactNode } from 'react';
 import { Card, type VitalCardState } from './Card';
 import { SegmentedControl } from './SegmentedControl';
 import type { Tone } from '@/lib/log/helper-text';
@@ -26,6 +27,12 @@ interface Props<V extends string | number> {
   onChange: (v: V) => void;
   activeVariant?: 'sage' | 'warn' | 'alert';
   fieldKey: string;
+  // Inline follow-up rendered below the segmented control via the shared
+  // Card chassis. Used for graded symptoms whose severity unlocks
+  // additional questions (swelling → region + resolves-overnight). Matches
+  // the SymptomYesNoCard.followUp pattern so the user reads one card per
+  // symptom instead of three sibling cards.
+  followUp?: ReactNode;
 }
 
 export function SymptomGradedCard<V extends string | number>({
@@ -39,6 +46,7 @@ export function SymptomGradedCard<V extends string | number>({
   onChange,
   activeVariant,
   fieldKey,
+  followUp,
 }: Props<V>) {
   return (
     <Card
@@ -47,6 +55,7 @@ export function SymptomGradedCard<V extends string | number>({
       helper={helper}
       fieldKey={fieldKey}
       label={{ text: label, contextLine }}
+      followUp={followUp}
     >
       <SegmentedControl
         options={options}

@@ -27,6 +27,7 @@ import {
   type SaveLogResult,
 } from './save-actions';
 import { resolveHelperText } from '@/lib/log/helper-text';
+import { SPO2_TIER_1_911 } from '@/lib/clinical/thresholds';
 import { extractNumericTiles } from '@/lib/voice-log/numeric-extractors';
 import { segmentEndsWithStopPhrase } from '@/lib/voice-log/match-keyterms';
 import {
@@ -164,7 +165,16 @@ export function LogPageClient({ context }: Props) {
       src.swellingResolvesOvernight,
     );
     out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
-    out.cognitionChange = stateFor(s.cognitionChange !== null, src.cognitionChange);
+    // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
+    // even though the modal renders the SegmentedControl with value=null
+    // for severe (modal omits the severity-4 button by design). Hydrate the
+    // card to state='alert' so the corner pip + outline match the banner
+    // the engine fires above the page.
+    // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
+    out.cognitionChange =
+      s.cognitionChange === 'severe'
+        ? 'alert'
+        : stateFor(s.cognitionChange !== null, src.cognitionChange);
     // appetite/urineOutput are day-level fields; treat as tapped when set.
     if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
     if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
@@ -288,7 +298,24 @@ export function LogPageClient({ context }: Props) {
   }, [flushSave]);
 
   // ─── Vital handlers ──────────────────────────────────────────────────────
+  // Fat-finger guard: when dry weight is set and the typed value is more
+  // than 10 lb below it, ask before committing. Dry weight is the patient's
+  // baseline-when-not-retaining-fluid (set by the cardiologist); a sudden
+  // drop of 10+ lb is far more likely a typo than a real reading. If dry
+  // weight isn't set, no check fires.
+  // cited: research/chf-source-of-truth.md §3 — "dry weight" caveat.
+  const DRY_WEIGHT_TYPO_THRESHOLD_LB = 10;
   const onWeightChange = (v: number | null) => {
+    if (
+      v !== null &&
+      context.patient.dryWeightLb !== null &&
+      v < context.patient.dryWeightLb - DRY_WEIGHT_TYPO_THRESHOLD_LB
+    ) {
+      const confirmed = window.confirm(
+        `Did you mean to enter ${v.toFixed(1)} lbs?`,
+      );
+      if (!confirmed) return;
+    }
     setVitals((s) => ({ ...s, weightLb: v }));
     setVitalsTouch((s) => ({
       ...s,
@@ -318,13 +345,15 @@ export function LogPageClient({ context }: Props) {
     setVitals((s) => ({ ...s, spo2Pct: v }));
     setVitalsTouch((s) => ({
       ...s,
-      // H2: SpO2 ≤ 88 is tier-1 (T1.7a). Any non-null below threshold lights
-      // the alert outline directly.
+      // H2: SpO2 < SPO2_TIER_1_911 is tier-1 (T1.7a). Strict < matches the
+      // engine (evaluate.ts:258) and the regression test (evaluate.test.ts:208
+      // — "spo2 at SPO2_TIER_1_911 does NOT fire T1.7a").
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — SpO2 < 88%.
       spo2:
-        v === null ? 'muted' : v <= 88 ? 'alert' : 'tapped',
+        v === null ? 'muted' : v < SPO2_TIER_1_911 ? 'alert' : 'tapped',
     }));
-    // Crossing the 88% line moves tier — bypass the debounce.
-    scheduleSave(v !== null && v <= 88);
+    // Crossing the threshold moves tier — bypass the debounce.
+    scheduleSave(v !== null && v < SPO2_TIER_1_911);
   };
 
   // ─── Symptoms handler ────────────────────────────────────────────────────
@@ -716,16 +745,20 @@ export function LogPageClient({ context }: Props) {
   }, [symptomsTouch]);
 
   // ─── Captured-count for modal footer ─────────────────────────────────────
+  // Counts the 14 distinct symptoms in the extract.ts schema enum:
+  // dyspnea, cough, chest_pain, swelling, fatigue, pnd, syncope,
+  // cognition_change, extremities_cold_clammy, cyanosis, early_satiety,
+  // pulse_irregular, dizziness, nausea. Sputum is a follow-up of cough,
+  // not a separate symptom. Appetite and urine are day-level fields, not
+  // entries in the symptom_events enum, so they don't count toward the
+  // "14 symptoms" denominator the modal footer shows.
   const symptomsCapturedCount = useMemo(() => {
     let n = 0;
     if (symptoms.dyspneaSeverity !== null) n++;
     if (symptoms.cough !== null) n++;
-    if (symptoms.sputumColor !== null) n++;
     if (symptoms.swellingSeverity !== null) n++;
     if (symptoms.fatigueSeverity !== null) n++;
     if (symptoms.cognitionChange !== null) n++;
-    if (symptoms.appetiteChange !== null) n++;
-    if (symptoms.urineOutputChange !== null) n++;
     if (symptoms.chestPain !== null) n++;
     if (symptoms.syncope !== null) n++;
     if (symptoms.cyanosis !== null) n++;
@@ -735,7 +768,7 @@ export function LogPageClient({ context }: Props) {
     if (symptoms.pulseIrregular !== null) n++;
     if (symptoms.dizziness !== null) n++;
     if (symptoms.nausea !== null) n++;
-    return Math.min(n, 14);
+    return n;
   }, [symptoms]);
 
   // ─── Vital helper-text resolution ────────────────────────────────────────
@@ -873,7 +906,11 @@ export function LogPageClient({ context }: Props) {
           <StepperControl
             value={vitals.weightLb}
             defaultValue={context.vitals.weight.yesterdayLb}
-            min={50}
+            // Min lowered from 50 → 8 so the chip stops silently
+            // clamping a typo'd "44.4" up to 50. The dry-weight
+            // confirm in `onWeightChange` is the real fat-finger guard
+            // when the patient profile has a dry weight set.
+            min={8}
             max={700}
             step={0.2}
             fieldLabel="weight"
@@ -949,7 +986,7 @@ export function LogPageClient({ context }: Props) {
             value={vitals.hrBpm}
             defaultValue={context.vitals.hr.yesterdayBpm}
             min={30}
-            max={220}
+            max={450}
             step={1}
             integer
             inputMin={30}
@@ -974,7 +1011,15 @@ export function LogPageClient({ context }: Props) {
             min={50}
             max={100}
             step={0.1}
+            // Decimals allowed (some pulse-oximeters report half-percent).
+            // The chip rounds typed input half-up to 1 decimal: 90.55 → 90.6,
+            // 90.12 → 90.1, 44.45 → 44.5.
             inputMin={70}
+            // 5-char cap accommodates "100.0" / "99.5" — stops the field
+            // from accepting "1000" before commit-time clamp.
+            maxLength={5}
+            // Whole-number readings render without a trailing ".0".
+            formatValue={(v) => (Number.isInteger(v) ? String(v) : v.toFixed(1))}
             fieldLabel="oxygen"
             unit="%"
             placeholder="— %"
@@ -1040,9 +1085,12 @@ export function LogPageClient({ context }: Props) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-// True when the symptom field's new value is a tier-1 alert condition
-// (per src/lib/alerts/evaluate.ts T1.x rules). Drives the corner-pip
-// "Alert" variant on the symptom card.
+// Mirrors the standalone tier-1 conditions in src/lib/alerts/evaluate.ts
+// (T1.1, T1.2, T1.3, T1.4, T1.5, T1.6). Compound tier-1 rules (T1.7 SpO2,
+// T1.8 pulse_irregular + HR>100 + chest_pain/dizziness) are NOT modeled
+// here because the modal can't see the SpO2/HR/multi-symptom context at
+// tap time — the engine still lights the banner above the page for those,
+// but the in-card 'alert' register stays off for the standalone case.
 function isSymptomTier1(
   key: keyof SymptomState,
   value: SymptomState[keyof SymptomState] | undefined,
@@ -1050,26 +1098,37 @@ function isSymptomTier1(
   if (value === null || value === undefined) return false;
   switch (key) {
     case 'dyspneaSeverity':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — severe dyspnea at rest.
       return value === 4;
     case 'chestPain':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — new chest pain.
+      return value === true;
     case 'syncope':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — syncope.
+      return value === true;
     case 'cyanosis':
-    case 'pulseIrregular':
-    case 'pnd':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — cyanotic lips/fingers.
       return value === true;
     case 'sputumColor':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — pink OR white frothy sputum.
       return value === 'pink_frothy' || value === 'white_frothy';
     case 'cognitionChange':
+      // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
       return value === 'severe';
     default:
+      // pnd → tier-2 (T2.5). pulseIrregular alone → no banner; the T1.8
+      // compound (irregular + HR>100 + chest_pain/dizziness) fires tier-1
+      // via the engine, not via the standalone tap state.
       return false;
   }
 }
 
-// True when the patch could move the alert tier — i.e., any change to a
-// tier-1 yes-flag (true ↔ false), enum transitions in/out of tier-1
-// values (sputum, cognition, dyspnea severity 4). Used to bypass the
-// 1.5s autosave debounce so the banner appears or clears promptly.
+// True when the patch could move the alert tier (banner) — broader than
+// `isSymptomTier1` because it includes tier-2 movers (PND) and compound
+// tier-1 contributors (pulseIrregular). The card-state 'alert' visual is
+// strictly tier-1; the autosave debounce skip is for any tier-changing
+// edit, including tier-2 banners. Keep these in sync with the rules in
+// src/lib/alerts/evaluate.ts.
 function isTierMovingPatch(patch: Partial<SymptomState>): boolean {
   if (patch.chestPain !== undefined) return true;
   if (patch.syncope !== undefined) return true;
