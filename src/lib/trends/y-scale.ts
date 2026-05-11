@@ -63,10 +63,17 @@ export function yScaleFor(
       ticks: [mid - step, mid, mid + step],
     };
     if (floor === undefined && ceiling === undefined) return naive;
-    return fourLabelClamped(
-      Math.min(naive.min, floor ?? naive.min),
-      Math.min(naive.max, ceiling ?? naive.max),
-    );
+    // floor extends min DOWN to ensure the floor line is visible.
+    // ceiling clamps max DOWN only when data fits below it; if the
+    // reading exceeds the ceiling, the chart adapts UP instead of
+    // hiding the reading above the frame.
+    const clampMin =
+      floor !== undefined ? Math.min(naive.min, floor) : naive.min;
+    const clampMax =
+      ceiling !== undefined && v <= ceiling
+        ? Math.min(naive.max, ceiling)
+        : naive.max;
+    return fourLabelClamped(clampMin, clampMax);
   }
 
   // 2+ distinct readings: nice-step axis padded so neither extreme lands
@@ -84,16 +91,18 @@ export function yScaleFor(
     max = min + step * 3;
   }
 
-  // Clamp.
+  // floor pulls min DOWN if necessary to keep the floor line visible.
   if (floor !== undefined) min = Math.min(min, floor);
-  if (ceiling !== undefined) max = Math.min(max, ceiling);
+  // ceiling clamps max DOWN only when data fits below it; if any
+  // reading exceeds the ceiling, the chart adapts UP rather than
+  // hiding readings above the frame. This is the fix for HR 220
+  // making the chart ticks collapse to [0, 50, 100, 110] with the
+  // reading invisible above 110.
+  if (ceiling !== undefined && hi <= ceiling) max = Math.min(max, ceiling);
 
   // If clamping changed min/max, recompute ticks so all four labels stay
   // within [min, max] at nice intervals.
-  if (
-    floor !== undefined ||
-    ceiling !== undefined
-  ) {
+  if (floor !== undefined || ceiling !== undefined) {
     return fourLabelClamped(min, max);
   }
   return { min, max, ticks: [min, min + step, min + 2 * step, max] };

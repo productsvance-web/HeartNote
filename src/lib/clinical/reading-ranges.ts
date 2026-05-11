@@ -7,7 +7,18 @@
 // (rule 1 in .claude/rules/code-quality.md). This module has no server-only
 // imports so it's safe to pull into client bundles.
 
-export type ReadingField = 'weight_lb' | 'resting_hr' | 'spo2' | 'systolic_bp' | 'diastolic_bp';
+// pillow_count is NOT a daily_log_readings.field (it's a column on
+// daily_logs — a day-level summary, not a per-moment cuff reading).
+// Included here so the /trends/pillows stepper + Zod refines have a
+// single source for the [0, 20] range, mirroring the FIELD_RANGE in
+// src/lib/voice-log/numeric-extractors.ts.
+export type ReadingField =
+  | 'weight_lb'
+  | 'resting_hr'
+  | 'spo2'
+  | 'systolic_bp'
+  | 'diastolic_bp'
+  | 'pillow_count';
 
 export const READING_RANGE: Record<ReadingField, [number, number]> = {
   weight_lb: [50, 1000],
@@ -15,4 +26,5 @@ export const READING_RANGE: Record<ReadingField, [number, number]> = {
   spo2: [50, 100],
   systolic_bp: [60, 250],
   diastolic_bp: [30, 150],
+  pillow_count: [0, 20],
 };

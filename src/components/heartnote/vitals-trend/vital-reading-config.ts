@@ -42,4 +42,12 @@ export interface VitalReadingConfig {
   ) => string | null;
   // Singular/plural noun ONLY used in destructive confirm() prompts.
   deleteNoun: { singular: string; plural: string };
+  // Per-night summary vitals (pillows) hide the time input on the add
+  // sheet and stamp '12:00' at save. Defaults to false.
+  dateOnly?: boolean;
+  // Verb used in the "delete all" trigger pill and confirm copy.
+  // Defaults to 'Delete'. Pillows uses 'Clear' because the underlying
+  // mutation sets pillow_count = NULL (the row survives), which is
+  // reversible-with-effort rather than irreversible.
+  actionVerb?: 'Delete' | 'Clear';
 }

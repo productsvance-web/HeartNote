@@ -1,18 +1,30 @@
 'use client';
 
-// Client view for /trends/weight. Window state is a single endMs (ms
-// since epoch) — the right edge of the visible window. Period
-// determines the window's WIDTH; endMs determines its position.
+// Client view for /trends/pillows. Same chassis as Spo2/Hr/Weight with
+// pillow-specific divergences:
 //
-// Drag on the chart pans the window through time (Apple Health style).
-// Chevrons step by full window-width. Y has no scrub (we only track
-// 12 months). Period change resets endMs to "now" / end-of-today.
+//   1. Chart: LollipopChart with a faint baseline at the patient's
+//      normal_pillow_count. No alert floor — orthopnea is a trend-up
+//      signal, not a 911-level threshold.
+//   2. Hero: "{value} pillows now" (integer + "pillows now" suffix
+//      per mockup).
+//   3. Y-axis: fixed [0, 3] per mockup. No nice-step.
+//   4. Stat trio: 12-mo avg / Months at 2+ / Nights logged — computed
+//      over the trailing 12 months REGARDLESS of chart period. Labels
+//      are absolute ("12-mo avg"); making the math period-aware would
+//      mean the label lies on D/W/M.
+//   5. Add sheet: AddReadingSheet with `dateOnly: true` (no time
+//      input — pillows is per-night).
+//   6. Delete sheet uses `actionVerb: 'Clear'` because the underlying
+//      mutation is an UPDATE setting pillow_count = NULL on the
+//      daily_logs row — the row survives, the column is cleared.
+//   7. Default period: Y per mockup.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, Plus } from 'lucide-react';
-import { TraceChart } from '@/components/heartnote/vitals-trend/TraceChart';
+import { LollipopChart } from '@/components/heartnote/vitals-trend/LollipopChart';
 import {
   AddReadingSheet,
   type AddReadingInput,
@@ -24,7 +36,6 @@ import type {
   VitalReading,
   WindowPeriod,
 } from '@/lib/trends/vital-reading';
-import { yScaleFor } from '@/lib/trends/y-scale';
 import {
   backwardBoundForPeriod,
   dayTimeLabel,
@@ -40,57 +51,87 @@ import {
 } from '@/lib/trends/tap-hit';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import {
-  addWeightReading,
-  deleteWeightReadings,
-  deleteAllWeightReadings,
-} from '@/app/trends/weight/actions';
+  addPillowReading,
+  clearPillowReadings,
+  clearAllPillowReadings,
+} from '@/app/trends/pillows/actions';
+
+// Y-axis is [0, 3] when all readings fit. When the highest reading is
+// at or above 3, the ceiling extends so the dot doesn't sit on the
+// chart's top edge (the clipping the user flagged at value=3).
+function pillowsY(maxValue: number): {
+  min: number;
+  max: number;
+  ticks: number[];
+} {
+  if (maxValue < 3) return { min: 0, max: 3, ticks: [0, 1, 2, 3] };
+  const max = Math.max(3, Math.ceil(maxValue) + 1);
+  const step = Math.max(1, Math.ceil(max / 3));
+  return {
+    min: 0,
+    max: step * 3,
+    ticks: [0, step, 2 * step, step * 3],
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface Props {
   patientFirstName: string;
   timezone: string;
   today: string;
-  baselineLb: number | null;
+  baselinePillowCount: number | null;
   allReadings: VitalReading[];
 }
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
 
-// Weight-specific config consumed by the shared sheets.
-const WEIGHT_CONFIG: VitalReadingConfig = {
-  field: 'weight_lb',
-  fieldLabel: 'Weight',
-  unit: 'lb',
-  range: READING_RANGE.weight_lb,
-  step: 0.1,
-  integer: false,
-  splitDecimal: true,
-  pressAndHold: true,
-  formatValue: (v) => v.toFixed(1),
-  sheetTitle: 'Add weight',
-  listTitle: 'All weights',
-  eyebrowLine: (baseline, seed) =>
-    baseline !== null
-      ? `vs. baseline ${baseline.toFixed(1)} lb`
-      : seed !== null
-        ? `last ${seed.toFixed(1)} lb`
-        : null,
-  deleteNoun: { singular: 'weight reading', plural: 'weight readings' },
-};
-
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-export function WeightTrendView({
+export function PillowsTrendView({
   patientFirstName,
   timezone,
   today,
-  baselineLb,
+  baselinePillowCount,
   allReadings,
 }: Props) {
   const router = useRouter();
 
-  // Anchor + bounds derived from the data, not from "today".
+  // Eyebrow contract: baseline if known, otherwise the last reading.
+  const eyebrowText = useMemo(() => {
+    if (baselinePillowCount !== null) {
+      return `baseline ${baselinePillowCount} pillow${baselinePillowCount === 1 ? '' : 's'}`;
+    }
+    const last = allReadings[allReadings.length - 1];
+    return last ? `last ${Math.round(last.value)}` : null;
+  }, [baselinePillowCount, allReadings]);
+
+  const PILLOWS_CONFIG: VitalReadingConfig = useMemo(
+    () => ({
+      field: 'pillow_count',
+      fieldLabel: 'Pillows',
+      unit: 'pillows',
+      range: READING_RANGE.pillow_count,
+      step: 1,
+      integer: true,
+      splitDecimal: false,
+      pressAndHold: false,
+      formatValue: (v) => String(Math.round(v)),
+      sheetTitle: 'Add pillows tonight',
+      listTitle: 'All pillow counts',
+      dateOnly: true,
+      actionVerb: 'Clear',
+      eyebrowLine: () => eyebrowText,
+      deleteNoun: {
+        singular: 'pillow count',
+        plural: 'pillow counts',
+      },
+    }),
+    [eyebrowText],
+  );
+
   const oldestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -99,10 +140,8 @@ export function WeightTrendView({
     [allReadings],
   );
 
-  const [period, setPeriodRaw] = useState<WindowPeriod>('D');
+  const [period, setPeriodRaw] = useState<WindowPeriod>('Y');
 
-  // Period-aware bounds. D snaps to day boundaries; W to weeks
-  // (Sun-Sat); M to calendar months. 6M/Y are rolling.
   const forwardBound = useMemo(
     () => forwardBoundForPeriod(period, today, timezone),
     [period, today, timezone],
@@ -113,13 +152,10 @@ export function WeightTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('D', today, timezone),
+    defaultEndForPeriod('Y', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
-  // Tap-to-select state: the reading whose data is currently shown in
-  // the hero. When null, hero defaults to the latest reading in the
-  // visible window (Apple Health style).
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
@@ -140,19 +176,11 @@ export function WeightTrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  // Display reading: selected tap target if any AND still in the
-  // visible slice, else the latest reading in the visible window.
-  // Selection that scrubs out of view auto-deselects visually.
   const selected = selectedId
     ? slice.find((r) => r.id === selectedId) ?? null
     : null;
   const hero = selected ?? (slice.length > 0 ? slice[slice.length - 1] : null);
 
-  // Y-axis is derived from the WHOLE dataset, not the visible window.
-  // That keeps the axis stable as the user drags D-day-to-D-day instead
-  // of zooming in on each day's tiny intra-day range. The 3-label
-  // exception only fires when the entire table has a single reading.
-  const yScale = useMemo(() => yScaleFor(allReadings), [allReadings]);
   const xLabels = useMemo(
     () => xLabelsFor(period, endMs, timezone),
     [period, endMs, timezone],
@@ -160,8 +188,6 @@ export function WeightTrendView({
 
   const subhead = useMemo(() => {
     if (selected) {
-      // When a specific reading is selected, the subhead describes
-      // that reading instead of the window range.
       return dayTimeLabel(
         Date.parse(selected.recorded_at),
         timezone,
@@ -171,13 +197,24 @@ export function WeightTrendView({
     return subheadFor(period, startMs, endMs, timezone, today);
   }, [selected, period, startMs, endMs, timezone, today]);
 
+  const yScale = useMemo(() => {
+    const maxV =
+      allReadings.length > 0
+        ? Math.max(...allReadings.map((r) => r.value))
+        : 0;
+    return pillowsY(maxV);
+  }, [allReadings]);
+
   const hasAnyReadings = allReadings.length > 0;
 
-  // Drag-to-scrub (Apple Health style) PLUS tap-to-select: pointerdown
-  // records startX. pointermove flips `moved` once cumulative dx
-  // exceeds TAP_MOVE_THRESHOLD_PX. pointerup with `moved=false` is a
-  // tap — we hit-test for the nearest reading and select it (or
-  // deselect if the tap is between dots).
+  // Trailing-12-months stats — computed off allReadings, not slice.
+  // Labels are absolute ("12-mo avg"); period-aware math would make
+  // the label lie on D/W/M.
+  const trailingStats = useMemo(
+    () => computeTrailingStats(allReadings, today, timezone),
+    [allReadings, today, timezone],
+  );
+
   const dragRef = useRef<{
     startX: number;
     startEnd: number;
@@ -199,7 +236,7 @@ export function WeightTrendView({
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
-      // ignore — Safari can throw on pointer capture in rare cases
+      // ignore
     }
   };
 
@@ -214,14 +251,11 @@ export function WeightTrendView({
     const span = windowSpanMs(period);
 
     if (period === 'D') {
-      // Continuous drag in hour-units. Clamp to [backwardBound, forwardBound].
       const dt = -(dx / w) * span;
       setEndMs(clamp(startEnd + dt, backwardBound, forwardBound));
       return;
     }
 
-    // W / M / 6M: swipe-paging. Each chart-width drag past a 25% threshold
-    // = one full window-step.
     const threshold = w * 0.25;
     if (Math.abs(dx) < threshold) {
       setEndMs(clamp(startEnd, backwardBound, forwardBound));
@@ -236,7 +270,6 @@ export function WeightTrendView({
     const drag = dragRef.current;
     dragRef.current = null;
     if (!drag || drag.moved) return;
-    // Tap: convert to chart coordinates and hit-test.
     const wrap = chartWrapRef.current;
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
@@ -249,8 +282,15 @@ export function WeightTrendView({
     dragRef.current = null;
   }, []);
 
+  // Adapter: the shared AddReadingSheet onSave passes
+  // { value, recordedAtIsoLocal }. Pillows' action wants
+  // { pillowCount, logDate } — slice the YYYY-MM-DD off the front.
   const onSave = async (input: AddReadingInput) => {
-    const result = await addWeightReading(input);
+    const logDate = input.recordedAtIsoLocal.slice(0, 10);
+    const result = await addPillowReading({
+      pillowCount: Math.round(input.value),
+      logDate,
+    });
     if (result.ok) router.refresh();
     return result;
   };
@@ -276,14 +316,11 @@ export function WeightTrendView({
           className="font-display text-[16px]"
           style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
         >
-          Weight
+          Pillows tonight
         </h1>
       </header>
 
       <div className="px-5 pb-32">
-        {/* Hero. Same size whether data is present or muted-empty —
-            keeps the layout still and stops the page from re-flowing
-            as you scrub between empty and populated windows. */}
         <div className="mt-3 flex items-end gap-2">
           <span
             className="font-display"
@@ -295,12 +332,7 @@ export function WeightTrendView({
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {hero ? Math.floor(hero.value) : '—'}
-            {hero && (
-              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
-                .{decimalPart(hero.value)}
-              </span>
-            )}
+            {hero ? Math.round(hero.value) : '—'}
           </span>
           <span
             className="text-muted-foreground"
@@ -311,10 +343,9 @@ export function WeightTrendView({
               paddingBottom: 12,
             }}
           >
-            lb
+            pillows now
           </span>
         </div>
-        {/* Subhead reflects the visible window's exact time range. */}
         <p
           className="text-[12px] text-muted-foreground mt-1"
           style={{ letterSpacing: '0.3px' }}
@@ -322,20 +353,19 @@ export function WeightTrendView({
           {subhead}
         </p>
 
-        {/* Chart section */}
         <div className="mt-5">
           <div className="flex items-baseline justify-between px-0.5">
             <span
               className="font-display text-foreground"
               style={{ fontSize: 14, fontWeight: 500, letterSpacing: '-0.2px' }}
             >
-              Weight
+              Pillows per night
             </span>
             <span
               className="text-[10px] text-muted-foreground uppercase"
               style={{ letterSpacing: '0.5px', fontWeight: 500 }}
             >
-              lb
+              count
             </span>
           </div>
           <div
@@ -371,9 +401,6 @@ export function WeightTrendView({
             ))}
           </div>
 
-          {/* Chart container — the drag handler lives here. The SVG inside
-              uses an aspect-ratio box so it scales uniformly and never
-              stretches on wide viewports. */}
           <div
             ref={chartWrapRef}
             onPointerDown={onChartPointerDown}
@@ -389,35 +416,24 @@ export function WeightTrendView({
               WebkitUserSelect: 'none',
             }}
           >
-            <TraceChart
+            <LollipopChart
               data={allReadings}
+              baseline={baselinePillowCount}
               startMs={startMs}
               endMs={endMs}
               xAxisLabels={xLabels}
               yMin={yScale.min}
               yMax={yScale.max}
               yTicks={yScale.ticks}
-              ariaLabel="Weight trend chart"
-              // W shows dots only — readings within a single week are
-              // independent weigh-ins, not a continuous trend. D / M /
-              // 6M / Y connect the dots.
-              showLine={period !== 'W'}
               selectedId={selectedId}
+              ariaLabel="Pillows trend chart"
             />
           </div>
-          {/* X axis labels are absolutely positioned at the same x-coordinate
-              as their vertical gridline in the SVG. As the user drags, both
-              gridlines and labels slide together — the dots stay anchored to
-              their real timestamps in the visible window. */}
           <div
             className="relative"
             style={{ width: '100%', height: 14, marginTop: -2 }}
           >
             {xLabels.map((l, i) => {
-              // Map fractional x in inner data area to a percentage of the
-              // SVG container's full width. SVG = 280-wide, PAD_L = 6,
-              // PAD_R = 32, innerW = 242 → label sits at PAD_L + l.x*innerW
-              // in viewBox units, normalized to %.
               const positionPct = ((6 + l.x * 242) / 280) * 100;
               return (
                 <span
@@ -440,11 +456,7 @@ export function WeightTrendView({
           </div>
         </div>
 
-        {/* Stats trio. Render the shell whenever the dataset has data,
-            even if the visible window is currently empty — keeps the
-            page from reflowing as the caregiver scrubs between data
-            days and empty days. */}
-        {hasAnyReadings && (
+        {trailingStats && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -452,7 +464,26 @@ export function WeightTrendView({
               border: '1px solid var(--border)',
             }}
           >
-            {tripleStats(slice, timezone).map((s, i) => (
+            {[
+              {
+                label: '12-mo avg',
+                value: trailingStats.avg.toFixed(1),
+                unit: '',
+                sub: 'per night',
+              },
+              {
+                label: 'Months at 2+',
+                value: String(trailingStats.monthsAt2Plus),
+                unit: '/12',
+                sub: 'of last 12 months',
+              },
+              {
+                label: 'Nights logged',
+                value: String(trailingStats.nightsLogged),
+                unit: '',
+                sub: 'aggregated',
+              },
+            ].map((s, i) => (
               <div key={s.label} className="px-3 pt-3 pb-2.5 relative">
                 {i > 0 && (
                   <span
@@ -506,7 +537,6 @@ export function WeightTrendView({
         )}
       </div>
 
-      {/* Bottom-bar floating utility row. */}
       <div
         className="fixed left-0 right-0 flex justify-between items-end pointer-events-none"
         style={{
@@ -523,7 +553,7 @@ export function WeightTrendView({
         />
         <button
           type="button"
-          aria-label="Add weight"
+          aria-label="Add pillows tonight"
           onClick={() => setSheetOpen(true)}
           className="inline-flex items-center justify-center rounded-full pointer-events-auto active:scale-95 transition"
           style={{
@@ -542,10 +572,10 @@ export function WeightTrendView({
 
       {sheetOpen && (
         <AddReadingSheet
-          config={WEIGHT_CONFIG}
+          config={PILLOWS_CONFIG}
           onClose={() => setSheetOpen(false)}
           seedValue={latestEver?.value ?? null}
-          baselineValue={baselineLb}
+          baselineValue={baselinePillowCount}
           timezone={timezone}
           onSave={onSave}
         />
@@ -553,76 +583,72 @@ export function WeightTrendView({
 
       {viewDataOpen && (
         <ViewDataSheet
-          config={WEIGHT_CONFIG}
+          config={PILLOWS_CONFIG}
           readings={allReadings}
           patientFirstName={patientFirstName}
           timezone={timezone}
           today={today}
           onClose={() => setViewDataOpen(false)}
-          deleteByIds={deleteWeightReadings}
-          deleteAll={deleteAllWeightReadings}
+          deleteByIds={clearPillowReadings}
+          deleteAll={clearAllPillowReadings}
         />
       )}
     </>
   );
 }
 
-function decimalPart(v: number): string {
-  return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
-}
+// ─── Trailing-12-month stats ────────────────────────────────────────────────
 
-// ─── Stats trio ──────────────────────────────────────────────────────────────
-
-function timeLabelFor(r: VitalReading, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  }).format(new Date(r.recorded_at));
-}
-
-function tripleStats(
-  slice: VitalReading[],
+function computeTrailingStats(
+  allReadings: VitalReading[],
+  today: string,
   tz: string,
-): { label: string; value: string; unit: string; sub: string }[] {
-  if (slice.length === 0) {
-    // Empty visible window — preserve the trio shell so the layout
-    // doesn't jump as the caregiver scrubs.
-    return [
-      { label: 'Latest', value: '—', unit: '', sub: '' },
-      { label: 'Highest', value: '—', unit: '', sub: '' },
-      { label: 'Range', value: '—', unit: '', sub: '' },
-    ];
+): {
+  avg: number;
+  monthsAt2Plus: number;
+  nightsLogged: number;
+} | null {
+  if (allReadings.length === 0) return null;
+  const todayMs = Date.parse(`${today}T23:59:59`);
+  const yearAgoMs = todayMs - 365 * DAY_MS;
+  const trailing = allReadings.filter(
+    (r) => Date.parse(r.recorded_at) >= yearAgoMs,
+  );
+  if (trailing.length === 0) return null;
+
+  const avg =
+    trailing.reduce((sum, r) => sum + r.value, 0) / trailing.length;
+
+  // Months-at-2+: group by YYYY-MM (patient tz) and count months whose
+  // monthly average >= 2.
+  const monthlyTotals = new Map<string, { sum: number; n: number }>();
+  for (const r of trailing) {
+    const ymKey = ymOf(r.recorded_at, tz);
+    const entry = monthlyTotals.get(ymKey) ?? { sum: 0, n: 0 };
+    entry.sum += r.value;
+    entry.n += 1;
+    monthlyTotals.set(ymKey, entry);
   }
-  const latest = slice[slice.length - 1];
-  const sortedDesc = [...slice].sort((a, b) => b.value - a.value);
-  const highest = sortedDesc[0];
-  const lowest = sortedDesc[sortedDesc.length - 1];
-  const range = slice.length === 1 ? 0 : highest.value - lowest.value;
-  return [
-    {
-      label: 'Latest',
-      value: latest.value.toFixed(1),
-      unit: 'lb',
-      sub: timeLabelFor(latest, tz),
-    },
-    {
-      label: 'Highest',
-      value: highest.value.toFixed(1),
-      unit: 'lb',
-      sub: timeLabelFor(highest, tz),
-    },
-    {
-      label: 'Range',
-      value: range.toFixed(1),
-      unit: 'lb',
-      sub:
-        slice.length === 1
-          ? 'one reading'
-          : range === 0
-            ? 'no change'
-            : 'across this window',
-    },
-  ];
+  let monthsAt2Plus = 0;
+  for (const { sum, n } of monthlyTotals.values()) {
+    if (sum / n >= 2) monthsAt2Plus += 1;
+  }
+
+  // Nights logged: count of distinct log_date values.
+  const distinctDates = new Set(trailing.map((r) => r.log_date));
+  const nightsLogged = distinctDates.size;
+
+  return { avg, monthsAt2Plus, nightsLogged };
+}
+
+function ymOf(iso: string, tz: string): string {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '';
+  return `${y}-${m}`;
 }

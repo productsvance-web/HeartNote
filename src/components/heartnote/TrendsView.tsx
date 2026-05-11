@@ -62,6 +62,7 @@ export function TrendsView({ series, triggers, coughCells, today, nextVisitDate 
       </header>
 
       <WeightCard series={series} tier={weightTier} />
+      <VitalsNavCard />
       <CoughSection cells={coughCells} today={today} />
       <SleepCard series={series} />
       <SymptomsCard series={series} />
@@ -174,6 +175,63 @@ function WeightCard({ series, tier }: { series: TrendSeries; tier: Tier }) {
         <p className="text-xs text-muted-foreground mt-2">No weight readings in the last 14 days.</p>
       )}
     </Link>
+  );
+}
+
+// Minimal nav block linking to the four other per-vital trend pages.
+// Each card on the home /trends index used to have a rich sparkline +
+// tier badge (see WeightCard); HR / BP / SpO2 / pillows don't have
+// that scaffolding yet, so this row gives the caregiver a way IN to
+// each dedicated trend page without committing to a richer card
+// design before the data shape is settled.
+function VitalsNavCard() {
+  const items: { href: string; label: string; sub: string }[] = [
+    {
+      href: '/trends/hr',
+      label: 'Heart rate',
+      sub: 'bpm · 14-day',
+    },
+    {
+      href: '/trends/bp',
+      label: 'Blood pressure',
+      sub: 'sys / dia · monthly',
+    },
+    {
+      href: '/trends/spo2',
+      label: 'Oxygen',
+      sub: '% · 14-day',
+    },
+    {
+      href: '/trends/pillows',
+      label: 'Pillows',
+      sub: 'per night · 12-mo',
+    },
+  ];
+  return (
+    <section className="mx-4 mt-4 rounded-3xl bg-card border border-border shadow-card p-2">
+      {items.map((item, i) => (
+        <Link
+          key={item.href}
+          href={item.href}
+          className="flex items-center justify-between px-3 py-3 active:bg-muted transition rounded-2xl"
+          style={{
+            borderTop:
+              i === 0 ? 'none' : '0.5px solid var(--border)',
+          }}
+          aria-label={`Open ${item.label.toLowerCase()} trend`}
+        >
+          <div>
+            <p className="text-[14px] font-semibold text-foreground leading-tight">
+              {item.label}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {item.sub}
+            </p>
+          </div>
+          <ChevronRight size={14} className="text-muted-foreground" />
+        </Link>
+      ))}
+    </section>
   );
 }
 

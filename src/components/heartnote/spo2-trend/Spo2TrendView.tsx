@@ -11,12 +11,6 @@
 //   - TraceChart gets an alertFloor at 88 — dashed coral line.
 //   - Stat trio is Latest / Lowest / Highest. Lowest is the clinically
 //     directional cell for SpO2.
-//
-// Window-math helpers (defaultEndForPeriod / forwardBound / backwardBound /
-// windowSpanMs / xLabelsFor / subheadFor and their date helpers) are
-// duplicated from WeightTrendView. Per the plan, hoist to a shared
-// window-math.ts at the third invocation (heart rate). Two callers is
-// duplicate-now-extract-later territory.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -35,10 +29,21 @@ import type {
   WindowPeriod,
 } from '@/lib/trends/vital-reading';
 import { yScaleFor } from '@/lib/trends/y-scale';
+import {
+  backwardBoundForPeriod,
+  dayTimeLabel,
+  defaultEndForPeriod,
+  forwardBoundForPeriod,
+  subheadFor,
+  windowSpanMs,
+  xLabelsFor,
+} from '@/lib/trends/window-math';
+import {
+  findTappedReading,
+  TAP_MOVE_THRESHOLD_PX,
+} from '@/lib/trends/tap-hit';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { SPO2_TIER_1_911 } from '@/lib/clinical/thresholds';
-import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
-import { isoOffset } from '@/lib/dates/iso-offset';
 import {
   addSpo2Reading,
   deleteSpo2Readings,
@@ -53,9 +58,6 @@ interface Props {
 }
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
-
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 
 // SpO2-specific config consumed by the shared sheets. One-decimal
 // precision throughout — matches the voice-log extraction pattern, the
@@ -83,122 +85,6 @@ const SPO2_CONFIG: VitalReadingConfig = {
   },
 };
 
-function windowSpanMs(period: WindowPeriod): number {
-  switch (period) {
-    case 'D':
-      return DAY_MS;
-    case 'W':
-      return 7 * DAY_MS;
-    case 'M':
-      return 30 * DAY_MS;
-    case '6M':
-      return 182 * DAY_MS;
-    case 'Y':
-      return 365 * DAY_MS;
-  }
-}
-
-function endOfDayMs(dayIso: string, tz: string): number {
-  const next = isoOffset(dayIso, 1);
-  const iso = isoFromWallClock(`${next}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function endOfWeekMs(dayIso: string, tz: string): number {
-  const dow = dowOfDay(dayIso, tz);
-  const daysToNextSun = dow === 0 ? 7 : 7 - dow;
-  const nextSun = isoOffset(dayIso, daysToNextSun);
-  const iso = isoFromWallClock(`${nextSun}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function endOfMonthMs(dayIso: string, tz: string): number {
-  const [y, m] = dayIso.split('-').map(Number);
-  const ny = m === 12 ? y + 1 : y;
-  const nm = m === 12 ? 1 : m + 1;
-  const firstOfNext = `${ny}-${String(nm).padStart(2, '0')}-01`;
-  const iso = isoFromWallClock(`${firstOfNext}T00:00`, tz);
-  return iso ? Date.parse(iso) : Date.now();
-}
-
-function isoDateOf(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms));
-}
-
-function dowOfDay(dayIso: string, tz: string): number {
-  const d = new Date(`${dayIso}T12:00:00Z`);
-  const name = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(d);
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
-}
-
-function defaultEndForPeriod(
-  period: WindowPeriod,
-  latestMs: number | null,
-  today: string,
-  tz: string,
-): number {
-  const anchorMs = latestMs ?? Date.now();
-  const dayIso = latestMs === null ? today : isoDateOf(anchorMs, tz);
-  switch (period) {
-    case 'D':
-      return endOfDayMs(dayIso, tz);
-    case 'W':
-      return endOfWeekMs(dayIso, tz);
-    case 'M':
-      return endOfMonthMs(dayIso, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(today, tz);
-  }
-}
-
-function backwardBoundForPeriod(
-  period: WindowPeriod,
-  oldestMs: number | null,
-  today: string,
-  tz: string,
-): number {
-  if (oldestMs === null) return endOfDayMs(today, tz);
-  const dayIso = isoDateOf(oldestMs, tz);
-  switch (period) {
-    case 'D':
-      return endOfDayMs(dayIso, tz);
-    case 'W':
-      return endOfWeekMs(dayIso, tz);
-    case 'M':
-      return endOfMonthMs(dayIso, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(dayIso, tz);
-  }
-}
-
-function forwardBoundForPeriod(
-  period: WindowPeriod,
-  today: string,
-  tz: string,
-): number {
-  switch (period) {
-    case 'D':
-      return endOfDayMs(today, tz);
-    case 'W':
-      return endOfWeekMs(today, tz);
-    case 'M':
-      return endOfMonthMs(today, tz);
-    case '6M':
-    case 'Y':
-      return endOfDayMs(today, tz);
-  }
-}
-
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
@@ -211,13 +97,6 @@ export function Spo2TrendView({
 }: Props) {
   const router = useRouter();
 
-  const latestMs = useMemo(
-    () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[allReadings.length - 1].recorded_at)
-        : null,
-    [allReadings],
-  );
   const oldestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -238,14 +117,16 @@ export function Spo2TrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('D', latestMs, today, timezone),
+    defaultEndForPeriod('D', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
-    setEndMs(defaultEndForPeriod(p, latestMs, today, timezone));
+    setEndMs(defaultEndForPeriod(p, today, timezone));
+    setSelectedId(null);
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -260,7 +141,10 @@ export function Spo2TrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  const hero = slice.length > 0 ? slice[slice.length - 1] : null;
+  const selected = selectedId
+    ? slice.find((r) => r.id === selectedId) ?? null
+    : null;
+  const hero = selected ?? (slice.length > 0 ? slice[slice.length - 1] : null);
 
   // Y-axis derived from the whole dataset with floor + ceiling clamps
   // so the 88% line is always on screen and the chart never extends
@@ -279,24 +163,37 @@ export function Spo2TrendView({
     [period, endMs, timezone],
   );
 
-  const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, timezone),
-    [period, startMs, endMs, timezone],
-  );
+  const subhead = useMemo(() => {
+    if (selected) {
+      return dayTimeLabel(
+        Date.parse(selected.recorded_at),
+        timezone,
+        today,
+      );
+    }
+    return subheadFor(period, startMs, endMs, timezone, today);
+  }, [selected, period, startMs, endMs, timezone, today]);
 
   const hasAnyReadings = allReadings.length > 0;
 
-  const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
-    null,
-  );
+  const dragRef = useRef<{
+    startX: number;
+    startEnd: number;
+    w: number;
+    moved: boolean;
+  } | null>(null);
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
 
   const onChartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (period === 'Y') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const w = chartWrapRef.current?.offsetWidth ?? 0;
     if (w <= 0) return;
-    dragRef.current = { startX: e.clientX, startEnd: endMs, w };
+    dragRef.current = {
+      startX: e.clientX,
+      startEnd: endMs,
+      w,
+      moved: false,
+    };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -308,6 +205,10 @@ export function Spo2TrendView({
     if (!dragRef.current) return;
     const { startX, startEnd, w } = dragRef.current;
     const dx = e.clientX - startX;
+    if (Math.abs(dx) > TAP_MOVE_THRESHOLD_PX) {
+      dragRef.current.moved = true;
+    }
+    if (period === 'Y') return;
     const span = windowSpanMs(period);
 
     if (period === 'D') {
@@ -326,8 +227,16 @@ export function Spo2TrendView({
     setEndMs(clamp(nextRaw, backwardBound, forwardBound));
   };
 
-  const onChartPointerEnd = () => {
+  const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (!drag || drag.moved) return;
+    const wrap = chartWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    const tapped = findTappedReading(slice, startMs, endMs, xPx, rect.width);
+    setSelectedId(tapped ? tapped.id : null);
   };
 
   useEffect(() => () => {
@@ -373,25 +282,27 @@ export function Spo2TrendView({
           <span
             className="font-display"
             style={{
-              fontSize: 36,
+              fontSize: 78,
               lineHeight: 0.95,
-              letterSpacing: '-1px',
+              letterSpacing: '-3px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {Math.floor(hero?.value ?? 0)}
-            <span style={{ fontSize: 22, letterSpacing: '-0.5px' }}>
-              .{decimalPart(hero?.value ?? 0)}
-            </span>
+            {hero ? Math.floor(hero.value) : '—'}
+            {hero && (
+              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
+                .{decimalPart(hero.value)}
+              </span>
+            )}
           </span>
           <span
             className="text-muted-foreground"
             style={{
-              fontSize: 12,
+              fontSize: 14,
               fontWeight: 500,
               letterSpacing: '0.3px',
-              paddingBottom: 6,
+              paddingBottom: 12,
             }}
           >
             %
@@ -496,6 +407,7 @@ export function Spo2TrendView({
                 aboveColor: '#5A6B5C',
                 belowColor: 'var(--destructive, #C46A4A)',
               }}
+              selectedId={selectedId}
             />
           </div>
           <div
@@ -526,8 +438,10 @@ export function Spo2TrendView({
         </div>
 
         {/* Stats trio — Latest / Lowest / Highest. Lowest is the
-            clinically directional cell for SpO2. */}
-        {slice.length > 0 && (
+            clinically directional cell for SpO2. Shell stays rendered
+            whenever the dataset has data so the layout doesn't jump
+            during scrub. */}
+        {hasAnyReadings && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -535,7 +449,10 @@ export function Spo2TrendView({
               border: '1px solid var(--border)',
             }}
           >
-            {tripleStatsSpo2(slice, timezone).map((s, i) => (
+            {(slice.length > 0
+              ? tripleStatsSpo2(slice, timezone)
+              : tripleStatsSpo2Empty()
+            ).map((s, i) => (
               <div key={s.label} className="px-3 pt-3 pb-2.5 relative">
                 {i > 0 && (
                   <span
@@ -649,195 +566,6 @@ export function Spo2TrendView({
   );
 }
 
-// ─── X labels (duplicated from WeightTrendView — hoist at HR) ───────────────
-
-function xLabelsFor(
-  period: WindowPeriod,
-  endMs: number,
-  tz: string,
-): { x: number; label: string }[] {
-  const span = windowSpanMs(period);
-  const startMs = endMs - span;
-  if (period === 'D') {
-    return anchorsAtWallClockHours(startMs, endMs, tz, [0, 6, 12, 18], hourLabel);
-  }
-  if (period === 'W') {
-    return anchorsAtMidnights(startMs, endMs, tz, weekdayLabel);
-  }
-  if (period === 'M') {
-    return anchorsOnDayOfWeek(startMs, endMs, tz, 0, shortDateLabel);
-  }
-  return anchorsAtMonthStarts(startMs, endMs, tz, monthLabel);
-}
-
-function anchorsAtWallClockHours(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  hours: number[],
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = -1; dayOffset <= 2; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    for (const h of hours) {
-      const wallClock = `${dayIso}T${String(h).padStart(2, '0')}:00`;
-      const iso = isoFromWallClock(wallClock, tz);
-      if (!iso) continue;
-      const ms = Date.parse(iso);
-      if (ms >= startMs && ms <= endMs) {
-        out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-      }
-    }
-  }
-  return out;
-}
-
-function anchorsAtMidnights(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = 0; dayOffset <= 9; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function anchorsOnDayOfWeek(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  targetDow: number,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const startDayIso = isoDateOf(startMs, tz);
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  for (let dayOffset = 0; dayOffset <= 32; dayOffset++) {
-    const dayIso = isoOffset(startDayIso, dayOffset);
-    const dow = dowOfDay(dayIso, tz);
-    if (dow !== targetDow) continue;
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function anchorsAtMonthStarts(
-  startMs: number,
-  endMs: number,
-  tz: string,
-  fmt: (ms: number, tz: string) => string,
-): { x: number; label: string }[] {
-  const span = endMs - startMs;
-  const out: { x: number; label: string }[] = [];
-  const startDayIso = isoDateOf(startMs, tz);
-  const [y, m] = startDayIso.split('-').map(Number);
-  for (let i = 0; i <= 14; i++) {
-    const targetMonth0 = m - 1 + i;
-    const targetY = y + Math.floor(targetMonth0 / 12);
-    const targetM = (targetMonth0 % 12) + 1;
-    const dayIso = `${targetY}-${String(targetM).padStart(2, '0')}-01`;
-    const iso = isoFromWallClock(`${dayIso}T00:00`, tz);
-    if (!iso) continue;
-    const ms = Date.parse(iso);
-    if (ms >= startMs && ms <= endMs) {
-      out.push({ x: (ms - startMs) / span, label: fmt(ms, tz) });
-    }
-  }
-  return out;
-}
-
-function hourLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    hour12: true,
-  }).format(new Date(ms));
-}
-
-function weekdayLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(new Date(ms));
-}
-
-function shortDateLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date(ms));
-}
-
-function monthLabel(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    month: 'short',
-  }).format(new Date(ms));
-}
-
-// ─── Subhead (duplicated from WeightTrendView — hoist at HR) ────────────────
-
-function subheadFor(
-  period: WindowPeriod,
-  startMs: number,
-  endMs: number,
-  tz: string,
-): string {
-  if (period === 'D') {
-    return `${dayTimeLabel(startMs, tz)} – ${dayTimeLabel(endMs, tz)}`;
-  }
-  return `${shortDateLabel(startMs, tz)} – ${shortDateLabel(endMs, tz)}`;
-}
-
-function dayTimeLabel(ms: number, tz: string): string {
-  const dayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(ms));
-  const todayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-  const yesterdayKey = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(Date.now() - DAY_MS));
-  const time = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric',
-    hour12: true,
-  }).format(new Date(ms));
-  if (dayKey === todayKey) return `Today, ${time}`;
-  if (dayKey === yesterdayKey) return `Yesterday, ${time}`;
-  return `${shortDateLabel(ms, tz)}, ${time}`;
-}
-
 // ─── Stats trio (SpO2-specific) ─────────────────────────────────────────────
 
 function timeLabelFor(r: VitalReading, tz: string): string {
@@ -847,6 +575,19 @@ function timeLabelFor(r: VitalReading, tz: string): string {
     minute: '2-digit',
     hour12: true,
   }).format(new Date(r.recorded_at));
+}
+
+function tripleStatsSpo2Empty(): {
+  label: string;
+  value: string;
+  unit: string;
+  sub: string;
+}[] {
+  return [
+    { label: 'Latest', value: '—', unit: '', sub: '' },
+    { label: 'Lowest', value: '—', unit: '', sub: '' },
+    { label: 'Highest', value: '—', unit: '', sub: '' },
+  ];
 }
 
 function tripleStatsSpo2(

@@ -1,30 +1,33 @@
 'use client';
 
-// Client view for /trends/weight. Window state is a single endMs (ms
-// since epoch) — the right edge of the visible window. Period
-// determines the window's WIDTH; endMs determines its position.
+// Client view for /trends/bp. Mirrors Spo2/Hr structure with BP-
+// specific divergences:
 //
-// Drag on the chart pans the window through time (Apple Health style).
-// Chevrons step by full window-width. Y has no scrub (we only track
-// 12 months). Period change resets endMs to "now" / end-of-today.
+//   1. Data shape: BpPair (sys + dia per reading, joined server-side
+//      by source_log_id). All visualisation, sliding, and stat math
+//      operates on pairs.
+//   2. Chart: DumbbellChart, fixed Y [60, 150] with 90 dashed line.
+//      The Y is fixed (not nice-step) because BP reads better with
+//      clinical-context tick marks.
+//   3. Hero: "128 / 76 mmHg" (smaller serif than spo2).
+//   4. Add sheet: AddBpSheet (paired stepper). Not VitalReadingConfig-
+//      driven.
+//   5. View+delete sheet: ViewBpDataSheet (BP-specific, pair-keyed).
+//   6. Default period: M per mockup.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, Plus } from 'lucide-react';
-import { TraceChart } from '@/components/heartnote/vitals-trend/TraceChart';
 import {
-  AddReadingSheet,
-  type AddReadingInput,
-} from '@/components/heartnote/vitals-trend/AddReadingSheet';
+  DumbbellChart,
+  DUMBBELL_LEGEND,
+} from '@/components/heartnote/vitals-trend/DumbbellChart';
+import { AddBpSheet, type AddBpInput } from '@/components/heartnote/vitals-trend/AddBpSheet';
 import { InfoMenu } from '@/components/heartnote/vitals-trend/InfoMenu';
-import { ViewDataSheet } from '@/components/heartnote/vitals-trend/ViewDataSheet';
-import type { VitalReadingConfig } from '@/components/heartnote/vitals-trend/vital-reading-config';
-import type {
-  VitalReading,
-  WindowPeriod,
-} from '@/lib/trends/vital-reading';
-import { yScaleFor } from '@/lib/trends/y-scale';
+import { ViewBpDataSheet } from './ViewBpDataSheet';
+import type { BpPair } from '@/lib/trends/bp-pair';
+import type { WindowPeriod } from '@/lib/trends/vital-reading';
 import {
   backwardBoundForPeriod,
   dayTimeLabel,
@@ -38,71 +41,49 @@ import {
   findTappedReading,
   TAP_MOVE_THRESHOLD_PX,
 } from '@/lib/trends/tap-hit';
-import { READING_RANGE } from '@/lib/clinical/reading-ranges';
+import { SBP_TIER_2_LOW } from '@/lib/clinical/thresholds';
 import {
-  addWeightReading,
-  deleteWeightReadings,
-  deleteAllWeightReadings,
-} from '@/app/trends/weight/actions';
+  addBpReading,
+  deleteBpReadings,
+  deleteAllBpReadings,
+} from '@/app/trends/bp/actions';
+
+// Fixed Y per mockup. Not in thresholds.ts — these are visual choices
+// (the 90 dashed line is the clinical line; it imports from
+// thresholds.ts as SBP_TIER_2_LOW).
+const BP_Y_MIN = 60;
+const BP_Y_MAX = 150;
+const BP_Y_TICKS = [60, 90, 120, 150];
 
 interface Props {
   patientFirstName: string;
   timezone: string;
   today: string;
-  baselineLb: number | null;
-  allReadings: VitalReading[];
+  allPairs: BpPair[]; // sorted asc by recorded_at
 }
 
 const PERIODS: WindowPeriod[] = ['D', 'W', 'M', '6M', 'Y'];
-
-// Weight-specific config consumed by the shared sheets.
-const WEIGHT_CONFIG: VitalReadingConfig = {
-  field: 'weight_lb',
-  fieldLabel: 'Weight',
-  unit: 'lb',
-  range: READING_RANGE.weight_lb,
-  step: 0.1,
-  integer: false,
-  splitDecimal: true,
-  pressAndHold: true,
-  formatValue: (v) => v.toFixed(1),
-  sheetTitle: 'Add weight',
-  listTitle: 'All weights',
-  eyebrowLine: (baseline, seed) =>
-    baseline !== null
-      ? `vs. baseline ${baseline.toFixed(1)} lb`
-      : seed !== null
-        ? `last ${seed.toFixed(1)} lb`
-        : null,
-  deleteNoun: { singular: 'weight reading', plural: 'weight readings' },
-};
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-export function WeightTrendView({
+export function BpTrendView({
   patientFirstName,
   timezone,
   today,
-  baselineLb,
-  allReadings,
+  allPairs,
 }: Props) {
   const router = useRouter();
 
-  // Anchor + bounds derived from the data, not from "today".
   const oldestMs = useMemo(
     () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[0].recorded_at)
-        : null,
-    [allReadings],
+      allPairs.length > 0 ? Date.parse(allPairs[0].recorded_at) : null,
+    [allPairs],
   );
 
-  const [period, setPeriodRaw] = useState<WindowPeriod>('D');
+  const [period, setPeriodRaw] = useState<WindowPeriod>('M');
 
-  // Period-aware bounds. D snaps to day boundaries; W to weeks
-  // (Sun-Sat); M to calendar months. 6M/Y are rolling.
   const forwardBound = useMemo(
     () => forwardBoundForPeriod(period, today, timezone),
     [period, today, timezone],
@@ -113,13 +94,11 @@ export function WeightTrendView({
   );
 
   const [endMs, setEndMs] = useState(() =>
-    defaultEndForPeriod('D', today, timezone),
+    defaultEndForPeriod('M', today, timezone),
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
-  // Tap-to-select state: the reading whose data is currently shown in
-  // the hero. When null, hero defaults to the latest reading in the
-  // visible window (Apple Health style).
+  // selectedId is a BpPair's sourceLogId — the canonical pair key.
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
@@ -131,28 +110,20 @@ export function WeightTrendView({
   const startMs = endMs - windowSpanMs(period);
 
   const slice = useMemo(() => {
-    return allReadings.filter((r) => {
-      const t = Date.parse(r.recorded_at);
+    return allPairs.filter((p) => {
+      const t = Date.parse(p.recorded_at);
       return t >= startMs && t <= endMs;
     });
-  }, [allReadings, startMs, endMs]);
+  }, [allPairs, startMs, endMs]);
 
   const latestEver =
-    allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
+    allPairs.length > 0 ? allPairs[allPairs.length - 1] : null;
 
-  // Display reading: selected tap target if any AND still in the
-  // visible slice, else the latest reading in the visible window.
-  // Selection that scrubs out of view auto-deselects visually.
   const selected = selectedId
-    ? slice.find((r) => r.id === selectedId) ?? null
+    ? slice.find((p) => p.sourceLogId === selectedId) ?? null
     : null;
   const hero = selected ?? (slice.length > 0 ? slice[slice.length - 1] : null);
 
-  // Y-axis is derived from the WHOLE dataset, not the visible window.
-  // That keeps the axis stable as the user drags D-day-to-D-day instead
-  // of zooming in on each day's tiny intra-day range. The 3-label
-  // exception only fires when the entire table has a single reading.
-  const yScale = useMemo(() => yScaleFor(allReadings), [allReadings]);
   const xLabels = useMemo(
     () => xLabelsFor(period, endMs, timezone),
     [period, endMs, timezone],
@@ -160,8 +131,6 @@ export function WeightTrendView({
 
   const subhead = useMemo(() => {
     if (selected) {
-      // When a specific reading is selected, the subhead describes
-      // that reading instead of the window range.
       return dayTimeLabel(
         Date.parse(selected.recorded_at),
         timezone,
@@ -171,13 +140,8 @@ export function WeightTrendView({
     return subheadFor(period, startMs, endMs, timezone, today);
   }, [selected, period, startMs, endMs, timezone, today]);
 
-  const hasAnyReadings = allReadings.length > 0;
+  const hasAnyPairs = allPairs.length > 0;
 
-  // Drag-to-scrub (Apple Health style) PLUS tap-to-select: pointerdown
-  // records startX. pointermove flips `moved` once cumulative dx
-  // exceeds TAP_MOVE_THRESHOLD_PX. pointerup with `moved=false` is a
-  // tap — we hit-test for the nearest reading and select it (or
-  // deselect if the tap is between dots).
   const dragRef = useRef<{
     startX: number;
     startEnd: number;
@@ -199,7 +163,7 @@ export function WeightTrendView({
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
-      // ignore — Safari can throw on pointer capture in rare cases
+      // ignore
     }
   };
 
@@ -214,14 +178,11 @@ export function WeightTrendView({
     const span = windowSpanMs(period);
 
     if (period === 'D') {
-      // Continuous drag in hour-units. Clamp to [backwardBound, forwardBound].
       const dt = -(dx / w) * span;
       setEndMs(clamp(startEnd + dt, backwardBound, forwardBound));
       return;
     }
 
-    // W / M / 6M: swipe-paging. Each chart-width drag past a 25% threshold
-    // = one full window-step.
     const threshold = w * 0.25;
     if (Math.abs(dx) < threshold) {
       setEndMs(clamp(startEnd, backwardBound, forwardBound));
@@ -236,21 +197,20 @@ export function WeightTrendView({
     const drag = dragRef.current;
     dragRef.current = null;
     if (!drag || drag.moved) return;
-    // Tap: convert to chart coordinates and hit-test.
     const wrap = chartWrapRef.current;
     if (!wrap) return;
     const rect = wrap.getBoundingClientRect();
     const xPx = e.clientX - rect.left;
     const tapped = findTappedReading(slice, startMs, endMs, xPx, rect.width);
-    setSelectedId(tapped ? tapped.id : null);
+    setSelectedId(tapped ? tapped.sourceLogId : null);
   };
 
   useEffect(() => () => {
     dragRef.current = null;
   }, []);
 
-  const onSave = async (input: AddReadingInput) => {
-    const result = await addWeightReading(input);
+  const onSave = async (input: AddBpInput) => {
+    const result = await addBpReading(input);
     if (result.ok) router.refresh();
     return result;
   };
@@ -276,31 +236,34 @@ export function WeightTrendView({
           className="font-display text-[16px]"
           style={{ letterSpacing: '-0.2px', fontWeight: 500 }}
         >
-          Weight
+          Blood pressure
         </h1>
       </header>
 
       <div className="px-5 pb-32">
-        {/* Hero. Same size whether data is present or muted-empty —
-            keeps the layout still and stops the page from re-flowing
-            as you scrub between empty and populated windows. */}
+        {/* Hero — "128 / 76" with sage-mist slash, smaller font per
+            mockup .hero-value.bp. */}
         <div className="mt-3 flex items-end gap-2">
           <span
-            className="font-display"
+            className="font-display tabular-nums"
             style={{
-              fontSize: 78,
+              fontSize: 58,
               lineHeight: 0.95,
-              letterSpacing: '-3px',
+              letterSpacing: '-2px',
               fontWeight: 300,
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {hero ? Math.floor(hero.value) : '—'}
-            {hero && (
-              <span style={{ fontSize: 48, letterSpacing: '-2px' }}>
-                .{decimalPart(hero.value)}
-              </span>
-            )}
+            {hero ? Math.round(hero.sys) : '—'}
+            <span
+              style={{
+                color: 'var(--muted-foreground)',
+                fontWeight: 300,
+              }}
+            >
+              /
+            </span>
+            {hero ? Math.round(hero.dia) : '—'}
           </span>
           <span
             className="text-muted-foreground"
@@ -311,10 +274,9 @@ export function WeightTrendView({
               paddingBottom: 12,
             }}
           >
-            lb
+            mmHg
           </span>
         </div>
-        {/* Subhead reflects the visible window's exact time range. */}
         <p
           className="text-[12px] text-muted-foreground mt-1"
           style={{ letterSpacing: '0.3px' }}
@@ -322,20 +284,48 @@ export function WeightTrendView({
           {subhead}
         </p>
 
-        {/* Chart section */}
         <div className="mt-5">
           <div className="flex items-baseline justify-between px-0.5">
             <span
               className="font-display text-foreground"
               style={{ fontSize: 14, fontWeight: 500, letterSpacing: '-0.2px' }}
             >
-              Weight
+              Systolic / Diastolic
             </span>
             <span
               className="text-[10px] text-muted-foreground uppercase"
               style={{ letterSpacing: '0.5px', fontWeight: 500 }}
             >
-              lb
+              mmHg
+            </span>
+          </div>
+          {/* sys/dia legend lives here in its own HTML row so it never
+              overlaps the chart data (the in-SVG legend in the mockup
+              clipped readings near the top edge). */}
+          <div className="flex items-center gap-4 mt-2 px-0.5">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold">
+              <span
+                aria-hidden
+                className="inline-block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: DUMBBELL_LEGEND.sysColor,
+                }}
+              />
+              <span style={{ color: DUMBBELL_LEGEND.sysColor }}>sys</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold">
+              <span
+                aria-hidden
+                className="inline-block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: DUMBBELL_LEGEND.diaColor,
+                }}
+              />
+              <span style={{ color: DUMBBELL_LEGEND.diaColor }}>dia</span>
             </span>
           </div>
           <div
@@ -371,9 +361,6 @@ export function WeightTrendView({
             ))}
           </div>
 
-          {/* Chart container — the drag handler lives here. The SVG inside
-              uses an aspect-ratio box so it scales uniformly and never
-              stretches on wide viewports. */}
           <div
             ref={chartWrapRef}
             onPointerDown={onChartPointerDown}
@@ -389,35 +376,27 @@ export function WeightTrendView({
               WebkitUserSelect: 'none',
             }}
           >
-            <TraceChart
-              data={allReadings}
+            <DumbbellChart
+              pairs={allPairs}
               startMs={startMs}
               endMs={endMs}
               xAxisLabels={xLabels}
-              yMin={yScale.min}
-              yMax={yScale.max}
-              yTicks={yScale.ticks}
-              ariaLabel="Weight trend chart"
-              // W shows dots only — readings within a single week are
-              // independent weigh-ins, not a continuous trend. D / M /
-              // 6M / Y connect the dots.
-              showLine={period !== 'W'}
+              yMin={BP_Y_MIN}
+              yMax={BP_Y_MAX}
+              yTicks={BP_Y_TICKS}
+              alertFloor={{
+                y: SBP_TIER_2_LOW,
+                color: 'var(--destructive, #C46A4A)',
+              }}
               selectedId={selectedId}
+              ariaLabel="Blood pressure trend chart"
             />
           </div>
-          {/* X axis labels are absolutely positioned at the same x-coordinate
-              as their vertical gridline in the SVG. As the user drags, both
-              gridlines and labels slide together — the dots stay anchored to
-              their real timestamps in the visible window. */}
           <div
             className="relative"
             style={{ width: '100%', height: 14, marginTop: -2 }}
           >
             {xLabels.map((l, i) => {
-              // Map fractional x in inner data area to a percentage of the
-              // SVG container's full width. SVG = 280-wide, PAD_L = 6,
-              // PAD_R = 32, innerW = 242 → label sits at PAD_L + l.x*innerW
-              // in viewBox units, normalized to %.
               const positionPct = ((6 + l.x * 242) / 280) * 100;
               return (
                 <span
@@ -440,11 +419,7 @@ export function WeightTrendView({
           </div>
         </div>
 
-        {/* Stats trio. Render the shell whenever the dataset has data,
-            even if the visible window is currently empty — keeps the
-            page from reflowing as the caregiver scrubs between data
-            days and empty days. */}
-        {hasAnyReadings && (
+        {hasAnyPairs && (
           <div
             className="mt-4 grid grid-cols-3 rounded-2xl"
             style={{
@@ -452,7 +427,7 @@ export function WeightTrendView({
               border: '1px solid var(--border)',
             }}
           >
-            {tripleStats(slice, timezone).map((s, i) => (
+            {tripleStatsBp(slice, today, timezone).map((s, i) => (
               <div key={s.label} className="px-3 pt-3 pb-2.5 relative">
                 {i > 0 && (
                   <span
@@ -492,7 +467,7 @@ export function WeightTrendView({
           </div>
         )}
 
-        {hasAnyReadings && slice.length > 0 && (
+        {hasAnyPairs && slice.length > 0 && (
           <p
             className="mt-3 text-[11px] italic text-muted-foreground"
             style={{ lineHeight: 1.5 }}
@@ -501,12 +476,11 @@ export function WeightTrendView({
               {slice.length} reading{slice.length === 1 ? '' : 's'} in this
               window
             </b>{' '}
-            · {allReadings.length} total in the last year
+            · {allPairs.length} total in the last year
           </p>
         )}
       </div>
 
-      {/* Bottom-bar floating utility row. */}
       <div
         className="fixed left-0 right-0 flex justify-between items-end pointer-events-none"
         style={{
@@ -523,7 +497,7 @@ export function WeightTrendView({
         />
         <button
           type="button"
-          aria-label="Add weight"
+          aria-label="Add blood pressure"
           onClick={() => setSheetOpen(true)}
           className="inline-flex items-center justify-center rounded-full pointer-events-auto active:scale-95 transition"
           style={{
@@ -541,88 +515,93 @@ export function WeightTrendView({
       </div>
 
       {sheetOpen && (
-        <AddReadingSheet
-          config={WEIGHT_CONFIG}
+        <AddBpSheet
           onClose={() => setSheetOpen(false)}
-          seedValue={latestEver?.value ?? null}
-          baselineValue={baselineLb}
+          seedSys={latestEver?.sys ?? null}
+          seedDia={latestEver?.dia ?? null}
           timezone={timezone}
           onSave={onSave}
         />
       )}
 
       {viewDataOpen && (
-        <ViewDataSheet
-          config={WEIGHT_CONFIG}
-          readings={allReadings}
+        <ViewBpDataSheet
+          pairs={allPairs}
           patientFirstName={patientFirstName}
           timezone={timezone}
           today={today}
           onClose={() => setViewDataOpen(false)}
-          deleteByIds={deleteWeightReadings}
-          deleteAll={deleteAllWeightReadings}
+          deleteByPairs={deleteBpReadings}
+          deleteAll={deleteAllBpReadings}
         />
       )}
     </>
   );
 }
 
-function decimalPart(v: number): string {
-  return Math.abs(v - Math.floor(v)).toFixed(1).slice(2);
-}
-
 // ─── Stats trio ──────────────────────────────────────────────────────────────
 
-function timeLabelFor(r: VitalReading, tz: string): string {
+function timeLabelFor(p: BpPair, tz: string): string {
   return new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  }).format(new Date(r.recorded_at));
+  }).format(new Date(p.recorded_at));
 }
 
-function tripleStats(
-  slice: VitalReading[],
+function shortDateLabelLocal(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(ms));
+}
+
+function tripleStatsBp(
+  slice: BpPair[],
+  today: string,
   tz: string,
 ): { label: string; value: string; unit: string; sub: string }[] {
   if (slice.length === 0) {
-    // Empty visible window — preserve the trio shell so the layout
-    // doesn't jump as the caregiver scrubs.
     return [
-      { label: 'Latest', value: '—', unit: '', sub: '' },
-      { label: 'Highest', value: '—', unit: '', sub: '' },
-      { label: 'Range', value: '—', unit: '', sub: '' },
+      { label: 'Highest sys', value: '—', unit: '', sub: '' },
+      { label: 'Lowest sys', value: '—', unit: '', sub: '' },
+      { label: 'Readings', value: '—', unit: '', sub: '' },
     ];
   }
-  const latest = slice[slice.length - 1];
-  const sortedDesc = [...slice].sort((a, b) => b.value - a.value);
-  const highest = sortedDesc[0];
-  const lowest = sortedDesc[sortedDesc.length - 1];
-  const range = slice.length === 1 ? 0 : highest.value - lowest.value;
+  const sortedAsc = [...slice].sort((a, b) => a.sys - b.sys);
+  const lowest = sortedAsc[0];
+  const highest = sortedAsc[sortedAsc.length - 1];
+  // BP is integer-only at the action level, but voice-log inserts via
+  // the apply_voice_log_extraction RPC carry decimals from the
+  // structured-extraction pass. Round at render so the trio cells
+  // never show "107.7 / 92.9".
   return [
     {
-      label: 'Latest',
-      value: latest.value.toFixed(1),
-      unit: 'lb',
-      sub: timeLabelFor(latest, tz),
+      label: 'Highest sys',
+      value: String(Math.round(highest.sys)),
+      unit: ` / ${Math.round(highest.dia)}`,
+      sub: subLabel(highest, today, tz),
     },
     {
-      label: 'Highest',
-      value: highest.value.toFixed(1),
-      unit: 'lb',
-      sub: timeLabelFor(highest, tz),
+      label: 'Lowest sys',
+      value: String(Math.round(lowest.sys)),
+      unit: ` / ${Math.round(lowest.dia)}`,
+      sub: subLabel(lowest, today, tz),
     },
     {
-      label: 'Range',
-      value: range.toFixed(1),
-      unit: 'lb',
-      sub:
-        slice.length === 1
-          ? 'one reading'
-          : range === 0
-            ? 'no change'
-            : 'across this window',
+      label: 'Readings',
+      value: String(slice.length),
+      unit: '',
+      // Provenance varies (voice-log + manual entry); drop the "cuff,
+      // all manual" copy from the mockup since it isn't always true.
+      sub: 'in this window',
     },
   ];
+}
+
+function subLabel(p: BpPair, today: string, tz: string): string {
+  if (p.log_date === today) return timeLabelFor(p, tz);
+  return shortDateLabelLocal(Date.parse(p.recorded_at), tz);
 }

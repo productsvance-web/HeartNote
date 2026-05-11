@@ -24,9 +24,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { isoOffset } from '@/lib/dates/iso-offset';
 import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import type { VitalReadingConfig } from './vital-reading-config';
+import { WhenCard } from './WhenCard';
 
 export type AddReadingInput = {
   value: number;
@@ -78,8 +78,6 @@ export function AddReadingSheet({
     valueRef.current = value;
   }, [value]);
 
-  const today = todayInTz(timezone);
-  const minDate = isoOffset(today, -MAX_BACKDATE_DAYS);
   const canSave = value !== null && !pending;
 
   const commit = (next: number) => {
@@ -160,10 +158,14 @@ export function AddReadingSheet({
     submittingRef.current = true;
     setPending(true);
     setError(null);
+    // Date-only configs (pillows) stamp noon at save time — caregivers
+    // log "pillows tonight" as a per-night summary, not a per-moment
+    // reading.
+    const effectiveTime = config.dateOnly ? '12:00' : time;
     try {
       const result = await onSave({
         value: clamp(value, MIN, MAX),
-        recordedAtIsoLocal: `${date}T${time}`,
+        recordedAtIsoLocal: `${date}T${effectiveTime}`,
       });
       if (result.ok) {
         onClose();
@@ -326,65 +328,15 @@ export function AddReadingSheet({
           </div>
         </section>
 
-        {/* When card */}
-        <section
-          className="mt-3 rounded-3xl px-5 pt-4 pb-5"
-          style={{
-            background: 'var(--card)',
-            border: '0.5px solid var(--border)',
-            boxShadow:
-              '0 1px 8px color-mix(in oklab, var(--sage) 6%, transparent)',
-          }}
-        >
-          <div className="flex items-center gap-2 mb-3">
-            <span
-              aria-hidden
-              style={{
-                display: 'inline-block',
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: 'var(--sage-deep)',
-              }}
-            />
-            <span
-              className="text-[15px] font-semibold text-foreground"
-              style={{ letterSpacing: '-0.1px' }}
-            >
-              When
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={date}
-              min={minDate}
-              max={today}
-              onChange={(e) => setDate(e.target.value)}
-              aria-label="Date"
-              className="flex-1 rounded-2xl px-3 py-2 text-base tabular-nums"
-              style={{
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-                color: 'var(--foreground)',
-                height: 40,
-              }}
-            />
-            <input
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              aria-label="Time"
-              className="flex-1 rounded-2xl px-3 py-2 text-base tabular-nums"
-              style={{
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-                color: 'var(--foreground)',
-                height: 40,
-              }}
-            />
-          </div>
-        </section>
+        <WhenCard
+          date={date}
+          time={time}
+          onDateChange={setDate}
+          onTimeChange={setTime}
+          timezone={timezone}
+          minBackdateDays={MAX_BACKDATE_DAYS}
+          dateOnly={config.dateOnly}
+        />
 
         {error && (
           <p
