@@ -18,7 +18,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
-import type { LogPageContext, SymptomState } from '@/lib/log/page-context';
+import type {
+  LogPageContext,
+  SymptomState,
+  SymptomSourcesState,
+} from '@/lib/log/page-context';
 import {
   upsertTodayTapSession,
   flushAndStartVoice,
@@ -134,67 +138,9 @@ export function LogPageClient({ context }: Props) {
   }));
 
   const [symptoms, setSymptoms] = useState<SymptomState>(context.symptoms);
-  const [symptomsTouch, setSymptomsTouch] = useState<SymptomTouchState>(() => {
-    // Per-field touch state on hydrate. A symptom is 'heard' only if its
-    // most-recent event today came from a voice row (source_log_id matches
-    // a daily_logs row with tap_session_id IS NULL). Tap-only events are
-    // 'tapped' even after reload — H3 fix to avoid lighting the ear glow
-    // on tap-only sessions.
-    const out: SymptomTouchState = {};
-    const s = context.symptoms;
-    const src = context.symptomSources;
-    const stateFor = (
-      hasValue: boolean,
-      source: 'voice' | 'tap' | null,
-    ): VitalCardState | undefined => {
-      if (!hasValue) return undefined;
-      if (source === 'voice') return 'heard';
-      return 'tapped';
-    };
-    out.dyspneaSeverity = stateFor(s.dyspneaSeverity !== null, src.dyspneaSeverity);
-    out.cough = stateFor(s.cough !== null, src.cough);
-    out.sputumColor = stateFor(s.sputumColor !== null, src.sputumColor);
-    out.swellingSeverity = stateFor(
-      s.swellingSeverity !== null,
-      src.swellingSeverity,
-    );
-    out.swellingRegion = stateFor(s.swellingRegion !== null, src.swellingRegion);
-    out.swellingResolvesOvernight = stateFor(
-      s.swellingResolvesOvernight !== null,
-      src.swellingResolvesOvernight,
-    );
-    out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
-    // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
-    // even though the modal renders the SegmentedControl with value=null
-    // for severe (modal omits the severity-4 button by design). Hydrate the
-    // card to state='alert' so the corner pip + outline match the banner
-    // the engine fires above the page.
-    // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
-    out.cognitionChange =
-      s.cognitionChange === 'severe'
-        ? 'alert'
-        : stateFor(s.cognitionChange !== null, src.cognitionChange);
-    // appetite/urineOutput are day-level fields; treat as tapped when set.
-    if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
-    if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
-    out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
-    out.chestPainCharacter = stateFor(
-      s.chestPainCharacter !== null,
-      src.chestPainCharacter,
-    );
-    out.syncope = stateFor(s.syncope !== null, src.syncope);
-    out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
-    out.pnd = stateFor(s.pnd !== null, src.pnd);
-    out.earlySatiety = stateFor(s.earlySatiety !== null, src.earlySatiety);
-    out.extremitiesColdClammy = stateFor(
-      s.extremitiesColdClammy !== null,
-      src.extremitiesColdClammy,
-    );
-    out.pulseIrregular = stateFor(s.pulseIrregular !== null, src.pulseIrregular);
-    out.dizziness = stateFor(s.dizziness !== null, src.dizziness);
-    out.nausea = stateFor(s.nausea !== null, src.nausea);
-    return out;
-  });
+  const [symptomsTouch, setSymptomsTouch] = useState<SymptomTouchState>(() =>
+    deriveSymptomsTouchFromContext(context.symptoms, context.symptomSources),
+  );
 
   // ─── Modal state ─────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen] = useState(false);
@@ -738,6 +684,119 @@ export function LogPageClient({ context }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordingStatus]);
 
+  // ─── Re-hydrate from server after voice processing completes ─────────────
+  // useState initializers only run on first mount, so AI-extracted symptoms
+  // (and any vitals Claude refined past what the live regex caught during
+  // recording) wouldn't make it into the modal/cards on their own — the
+  // page would render the freshly-extracted server values but the modal
+  // would still show the stale empty state from page-load time.
+  //
+  // This effect bridges that gap: when context shows a newly-completed
+  // voice row (different id than the last one we hydrated from), pull
+  // the new server values into state. Tap-during-record stays sticky
+  // per R1 — any field the user has manually tapped keeps its value
+  // and 'tapped' touch state.
+  const lastHydratedVoiceLogIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!context.todayLogId) return;
+    if (context.todayLogStatus !== 'complete') return;
+    if (!context.todayLogIsVoice) return;
+    if (lastHydratedVoiceLogIdRef.current === context.todayLogId) return;
+    lastHydratedVoiceLogIdRef.current = context.todayLogId;
+
+    // Symptoms — overwrite each field unless the user tapped it.
+    setSymptoms((current) => {
+      const next: SymptomState = { ...current };
+      for (const key of Object.keys(context.symptoms) as Array<keyof SymptomState>) {
+        if (symptomsTouch[key] !== 'tapped') {
+          // Field-by-field assignment with structural-union narrowing is
+          // noisy in TS; the cast keeps the loop legible. Each symptom
+          // pair (state ↔ context) shares the same SymptomState typing.
+          (next[key] as SymptomState[typeof key]) = context.symptoms[key];
+        }
+      }
+      return next;
+    });
+    setSymptomsTouch((current) => {
+      const fresh = deriveSymptomsTouchFromContext(
+        context.symptoms,
+        context.symptomSources,
+      );
+      const next: SymptomTouchState = { ...fresh };
+      for (const key of Object.keys(current) as Array<keyof SymptomTouchState>) {
+        if (current[key] === 'tapped') next[key] = 'tapped';
+      }
+      return next;
+    });
+
+    // Vitals — same pattern. Live regex extraction handles the common
+    // numbers during recording, but Claude can refine values post-stop
+    // or surface ones the regex missed; sync them in.
+    setVitals((current) => ({
+      weightLb:
+        vitalsTouch.weight === 'tapped'
+          ? current.weightLb
+          : context.vitals.weight.todayLb,
+      pillowCount:
+        vitalsTouch.pillows === 'tapped'
+          ? current.pillowCount
+          : context.vitals.pillows.todayCount,
+      bp:
+        vitalsTouch.bp === 'tapped'
+          ? current.bp
+          : context.vitals.bp.today
+            ? {
+                sys: context.vitals.bp.today.sys,
+                dia: context.vitals.bp.today.dia,
+              }
+            : null,
+      hrBpm:
+        vitalsTouch.hr === 'tapped'
+          ? current.hrBpm
+          : context.vitals.hr.todayBpm,
+      spo2Pct:
+        vitalsTouch.spo2 === 'tapped'
+          ? current.spo2Pct
+          : context.vitals.spo2.todayPct,
+    }));
+    setVitalsTouch((current) => ({
+      weight:
+        current.weight === 'tapped'
+          ? 'tapped'
+          : context.vitals.weight.todayLb !== null
+            ? 'heard'
+            : 'muted',
+      pillows:
+        current.pillows === 'tapped'
+          ? 'tapped'
+          : context.vitals.pillows.todayCount !== null
+            ? 'heard'
+            : 'muted',
+      bp:
+        current.bp === 'tapped'
+          ? 'tapped'
+          : context.vitals.bp.today !== null
+            ? 'heard'
+            : 'muted',
+      hr:
+        current.hr === 'tapped'
+          ? 'tapped'
+          : context.vitals.hr.todayBpm !== null
+            ? 'heard'
+            : 'muted',
+      spo2:
+        current.spo2 === 'tapped'
+          ? 'tapped'
+          : context.vitals.spo2.todayPct !== null
+            ? 'heard'
+            : 'muted',
+    }));
+    // symptomsTouch + vitalsTouch are read from the closure of the render
+    // that schedules this effect — that's the latest value at effect-run
+    // time, since the effect only re-runs when context.todayLogId changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context.todayLogId, context.todayLogStatus, context.todayLogIsVoice]);
+
   // ─── "Symptom heard" detection (drives ear button glow) ──────────────────
   const symptomHeard = useMemo(() => {
     return Object.values(symptomsTouch).some((s) => s === 'heard');
@@ -1098,6 +1157,70 @@ export function LogPageClient({ context }: Props) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Per-field touch state derived from the most-recent symptom event today.
+// A symptom is 'heard' only if its source row is voice (tap_session_id IS
+// NULL); tap-only events are 'tapped' even after reload — H3 fix to keep
+// the ear glow off on tap-only sessions. Used by the useState initializer
+// AND the post-voice re-hydrate effect, so both paths derive identical
+// touch state from the same context shape.
+function deriveSymptomsTouchFromContext(
+  s: SymptomState,
+  src: SymptomSourcesState,
+): SymptomTouchState {
+  const out: SymptomTouchState = {};
+  const stateFor = (
+    hasValue: boolean,
+    source: 'voice' | 'tap' | null,
+  ): VitalCardState | undefined => {
+    if (!hasValue) return undefined;
+    if (source === 'voice') return 'heard';
+    return 'tapped';
+  };
+  out.dyspneaSeverity = stateFor(s.dyspneaSeverity !== null, src.dyspneaSeverity);
+  out.cough = stateFor(s.cough !== null, src.cough);
+  out.sputumColor = stateFor(s.sputumColor !== null, src.sputumColor);
+  out.swellingSeverity = stateFor(
+    s.swellingSeverity !== null,
+    src.swellingSeverity,
+  );
+  out.swellingRegion = stateFor(s.swellingRegion !== null, src.swellingRegion);
+  out.swellingResolvesOvernight = stateFor(
+    s.swellingResolvesOvernight !== null,
+    src.swellingResolvesOvernight,
+  );
+  out.fatigueSeverity = stateFor(s.fatigueSeverity !== null, src.fatigueSeverity);
+  // Cognition severity 4 ('severe') is the tier-1 banner trigger (T1.4)
+  // even though the modal renders the SegmentedControl with value=null
+  // for severe (modal omits the severity-4 button by design). Hydrate the
+  // card to state='alert' so the corner pip + outline match the banner
+  // the engine fires above the page.
+  // cited: research/chf-source-of-truth.md §2 Tier 1 — severe confusion.
+  out.cognitionChange =
+    s.cognitionChange === 'severe'
+      ? 'alert'
+      : stateFor(s.cognitionChange !== null, src.cognitionChange);
+  // appetite/urineOutput are day-level fields; treat as tapped when set.
+  if (s.appetiteChange !== null) out.appetiteChange = 'tapped';
+  if (s.urineOutputChange !== null) out.urineOutputChange = 'tapped';
+  out.chestPain = stateFor(s.chestPain !== null, src.chestPain);
+  out.chestPainCharacter = stateFor(
+    s.chestPainCharacter !== null,
+    src.chestPainCharacter,
+  );
+  out.syncope = stateFor(s.syncope !== null, src.syncope);
+  out.cyanosis = stateFor(s.cyanosis !== null, src.cyanosis);
+  out.pnd = stateFor(s.pnd !== null, src.pnd);
+  out.earlySatiety = stateFor(s.earlySatiety !== null, src.earlySatiety);
+  out.extremitiesColdClammy = stateFor(
+    s.extremitiesColdClammy !== null,
+    src.extremitiesColdClammy,
+  );
+  out.pulseIrregular = stateFor(s.pulseIrregular !== null, src.pulseIrregular);
+  out.dizziness = stateFor(s.dizziness !== null, src.dizziness);
+  out.nausea = stateFor(s.nausea !== null, src.nausea);
+  return out;
+}
 
 // Mirrors the standalone tier-1 conditions in src/lib/alerts/evaluate.ts
 // (T1.1, T1.2, T1.3, T1.4, T1.5, T1.6). Compound tier-1 rules (T1.7 SpO2,
