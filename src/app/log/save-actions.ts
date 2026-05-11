@@ -23,6 +23,8 @@ import { evaluateAlertTier } from '@/lib/alerts/evaluate';
 import { generateAlertReasoning } from '@/lib/alerts/reason';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { getTodayInTimezone } from '@/lib/dates/today';
+import { isoOffset } from '@/lib/dates/iso-offset';
+import { MAX_BACKDATE_DAYS } from '@/lib/dates/backdate-window';
 import {
   isVoiceLogInflight,
   sweepAbandonedVoiceLogs,
@@ -352,16 +354,26 @@ export async function upsertTodayTapSession(
   return { ok: true, logId };
 }
 
-const StartVoiceSchema = z.object({ patientId: z.string().uuid() });
+const StartVoiceSchema = z.object({
+  patientId: z.string().uuid(),
+  // Optional. YYYY-MM-DD in the patient's local timezone. When omitted
+  // the server defaults to today. Validated below: must not be in the
+  // future and not older than VOICE_LOG_MAX_BACKDATE_DAYS.
+  logDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Bad date')
+    .optional(),
+});
 
 export async function flushAndStartVoice(input: {
   patientId: string;
+  logDate?: string;
 }): Promise<{ ok: true; logId: string } | { ok: false; error: string }> {
   // The flush itself is client-side: the caller awaits any pending
   // upsertTodayTapSession before calling this. Server just creates the
-  // pending voice row.
+  // pending voice row, applying the user-chosen log_date if provided.
   const parsed = StartVoiceSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: 'Invalid patient.' };
+  if (!parsed.success) return { ok: false, error: 'Invalid input.' };
 
   const supabase = await createClient();
   const {
@@ -390,11 +402,24 @@ export async function flushAndStartVoice(input: {
   await sweepAbandonedVoiceLogs(supabase, parsed.data.patientId);
 
   const today = getTodayInTimezone(profile.timezone);
+  const logDate = parsed.data.logDate ?? today;
+
+  // Validate the chosen date. Future is rejected (you can't have a
+  // check-in for tomorrow). The 400-day floor matches the trends-add
+  // backdate window so caregivers have one consistent horizon.
+  if (logDate > today) {
+    return { ok: false, error: 'Date is in the future.' };
+  }
+  const earliest = isoOffset(today, -MAX_BACKDATE_DAYS);
+  if (logDate < earliest) {
+    return { ok: false, error: 'Date is too far in the past.' };
+  }
+
   const { data: log, error } = await supabase
     .from('daily_logs')
     .insert({
       patient_id: parsed.data.patientId,
-      log_date: today,
+      log_date: logDate,
       processing_status: 'pending',
       processing_error: null,
       transcribed_text: null,

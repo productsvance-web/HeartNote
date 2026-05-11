@@ -61,6 +61,10 @@ export type LogPageContext = {
     baselineDbpBand: [number, number] | null;
     baselineHrBand: [number, number] | null;
   };
+  // Caregiver's IANA timezone (from profiles.timezone). Forwarded so the
+  // client can compute "today in patient timezone" without a second round-
+  // trip — used by VoiceLogDateSheet to seed the date picker.
+  timezone: string;
   vitals: {
     weight: { yesterdayLb: number | null; baseline14dLb: number | null; todayLb: number | null };
     pillows: { yesterdayCount: number | null; baseline7dCount: number | null; todayCount: number | null };
@@ -87,6 +91,7 @@ export async function loadLogPageContext(
   supabase: SupabaseClient<Database>,
   userId: string,
   today: string,
+  timezone: string,
 ): Promise<LogPageContext | null> {
   const { data: patient } = await supabase
     .from('patients')
@@ -294,6 +299,7 @@ export async function loadLogPageContext(
         patient.baseline_resting_hr_high,
       ),
     },
+    timezone,
     vitals: {
       weight: {
         yesterdayLb: mostRecentReading(yesterdayReadings, 'weight_lb'),
