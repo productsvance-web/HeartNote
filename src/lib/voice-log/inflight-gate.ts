@@ -24,8 +24,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
-
-const VOICE_LOG_LEASE_MS = 2 * 60 * 1000;
+import { VOICE_LOG_LEASE_MS } from '@/lib/voice-log/limits';
 
 // Sweeps the patient's empty-pending rows older than the lease, then
 // reports whether any genuinely-in-flight row remains for today. Callers
@@ -51,12 +50,18 @@ export async function isVoiceLogInflight(
 // Standalone sweep without the gate check. Used by flushAndStartVoice so
 // starting a new recording doesn't have to be blocked by an old abandoned
 // placeholder, but also doesn't accumulate cruft over time.
+//
+// Scope: cross-day on purpose. An abandoned row from yesterday's evening
+// session shouldn't survive into today; the lease + content-NULL filter
+// ensure no row holding user content can be touched. Logs sweep failures
+// to console so a silent RLS regression would be visible in server logs
+// rather than re-blocking writes invisibly.
 export async function sweepAbandonedVoiceLogs(
   supabase: SupabaseClient<Database>,
   patientId: string,
 ): Promise<void> {
   const cutoffIso = new Date(Date.now() - VOICE_LOG_LEASE_MS).toISOString();
-  await supabase
+  const { error } = await supabase
     .from('daily_logs')
     .delete()
     .eq('patient_id', patientId)
@@ -64,4 +69,7 @@ export async function sweepAbandonedVoiceLogs(
     .is('transcribed_text', null)
     .is('structured_observations', null)
     .lt('created_at', cutoffIso);
+  if (error) {
+    console.warn('voice-log sweep failed', { patientId, error: error.message });
+  }
 }
