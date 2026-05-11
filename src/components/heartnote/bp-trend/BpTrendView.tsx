@@ -19,7 +19,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft, Plus } from 'lucide-react';
-import { DumbbellChart } from '@/components/heartnote/vitals-trend/DumbbellChart';
+import {
+  DumbbellChart,
+  DUMBBELL_LEGEND,
+} from '@/components/heartnote/vitals-trend/DumbbellChart';
 import { AddBpSheet, type AddBpInput } from '@/components/heartnote/vitals-trend/AddBpSheet';
 import { InfoMenu } from '@/components/heartnote/vitals-trend/InfoMenu';
 import { ViewBpDataSheet } from './ViewBpDataSheet';
@@ -222,7 +225,7 @@ export function BpTrendView({
               color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
             }}
           >
-            {hero ? hero.sys : '—'}
+            {hero ? Math.round(hero.sys) : '—'}
             <span
               style={{
                 color: 'var(--muted-foreground)',
@@ -231,7 +234,7 @@ export function BpTrendView({
             >
               /
             </span>
-            {hero ? hero.dia : '—'}
+            {hero ? Math.round(hero.dia) : '—'}
           </span>
           <span
             className="text-muted-foreground"
@@ -265,6 +268,35 @@ export function BpTrendView({
               style={{ letterSpacing: '0.5px', fontWeight: 500 }}
             >
               mmHg
+            </span>
+          </div>
+          {/* sys/dia legend lives here in its own HTML row so it never
+              overlaps the chart data (the in-SVG legend in the mockup
+              clipped readings near the top edge). */}
+          <div className="flex items-center gap-4 mt-2 px-0.5">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold">
+              <span
+                aria-hidden
+                className="inline-block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: DUMBBELL_LEGEND.sysColor,
+                }}
+              />
+              <span style={{ color: DUMBBELL_LEGEND.sysColor }}>sys</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold">
+              <span
+                aria-hidden
+                className="inline-block rounded-full"
+                style={{
+                  width: 7,
+                  height: 7,
+                  background: DUMBBELL_LEGEND.diaColor,
+                }}
+              />
+              <span style={{ color: DUMBBELL_LEGEND.diaColor }}>dia</span>
             </span>
           </div>
           <div
@@ -504,17 +536,21 @@ function tripleStatsBp(
   const sortedAsc = [...slice].sort((a, b) => a.sys - b.sys);
   const lowest = sortedAsc[0];
   const highest = sortedAsc[sortedAsc.length - 1];
+  // BP is integer-only at the action level, but voice-log inserts via
+  // the apply_voice_log_extraction RPC carry decimals from the
+  // structured-extraction pass. Round at render so the trio cells
+  // never show "107.7 / 92.9".
   return [
     {
       label: 'Highest sys',
-      value: String(highest.sys),
-      unit: ` / ${highest.dia}`,
+      value: String(Math.round(highest.sys)),
+      unit: ` / ${Math.round(highest.dia)}`,
       sub: subLabel(highest, today, tz),
     },
     {
       label: 'Lowest sys',
-      value: String(lowest.sys),
-      unit: ` / ${lowest.dia}`,
+      value: String(Math.round(lowest.sys)),
+      unit: ` / ${Math.round(lowest.dia)}`,
       sub: subLabel(lowest, today, tz),
     },
     {

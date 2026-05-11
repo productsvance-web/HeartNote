@@ -51,11 +51,23 @@ import {
   clearAllPillowReadings,
 } from '@/app/trends/pillows/actions';
 
-// Fixed Y per mockup. The baseline line lives between 0 and 3 with
-// ticks at every integer.
-const PILLOWS_Y_MIN = 0;
-const PILLOWS_Y_MAX = 3;
-const PILLOWS_Y_TICKS = [0, 1, 2, 3];
+// Y-axis is [0, 3] when all readings fit. When the highest reading is
+// at or above 3, the ceiling extends so the dot doesn't sit on the
+// chart's top edge (the clipping the user flagged at value=3).
+function pillowsY(maxValue: number): {
+  min: number;
+  max: number;
+  ticks: number[];
+} {
+  if (maxValue < 3) return { min: 0, max: 3, ticks: [0, 1, 2, 3] };
+  const max = Math.max(3, Math.ceil(maxValue) + 1);
+  const step = Math.max(1, Math.ceil(max / 3));
+  return {
+    min: 0,
+    max: step * 3,
+    ticks: [0, step, 2 * step, step * 3],
+  };
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -175,6 +187,14 @@ export function PillowsTrendView({
     () => subheadFor(period, startMs, endMs, timezone, today),
     [period, startMs, endMs, timezone, today],
   );
+
+  const yScale = useMemo(() => {
+    const maxV =
+      allReadings.length > 0
+        ? Math.max(...allReadings.map((r) => r.value))
+        : 0;
+    return pillowsY(maxV);
+  }, [allReadings]);
 
   const hasAnyReadings = allReadings.length > 0;
 
@@ -374,9 +394,9 @@ export function PillowsTrendView({
               startMs={startMs}
               endMs={endMs}
               xAxisLabels={xLabels}
-              yMin={PILLOWS_Y_MIN}
-              yMax={PILLOWS_Y_MAX}
-              yTicks={PILLOWS_Y_TICKS}
+              yMin={yScale.min}
+              yMax={yScale.max}
+              yTicks={yScale.ticks}
               ariaLabel="Pillows trend chart"
             />
           </div>

@@ -188,29 +188,14 @@ export function DumbbellChart({
           );
         })}
       </g>
-
-      {/* Inline legend (always rendered, even on empty state). */}
-      {[
-        { txt: 'sys', color: SYS_COLOR },
-        { txt: 'dia', color: DIA_COLOR },
-      ].map((l, i) => {
-        const cx = PAD_L + 6 + i * 36;
-        return (
-          <g key={l.txt}>
-            <circle cx={cx} cy={PAD_T + 1} r={2.5} fill={l.color} />
-            <text
-              x={cx + 5}
-              y={PAD_T + 4}
-              fontFamily="Inter, sans-serif"
-              fontSize="8.5"
-              fontWeight="600"
-              fill={l.color}
-            >
-              {l.txt}
-            </text>
-          </g>
-        );
-      })}
     </svg>
   );
 }
+
+// Inline legend rendered as an HTML row by BpTrendView above the chart
+// — kept out of the SVG so it can't overlap with data points near the
+// top of the chart frame.
+export const DUMBBELL_LEGEND = {
+  sysColor: SYS_COLOR,
+  diaColor: DIA_COLOR,
+};
