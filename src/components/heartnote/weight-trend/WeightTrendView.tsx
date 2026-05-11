@@ -121,6 +121,10 @@ export function WeightTrendView({
   // the hero. When null, hero defaults to the latest reading in the
   // visible window (Apple Health style).
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // State (not ref) so the subhead re-renders on drag start/end. The
+  // dragRef below tracks the geometry; this just gates the "show live
+  // timestamp" branch in the subhead useMemo.
+  const [isDragging, setIsDragging] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
@@ -159,6 +163,11 @@ export function WeightTrendView({
   );
 
   const subhead = useMemo(() => {
+    // Live timestamp during a D-mode drag — gives visible feedback
+    // that the scrub is landing on a specific hour, not just sliding.
+    if (isDragging && period === 'D') {
+      return dayTimeLabel(endMs, timezone, today);
+    }
     if (selected) {
       // When a specific reading is selected, the subhead describes
       // that reading instead of the window range.
@@ -169,7 +178,7 @@ export function WeightTrendView({
       );
     }
     return subheadFor(period, startMs, endMs, timezone, today);
-  }, [selected, period, startMs, endMs, timezone, today]);
+  }, [isDragging, selected, period, startMs, endMs, timezone, today]);
 
   const hasAnyReadings = allReadings.length > 0;
 
@@ -196,6 +205,7 @@ export function WeightTrendView({
       w,
       moved: false,
     };
+    setIsDragging(true);
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -235,6 +245,7 @@ export function WeightTrendView({
   const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     dragRef.current = null;
+    setIsDragging(false);
     if (!drag || drag.moved) return;
     // Tap: convert to chart coordinates and hit-test.
     const wrap = chartWrapRef.current;
@@ -502,6 +513,15 @@ export function WeightTrendView({
               window
             </b>{' '}
             · {allReadings.length} total in the last year
+          </p>
+        )}
+
+        {!hasAnyReadings && (
+          <p
+            className="mt-3 text-[11px] italic text-muted-foreground"
+            style={{ lineHeight: 1.5 }}
+          >
+            No readings yet — tap + to add the first.
           </p>
         )}
       </div>

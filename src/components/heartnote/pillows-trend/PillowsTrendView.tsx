@@ -157,6 +157,7 @@ export function PillowsTrendView({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
@@ -187,6 +188,9 @@ export function PillowsTrendView({
   );
 
   const subhead = useMemo(() => {
+    if (isDragging && period === 'D') {
+      return dayTimeLabel(endMs, timezone, today);
+    }
     if (selected) {
       return dayTimeLabel(
         Date.parse(selected.recorded_at),
@@ -195,7 +199,7 @@ export function PillowsTrendView({
       );
     }
     return subheadFor(period, startMs, endMs, timezone, today);
-  }, [selected, period, startMs, endMs, timezone, today]);
+  }, [isDragging, selected, period, startMs, endMs, timezone, today]);
 
   const yScale = useMemo(() => {
     const maxV =
@@ -233,6 +237,7 @@ export function PillowsTrendView({
       w,
       moved: false,
     };
+    setIsDragging(true);
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -269,6 +274,7 @@ export function PillowsTrendView({
   const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     dragRef.current = null;
+    setIsDragging(false);
     if (!drag || drag.moved) return;
     const wrap = chartWrapRef.current;
     if (!wrap) return;
@@ -533,6 +539,15 @@ export function PillowsTrendView({
               window
             </b>{' '}
             · {allReadings.length} total in the last year
+          </p>
+        )}
+
+        {!hasAnyReadings && (
+          <p
+            className="mt-3 text-[11px] italic text-muted-foreground"
+            style={{ lineHeight: 1.5 }}
+          >
+            No readings yet — tap + to add the first.
           </p>
         )}
       </div>
