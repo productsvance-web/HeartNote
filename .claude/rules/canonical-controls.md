@@ -116,8 +116,10 @@ half without the other rarely makes sense.
 **Reference implementations:**
 - `src/components/heartnote/weight-trend/WeightTrendView.tsx` — the "+" Add weight button on /trends/weight.
 - `docs/design/heartnote-log-redesign-mockup.html` — the mic and ear/symptom buttons on /log (mockup; not yet implemented in src/).
+- `src/components/heartnote/log/BottomBar.tsx` — the mic and ear buttons on /log (in-app).
+- `src/components/heartnote/BottomNav.tsx` — the three sitewide nav buttons (Home / Log / Me). User directed the nav match this register on 2026-05-10 so the heavy green Log FAB no longer dominates every screen; the three nav buttons share the 46×46 ghost-circle geometry and active-state sage-deep fill.
 
-**When to use:** page-level utility actions that don't fit the inline list/value registers — adding a new entity to the page (a weight reading, a voice log), opening a related modal (the symptom sheet), or initiating a recording session. The button affords "do something at the page level" rather than "modify this specific row/value."
+**When to use:** page-level utility actions that don't fit the inline list/value registers — adding a new entity to the page (a weight reading, a voice log), opening a related modal (the symptom sheet), or initiating a recording session. The button affords "do something at the page level" rather than "modify this specific row/value." **Also acceptable for sitewide primary nav** when the design explicitly directs the match (see BottomNav reference above).
 
 **Forbidden alternatives for this kind:**
 - A solid sage-circle plus (register #3). That's for adding rows to a visible list. The bottom-bar button initiates a separate flow (a sheet) — different affordance.
