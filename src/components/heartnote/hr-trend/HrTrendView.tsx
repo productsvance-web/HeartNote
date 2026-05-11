@@ -30,12 +30,18 @@ import type {
 import { yScaleFor } from '@/lib/trends/y-scale';
 import {
   backwardBoundForPeriod,
+  dayTimeLabel,
   defaultEndForPeriod,
   forwardBoundForPeriod,
   subheadFor,
   windowSpanMs,
   xLabelsFor,
 } from '@/lib/trends/window-math';
+import {
+  findTappedBucket,
+  findTappedReading,
+  TAP_MOVE_THRESHOLD_PX,
+} from '@/lib/trends/tap-hit';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import { HR_TIER_2_HIGH } from '@/lib/clinical/thresholds';
 import { isoFromWallClock } from '@/lib/dates/from-wall-clock';
@@ -93,13 +99,6 @@ export function HrTrendView({
 }: Props) {
   const router = useRouter();
 
-  const latestMs = useMemo(
-    () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[allReadings.length - 1].recorded_at)
-        : null,
-    [allReadings],
-  );
   const oldestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -124,10 +123,15 @@ export function HrTrendView({
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
+  // Selection is either a per-reading id (D mode) or a per-bucket
+  // dayKey (W/M/6M/Y range-bar mode). The two never coexist —
+  // changing periods clears it.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
     setEndMs(defaultEndForPeriod(p, today, timezone));
+    setSelectedId(null);
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -142,7 +146,10 @@ export function HrTrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  const hero = slice.length > 0 ? slice[slice.length - 1] : null;
+  // D-view selects individual readings; W/M/6M/Y select per-day
+  // aggregations (rangeBars). The hero / subhead unify around a
+  // "display" shape: { value, recorded_at }.
+  const usesRangeBars = period !== 'D';
 
   // Floor: 100 (HR_TIER_2_HIGH dashed alert line must stay visible).
   // Ceiling: 110 (mockup visual choice).
@@ -160,30 +167,76 @@ export function HrTrendView({
     [period, endMs, timezone],
   );
 
-  const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, timezone, today),
-    [period, startMs, endMs, timezone, today],
-  );
-
   // Per-day min/mean/max for W/M; per-week for 6M/Y. D shows dots-only.
   const rangeBars = useMemo(
     () => buildRangeBars(slice, period, timezone),
     [slice, period, timezone],
   );
 
+  // Resolve the selected entity. In range-bar mode it's a bucket
+  // (matched by dayKey); in D mode it's an individual reading.
+  const selectedBucket = usesRangeBars && selectedId
+    ? rangeBars.find((b) => b.dayKey === selectedId) ?? null
+    : null;
+  const selectedReading = !usesRangeBars && selectedId
+    ? slice.find((r) => r.id === selectedId) ?? null
+    : null;
+
+  // Hero value + timestamp, unified across the two selection modes.
+  const heroValue = selectedBucket
+    ? selectedBucket.mean
+    : selectedReading
+      ? selectedReading.value
+      : slice.length > 0
+        ? slice[slice.length - 1].value
+        : null;
+  const heroMs = selectedBucket
+    ? selectedBucket.recordedAtMs
+    : selectedReading
+      ? Date.parse(selectedReading.recorded_at)
+      : slice.length > 0
+        ? Date.parse(slice[slice.length - 1].recorded_at)
+        : null;
+
+  const subhead = useMemo(() => {
+    if (selectedBucket || selectedReading) {
+      // Always describe the selected entity by its calendar timestamp.
+      return heroMs !== null
+        ? dayTimeLabel(heroMs, timezone, today)
+        : '';
+    }
+    return subheadFor(period, startMs, endMs, timezone, today);
+  }, [
+    selectedBucket,
+    selectedReading,
+    heroMs,
+    period,
+    startMs,
+    endMs,
+    timezone,
+    today,
+  ]);
+
   const hasAnyReadings = allReadings.length > 0;
 
-  const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
-    null,
-  );
+  const dragRef = useRef<{
+    startX: number;
+    startEnd: number;
+    w: number;
+    moved: boolean;
+  } | null>(null);
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
 
   const onChartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (period === 'Y') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const w = chartWrapRef.current?.offsetWidth ?? 0;
     if (w <= 0) return;
-    dragRef.current = { startX: e.clientX, startEnd: endMs, w };
+    dragRef.current = {
+      startX: e.clientX,
+      startEnd: endMs,
+      w,
+      moved: false,
+    };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -195,6 +248,10 @@ export function HrTrendView({
     if (!dragRef.current) return;
     const { startX, startEnd, w } = dragRef.current;
     const dx = e.clientX - startX;
+    if (Math.abs(dx) > TAP_MOVE_THRESHOLD_PX) {
+      dragRef.current.moved = true;
+    }
+    if (period === 'Y') return;
     const span = windowSpanMs(period);
 
     if (period === 'D') {
@@ -213,8 +270,27 @@ export function HrTrendView({
     setEndMs(clamp(nextRaw, backwardBound, forwardBound));
   };
 
-  const onChartPointerEnd = () => {
+  const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (!drag || drag.moved) return;
+    const wrap = chartWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    if (usesRangeBars) {
+      const tapped = findTappedBucket(
+        rangeBars,
+        startMs,
+        endMs,
+        xPx,
+        rect.width,
+      );
+      setSelectedId(tapped ? tapped.dayKey : null);
+    } else {
+      const tapped = findTappedReading(slice, startMs, endMs, xPx, rect.width);
+      setSelectedId(tapped ? tapped.id : null);
+    }
   };
 
   useEffect(() => () => {
@@ -261,10 +337,13 @@ export function HrTrendView({
               lineHeight: 0.95,
               letterSpacing: '-3px',
               fontWeight: 300,
-              color: hero ? 'var(--foreground)' : 'var(--muted-foreground)',
+              color:
+                heroValue !== null
+                  ? 'var(--foreground)'
+                  : 'var(--muted-foreground)',
             }}
           >
-            {hero ? Math.round(hero.value) : '—'}
+            {heroValue !== null ? Math.round(heroValue) : '—'}
           </span>
           <span
             className="text-muted-foreground"
@@ -365,6 +444,7 @@ export function HrTrendView({
                 y: HR_TIER_2_HIGH,
                 color: 'var(--destructive, #C46A4A)',
               }}
+              selectedId={selectedId}
             />
           </div>
           <div

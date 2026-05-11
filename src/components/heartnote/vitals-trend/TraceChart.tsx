@@ -58,6 +58,11 @@ interface Props {
     max: number;
     recordedAtMs: number;
   }[];
+  // ID of the currently-tapped reading. When set, that reading's dot
+  // gets the halo + larger radius treatment so the caregiver can see
+  // which reading the hero is referencing. Pass the dayKey for
+  // range-bar mode.
+  selectedId?: string | null;
   ariaLabel?: string;
 }
 
@@ -80,6 +85,7 @@ export function TraceChart({
   alertFloor,
   areaFill,
   rangeBars,
+  selectedId,
   ariaLabel = 'Vital trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
@@ -304,6 +310,10 @@ export function TraceChart({
           const yMin = yOf(r.min);
           const yMean = yOf(r.mean);
           const isLast = i === rangeBars.length - 1;
+          // Selected bar takes the same accented treatment as "last."
+          const isAccent = selectedId
+            ? selectedId === r.dayKey
+            : isLast;
           return (
             <g key={r.dayKey}>
               <rect
@@ -312,10 +322,10 @@ export function TraceChart({
                 width={3.2}
                 height={Math.max(yMin - yMax, 1)}
                 rx={1.6}
-                fill={isLast ? '#5A6B5C' : '#7E9080'}
-                opacity={isLast ? 1 : 0.65}
+                fill={isAccent ? '#5A6B5C' : '#7E9080'}
+                opacity={isAccent ? 1 : 0.65}
               />
-              {isLast && (
+              {isAccent && (
                 <circle
                   cx={x}
                   cy={yMean}
@@ -326,9 +336,9 @@ export function TraceChart({
               <circle
                 cx={x}
                 cy={yMean}
-                r={isLast ? 3.4 : 2.2}
+                r={isAccent ? 3.4 : 2.2}
                 fill="#FBF7F0"
-                stroke={isLast ? '#5A6B5C' : '#7E9080'}
+                stroke={isAccent ? '#5A6B5C' : '#7E9080'}
                 strokeWidth={1.5}
               />
             </g>
@@ -343,20 +353,33 @@ export function TraceChart({
               ? areaFill.aboveColor
               : areaFill.belowColor
             : '#5A6B5C';
+          const isSelected = selectedId === r.id;
           // areaFill adds a cream stroke around each dot so it visually
           // separates from the colored fill below (Apple Health pattern).
           // Weight (no areaFill) renders bare dots — its register has
-          // no fill to separate from.
+          // no fill to separate from. Selected dot gets a halo + larger
+          // radius (same accent the rangeBars + dumbbell use).
           return (
-            <circle
-              key={r.id}
-              cx={xOf(Date.parse(r.recorded_at))}
-              cy={yOf(r.value)}
-              r={areaFill ? 3.5 : 2.5}
-              fill={fill}
-              stroke={areaFill ? '#FBF7F0' : undefined}
-              strokeWidth={areaFill ? 2 : undefined}
-            />
+            <g key={r.id}>
+              {isSelected && (
+                <circle
+                  cx={xOf(Date.parse(r.recorded_at))}
+                  cy={yOf(r.value)}
+                  r={7}
+                  fill="rgba(126,144,128,0.30)"
+                />
+              )}
+              <circle
+                cx={xOf(Date.parse(r.recorded_at))}
+                cy={yOf(r.value)}
+                r={isSelected ? 4 : areaFill ? 3.5 : 2.5}
+                fill={fill}
+                stroke={
+                  isSelected ? '#FBF7F0' : areaFill ? '#FBF7F0' : undefined
+                }
+                strokeWidth={isSelected ? 1.5 : areaFill ? 2 : undefined}
+              />
+            </g>
           );
         })}
       </g>

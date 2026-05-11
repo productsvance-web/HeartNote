@@ -38,12 +38,17 @@ import type {
 } from '@/lib/trends/vital-reading';
 import {
   backwardBoundForPeriod,
+  dayTimeLabel,
   defaultEndForPeriod,
   forwardBoundForPeriod,
   subheadFor,
   windowSpanMs,
   xLabelsFor,
 } from '@/lib/trends/window-math';
+import {
+  findTappedReading,
+  TAP_MOVE_THRESHOLD_PX,
+} from '@/lib/trends/tap-hit';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import {
   addPillowReading,
@@ -127,13 +132,6 @@ export function PillowsTrendView({
     [eyebrowText],
   );
 
-  const latestMs = useMemo(
-    () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[allReadings.length - 1].recorded_at)
-        : null,
-    [allReadings],
-  );
   const oldestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -158,10 +156,12 @@ export function PillowsTrendView({
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
     setEndMs(defaultEndForPeriod(p, today, timezone));
+    setSelectedId(null);
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -176,17 +176,26 @@ export function PillowsTrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  const hero = slice.length > 0 ? slice[slice.length - 1] : null;
+  const selected = selectedId
+    ? slice.find((r) => r.id === selectedId) ?? null
+    : null;
+  const hero = selected ?? (slice.length > 0 ? slice[slice.length - 1] : null);
 
   const xLabels = useMemo(
     () => xLabelsFor(period, endMs, timezone),
     [period, endMs, timezone],
   );
 
-  const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, timezone, today),
-    [period, startMs, endMs, timezone, today],
-  );
+  const subhead = useMemo(() => {
+    if (selected) {
+      return dayTimeLabel(
+        Date.parse(selected.recorded_at),
+        timezone,
+        today,
+      );
+    }
+    return subheadFor(period, startMs, endMs, timezone, today);
+  }, [selected, period, startMs, endMs, timezone, today]);
 
   const yScale = useMemo(() => {
     const maxV =
@@ -206,17 +215,24 @@ export function PillowsTrendView({
     [allReadings, today, timezone],
   );
 
-  const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
-    null,
-  );
+  const dragRef = useRef<{
+    startX: number;
+    startEnd: number;
+    w: number;
+    moved: boolean;
+  } | null>(null);
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
 
   const onChartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (period === 'Y') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const w = chartWrapRef.current?.offsetWidth ?? 0;
     if (w <= 0) return;
-    dragRef.current = { startX: e.clientX, startEnd: endMs, w };
+    dragRef.current = {
+      startX: e.clientX,
+      startEnd: endMs,
+      w,
+      moved: false,
+    };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -228,6 +244,10 @@ export function PillowsTrendView({
     if (!dragRef.current) return;
     const { startX, startEnd, w } = dragRef.current;
     const dx = e.clientX - startX;
+    if (Math.abs(dx) > TAP_MOVE_THRESHOLD_PX) {
+      dragRef.current.moved = true;
+    }
+    if (period === 'Y') return;
     const span = windowSpanMs(period);
 
     if (period === 'D') {
@@ -246,8 +266,16 @@ export function PillowsTrendView({
     setEndMs(clamp(nextRaw, backwardBound, forwardBound));
   };
 
-  const onChartPointerEnd = () => {
+  const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (!drag || drag.moved) return;
+    const wrap = chartWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    const tapped = findTappedReading(slice, startMs, endMs, xPx, rect.width);
+    setSelectedId(tapped ? tapped.id : null);
   };
 
   useEffect(() => () => {
@@ -397,6 +425,7 @@ export function PillowsTrendView({
               yMin={yScale.min}
               yMax={yScale.max}
               yTicks={yScale.ticks}
+              selectedId={selectedId}
               ariaLabel="Pillows trend chart"
             />
           </div>

@@ -27,12 +27,17 @@ import type {
 import { yScaleFor } from '@/lib/trends/y-scale';
 import {
   backwardBoundForPeriod,
+  dayTimeLabel,
   defaultEndForPeriod,
   forwardBoundForPeriod,
   subheadFor,
   windowSpanMs,
   xLabelsFor,
 } from '@/lib/trends/window-math';
+import {
+  findTappedReading,
+  TAP_MOVE_THRESHOLD_PX,
+} from '@/lib/trends/tap-hit';
 import { READING_RANGE } from '@/lib/clinical/reading-ranges';
 import {
   addWeightReading,
@@ -86,13 +91,6 @@ export function WeightTrendView({
   const router = useRouter();
 
   // Anchor + bounds derived from the data, not from "today".
-  const latestMs = useMemo(
-    () =>
-      allReadings.length > 0
-        ? Date.parse(allReadings[allReadings.length - 1].recorded_at)
-        : null,
-    [allReadings],
-  );
   const oldestMs = useMemo(
     () =>
       allReadings.length > 0
@@ -119,10 +117,15 @@ export function WeightTrendView({
   );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [viewDataOpen, setViewDataOpen] = useState(false);
+  // Tap-to-select state: the reading whose data is currently shown in
+  // the hero. When null, hero defaults to the latest reading in the
+  // visible window (Apple Health style).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
     setEndMs(defaultEndForPeriod(p, today, timezone));
+    setSelectedId(null);
   };
 
   const startMs = endMs - windowSpanMs(period);
@@ -137,7 +140,13 @@ export function WeightTrendView({
   const latestEver =
     allReadings.length > 0 ? allReadings[allReadings.length - 1] : null;
 
-  const hero = slice.length > 0 ? slice[slice.length - 1] : null;
+  // Display reading: selected tap target if any AND still in the
+  // visible slice, else the latest reading in the visible window.
+  // Selection that scrubs out of view auto-deselects visually.
+  const selected = selectedId
+    ? slice.find((r) => r.id === selectedId) ?? null
+    : null;
+  const hero = selected ?? (slice.length > 0 ? slice[slice.length - 1] : null);
 
   // Y-axis is derived from the WHOLE dataset, not the visible window.
   // That keeps the axis stable as the user drags D-day-to-D-day instead
@@ -149,28 +158,44 @@ export function WeightTrendView({
     [period, endMs, timezone],
   );
 
-  const subhead = useMemo(
-    () => subheadFor(period, startMs, endMs, timezone, today),
-    [period, startMs, endMs, timezone, today],
-  );
+  const subhead = useMemo(() => {
+    if (selected) {
+      // When a specific reading is selected, the subhead describes
+      // that reading instead of the window range.
+      return dayTimeLabel(
+        Date.parse(selected.recorded_at),
+        timezone,
+        today,
+      );
+    }
+    return subheadFor(period, startMs, endMs, timezone, today);
+  }, [selected, period, startMs, endMs, timezone, today]);
 
   const hasAnyReadings = allReadings.length > 0;
 
-  // Drag-to-scrub (Apple Health style). pointerdown on the chart starts
-  // a drag; pointermove translates endMs by (-dx / chartWidth) × span.
-  // pointerup ends. touch-action: pan-y on the container so vertical
-  // page scrolling still works.
-  const dragRef = useRef<{ startX: number; startEnd: number; w: number } | null>(
-    null,
-  );
+  // Drag-to-scrub (Apple Health style) PLUS tap-to-select: pointerdown
+  // records startX. pointermove flips `moved` once cumulative dx
+  // exceeds TAP_MOVE_THRESHOLD_PX. pointerup with `moved=false` is a
+  // tap — we hit-test for the nearest reading and select it (or
+  // deselect if the tap is between dots).
+  const dragRef = useRef<{
+    startX: number;
+    startEnd: number;
+    w: number;
+    moved: boolean;
+  } | null>(null);
   const chartWrapRef = useRef<HTMLDivElement | null>(null);
 
   const onChartPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (period === 'Y') return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const w = chartWrapRef.current?.offsetWidth ?? 0;
     if (w <= 0) return;
-    dragRef.current = { startX: e.clientX, startEnd: endMs, w };
+    dragRef.current = {
+      startX: e.clientX,
+      startEnd: endMs,
+      w,
+      moved: false,
+    };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -182,6 +207,10 @@ export function WeightTrendView({
     if (!dragRef.current) return;
     const { startX, startEnd, w } = dragRef.current;
     const dx = e.clientX - startX;
+    if (Math.abs(dx) > TAP_MOVE_THRESHOLD_PX) {
+      dragRef.current.moved = true;
+    }
+    if (period === 'Y') return;
     const span = windowSpanMs(period);
 
     if (period === 'D') {
@@ -192,8 +221,7 @@ export function WeightTrendView({
     }
 
     // W / M / 6M: swipe-paging. Each chart-width drag past a 25% threshold
-    // = one full window-step. Preserves week / month boundaries (the
-    // user's rule: "weeks scrub in entire weeks").
+    // = one full window-step.
     const threshold = w * 0.25;
     if (Math.abs(dx) < threshold) {
       setEndMs(clamp(startEnd, backwardBound, forwardBound));
@@ -204,8 +232,17 @@ export function WeightTrendView({
     setEndMs(clamp(nextRaw, backwardBound, forwardBound));
   };
 
-  const onChartPointerEnd = () => {
+  const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (!drag || drag.moved) return;
+    // Tap: convert to chart coordinates and hit-test.
+    const wrap = chartWrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const xPx = e.clientX - rect.left;
+    const tapped = findTappedReading(slice, startMs, endMs, xPx, rect.width);
+    setSelectedId(tapped ? tapped.id : null);
   };
 
   useEffect(() => () => {
@@ -365,6 +402,7 @@ export function WeightTrendView({
               // independent weigh-ins, not a continuous trend. D / M /
               // 6M / Y connect the dots.
               showLine={period !== 'W'}
+              selectedId={selectedId}
             />
           </div>
           {/* X axis labels are absolutely positioned at the same x-coordinate

@@ -22,6 +22,10 @@ interface Props {
   yTicks: number[];
   height?: number;
   alertFloor?: { y: number; color: string };
+  // Selected pair's sourceLogId — when set, that pair gets the
+  // accented (full sage stick + halo) treatment that defaults to the
+  // most-recent pair.
+  selectedId?: string | null;
   ariaLabel?: string;
 }
 
@@ -44,6 +48,7 @@ export function DumbbellChart({
   yTicks,
   height = 132,
   alertFloor,
+  selectedId,
   ariaLabel = 'Blood pressure trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
@@ -137,12 +142,17 @@ export function DumbbellChart({
         )}
         {visible.map((p, i) => {
           const isLast = i === visible.length - 1;
+          // Selected pair takes the same accent (full sage stick +
+          // halo) as the most-recent default.
+          const isAccent = selectedId
+            ? selectedId === p.sourceLogId
+            : isLast;
           const x = xOf(Date.parse(p.recorded_at));
           const ySys = yOf(p.sys);
           const yDia = yOf(p.dia);
           return (
             <g key={p.sourceLogId}>
-              {isLast && (
+              {isAccent && (
                 <>
                   <circle
                     cx={x}
@@ -164,14 +174,14 @@ export function DumbbellChart({
                 y1={ySys}
                 y2={yDia}
                 stroke="#7E9080"
-                strokeWidth={isLast ? 2.4 : 1.8}
-                opacity={isLast ? 1 : 0.5}
+                strokeWidth={isAccent ? 2.4 : 1.8}
+                opacity={isAccent ? 1 : 0.5}
                 strokeLinecap="round"
               />
               <circle
                 cx={x}
                 cy={ySys}
-                r={isLast ? 3.6 : 2.6}
+                r={isAccent ? 3.6 : 2.6}
                 fill={SYS_COLOR}
                 stroke="#FBF7F0"
                 strokeWidth={1}
@@ -179,7 +189,7 @@ export function DumbbellChart({
               <circle
                 cx={x}
                 cy={yDia}
-                r={isLast ? 3.6 : 2.6}
+                r={isAccent ? 3.6 : 2.6}
                 fill={DIA_COLOR}
                 stroke="#FBF7F0"
                 strokeWidth={1}

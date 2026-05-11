@@ -21,6 +21,9 @@ interface Props {
   yMax: number;
   yTicks: number[];
   height?: number;
+  // Selected reading's id — takes the same warn-ink + halo accent as
+  // the most-recent default lollipop.
+  selectedId?: string | null;
   ariaLabel?: string;
 }
 
@@ -40,6 +43,7 @@ export function LollipopChart({
   yMax,
   yTicks,
   height = 132,
+  selectedId,
   ariaLabel = 'Pillows trend chart',
 }: Props) {
   const innerW = W - PAD_L - PAD_R;
@@ -134,15 +138,18 @@ export function LollipopChart({
         )}
         {visible.map((r, i) => {
           const isLast = i === visible.length - 1;
+          // Selected lollipop gets the warn-ink + halo accent that
+          // defaults to the most-recent night.
+          const isAccent = selectedId ? selectedId === r.id : isLast;
           const x = xOf(Date.parse(r.recorded_at));
           const yTop = yOf(r.value);
           const above = r.value > (baseline ?? 0);
-          const color = isLast
+          const color = isAccent
             ? '#8A6A35' // warn-ink
             : above
               ? '#C49C5A' // warn-line
               : '#7E9080'; // sage
-          const stickOpacity = isLast ? 1 : above ? 0.85 : 0.55;
+          const stickOpacity = isAccent ? 1 : above ? 0.85 : 0.55;
           return (
             <g key={r.id}>
               <line
@@ -155,7 +162,7 @@ export function LollipopChart({
                 opacity={stickOpacity}
                 strokeLinecap="round"
               />
-              {isLast && (
+              {isAccent && (
                 <circle
                   cx={x}
                   cy={yTop}
@@ -166,7 +173,7 @@ export function LollipopChart({
               <circle
                 cx={x}
                 cy={yTop}
-                r={isLast ? 4 : 3.2}
+                r={isAccent ? 4 : 3.2}
                 fill={color}
                 stroke="#FBF7F0"
                 strokeWidth={1.2}
