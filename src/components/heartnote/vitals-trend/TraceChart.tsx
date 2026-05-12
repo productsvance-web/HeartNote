@@ -298,7 +298,7 @@ export function TraceChart({
           <path
             d={path}
             fill="none"
-            stroke="#5A6B5C"
+            stroke="var(--sage-deep)"
             strokeWidth="1.0"
             strokeLinecap="butt"
             strokeLinejoin="miter"
@@ -322,7 +322,7 @@ export function TraceChart({
                 width={3.2}
                 height={Math.max(yMin - yMax, 1)}
                 rx={1.6}
-                fill={isAccent ? '#5A6B5C' : '#7E9080'}
+                fill={isAccent ? 'var(--sage-deep)' : 'var(--sage)'}
                 opacity={isAccent ? 1 : 0.65}
               />
               {isAccent && (
@@ -330,15 +330,15 @@ export function TraceChart({
                   cx={x}
                   cy={yMean}
                   r={6}
-                  fill="rgba(126,144,128,0.30)"
+                  fill="color-mix(in oklab, var(--sage) 30%, transparent)"
                 />
               )}
               <circle
                 cx={x}
                 cy={yMean}
                 r={isAccent ? 3.4 : 2.2}
-                fill="#FBF7F0"
-                stroke={isAccent ? '#5A6B5C' : '#7E9080'}
+                fill="var(--cream-card)"
+                stroke={isAccent ? 'var(--sage-deep)' : 'var(--sage)'}
                 strokeWidth={1.5}
               />
             </g>
@@ -352,7 +352,7 @@ export function TraceChart({
             ? r.value >= areaFill.thresholdY
               ? areaFill.aboveColor
               : areaFill.belowColor
-            : '#5A6B5C';
+            : 'var(--sage-deep)';
           const isSelected = selectedId === r.id;
           // areaFill adds a cream stroke around each dot so it visually
           // separates from the colored fill below (Apple Health pattern).
@@ -366,7 +366,7 @@ export function TraceChart({
                   cx={xOf(Date.parse(r.recorded_at))}
                   cy={yOf(r.value)}
                   r={7}
-                  fill="rgba(126,144,128,0.30)"
+                  fill="color-mix(in oklab, var(--sage) 30%, transparent)"
                 />
               )}
               <circle
@@ -375,7 +375,7 @@ export function TraceChart({
                 r={isSelected ? 4 : areaFill ? 3.5 : 2.5}
                 fill={fill}
                 stroke={
-                  isSelected ? '#FBF7F0' : areaFill ? '#FBF7F0' : undefined
+                  isSelected ? 'var(--cream-card)' : areaFill ? 'var(--cream-card)' : undefined
                 }
                 strokeWidth={isSelected ? 1.5 : areaFill ? 2 : undefined}
               />

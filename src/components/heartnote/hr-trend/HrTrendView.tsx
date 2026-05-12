@@ -127,6 +127,7 @@ export function HrTrendView({
   // dayKey (W/M/6M/Y range-bar mode). The two never coexist —
   // changing periods clears it.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const setPeriod = (p: WindowPeriod) => {
     setPeriodRaw(p);
@@ -199,6 +200,9 @@ export function HrTrendView({
         : null;
 
   const subhead = useMemo(() => {
+    if (isDragging && period === 'D') {
+      return dayTimeLabel(endMs, timezone, today);
+    }
     if (selectedBucket || selectedReading) {
       // Always describe the selected entity by its calendar timestamp.
       return heroMs !== null
@@ -207,6 +211,7 @@ export function HrTrendView({
     }
     return subheadFor(period, startMs, endMs, timezone, today);
   }, [
+    isDragging,
     selectedBucket,
     selectedReading,
     heroMs,
@@ -237,6 +242,7 @@ export function HrTrendView({
       w,
       moved: false,
     };
+    setIsDragging(true);
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -273,6 +279,7 @@ export function HrTrendView({
   const onChartPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     dragRef.current = null;
+    setIsDragging(false);
     if (!drag || drag.moved) return;
     const wrap = chartWrapRef.current;
     if (!wrap) return;
@@ -532,6 +539,15 @@ export function HrTrendView({
               window
             </b>{' '}
             · {allReadings.length} total in the last year
+          </p>
+        )}
+
+        {!hasAnyReadings && (
+          <p
+            className="mt-3 text-[11px] italic text-muted-foreground"
+            style={{ lineHeight: 1.5 }}
+          >
+            No readings yet — tap + to add the first.
           </p>
         )}
       </div>

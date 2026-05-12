@@ -130,7 +130,7 @@ export function LollipopChart({
             x2={W - PAD_R}
             y1={yOf(baseline)}
             y2={yOf(baseline)}
-            stroke="#7E9080"
+            stroke="var(--sage)"
             strokeWidth={1}
             strokeDasharray="4 3"
             opacity={0.55}
@@ -145,10 +145,10 @@ export function LollipopChart({
           const yTop = yOf(r.value);
           const above = r.value > (baseline ?? 0);
           const color = isAccent
-            ? '#8A6A35' // warn-ink
+            ? 'var(--warn-ink)'
             : above
-              ? '#C49C5A' // warn-line
-              : '#7E9080'; // sage
+              ? 'var(--warn-line)'
+              : 'var(--sage)';
           const stickOpacity = isAccent ? 1 : above ? 0.85 : 0.55;
           return (
             <g key={r.id}>
@@ -167,7 +167,7 @@ export function LollipopChart({
                   cx={x}
                   cy={yTop}
                   r={7}
-                  fill="rgba(196,156,90,0.32)"
+                  fill="color-mix(in oklab, var(--warn-line) 32%, transparent)"
                 />
               )}
               <circle
@@ -175,7 +175,7 @@ export function LollipopChart({
                 cy={yTop}
                 r={isAccent ? 4 : 3.2}
                 fill={color}
-                stroke="#FBF7F0"
+                stroke="var(--cream-card)"
                 strokeWidth={1.2}
               />
             </g>

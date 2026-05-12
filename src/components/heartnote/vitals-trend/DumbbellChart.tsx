@@ -35,8 +35,11 @@ const PAD_R = 32;
 const PAD_T = 12;
 const PAD_B = 16;
 
-const SYS_COLOR = '#5A6B5C'; // sage-deep
-const DIA_COLOR = '#B8C4B0'; // sage-mist tinted
+const SYS_COLOR = 'var(--sage-deep)';
+// #B8C4B0 has no exact CSS-var match — sits between --sage and
+// --sage-pale. Leaving as a hex const here is the lowest-risk choice;
+// promote to a token if another component needs the same value.
+const DIA_COLOR = '#B8C4B0';
 
 export function DumbbellChart({
   pairs,
@@ -158,13 +161,13 @@ export function DumbbellChart({
                     cx={x}
                     cy={ySys}
                     r={6}
-                    fill="rgba(126,144,128,0.30)"
+                    fill="color-mix(in oklab, var(--sage) 30%, transparent)"
                   />
                   <circle
                     cx={x}
                     cy={yDia}
                     r={6}
-                    fill="rgba(126,144,128,0.30)"
+                    fill="color-mix(in oklab, var(--sage) 30%, transparent)"
                   />
                 </>
               )}
@@ -173,7 +176,7 @@ export function DumbbellChart({
                 x2={x}
                 y1={ySys}
                 y2={yDia}
-                stroke="#7E9080"
+                stroke="var(--sage)"
                 strokeWidth={isAccent ? 2.4 : 1.8}
                 opacity={isAccent ? 1 : 0.5}
                 strokeLinecap="round"
@@ -183,7 +186,7 @@ export function DumbbellChart({
                 cy={ySys}
                 r={isAccent ? 3.6 : 2.6}
                 fill={SYS_COLOR}
-                stroke="#FBF7F0"
+                stroke="var(--cream-card)"
                 strokeWidth={1}
               />
               <circle
@@ -191,7 +194,7 @@ export function DumbbellChart({
                 cy={yDia}
                 r={isAccent ? 3.6 : 2.6}
                 fill={DIA_COLOR}
-                stroke="#FBF7F0"
+                stroke="var(--cream-card)"
                 strokeWidth={1}
               />
             </g>
