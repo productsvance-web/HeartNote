@@ -105,7 +105,7 @@ test.describe('/trends/weight', () => {
     await page.goto('/trends/weight', { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Weight' })).toBeVisible();
-    await expect(page.getByText(/No readings in this window/)).toBeVisible();
+    await expect(page.getByText(/No readings yet/)).toBeVisible();
     await expect(page.getByRole('link', { name: /Back to trends/i })).toBeVisible();
   });
 
